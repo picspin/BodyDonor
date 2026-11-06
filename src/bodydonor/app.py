@@ -244,3 +244,53 @@ def ingest_selector(outcome_id: str) -> JSONResponse:
             ],
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# M2：本体映射端点（三态查询 / 消歧写回 / 逃生通道）
+# ---------------------------------------------------------------------------
+
+@app.get("/ontology/resolve")
+def ontology_resolve(label: str = Query(..., description="NL 标签")) -> JSONResponse:
+    """NL 标签三态查询：resolved / ambiguous（附候选，交用户点选）/ unresolved。"""
+    from .ontology import OntologyService
+
+    svc = OntologyService(settings)
+    return JSONResponse(svc.resolve(label).to_dict())
+
+
+@app.post("/ontology/disambiguate")
+def ontology_disambiguate(
+    label: str = Query(..., description="ambiguous 态的 NL 标签"),
+    totalseg_class: str = Query(..., description="用户点选的类别"),
+) -> JSONResponse:
+    """用户消歧写回（ambiguous -> 用户点选 -> overrides.yaml -> 下次 resolved）。"""
+    from .ontology import OntologyError, OntologyService
+
+    svc = OntologyService(settings)
+    try:
+        chosen = svc.disambiguate(label, totalseg_class)
+    except OntologyError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    return JSONResponse(
+        {"written_back": True, "entry": chosen.to_dict(), "version": svc.version}
+    )
+
+
+@app.get("/ontology/escape-hatch")
+def ontology_escape_hatch(label: str = Query(..., description="NL 标签")) -> JSONResponse:
+    """实验逃生通道（SegVol/SAT）：默认关闭；开启时结果打 experimental 标记，
+    绝不进蒸馏训练集。M2 只落地开关与隔离逻辑。"""
+    from .ontology import OntologyService
+
+    svc = OntologyService(settings)
+    return JSONResponse(svc.escape_hatch(label))
+
+
+@app.get("/ontology/summary")
+def ontology_summary() -> dict[str, Any]:
+    """映射表摘要（版本/条目数/overrides 数/逃生通道开关）。"""
+    from .ontology import OntologyService
+
+    svc = OntologyService(settings)
+    return svc.summary()

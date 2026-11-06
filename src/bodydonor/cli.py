@@ -24,6 +24,8 @@ app = typer.Typer(
 )
 license_app = typer.Typer(help="第三方许可核查状态")
 app.add_typer(license_app, name="license")
+ontology_app = typer.Typer(help="本体映射（NL 标签 -> TotalSegmentator 类别）")
+app.add_typer(ontology_app, name="ontology")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -277,6 +279,94 @@ def license_usage() -> None:
             f"{st.trial_monthly_used}/{st.trial_monthly_limit}",
         )
     console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# bodydonor ontology
+# ---------------------------------------------------------------------------
+
+@ontology_app.command("resolve")
+def ontology_resolve(
+    labels: list[str] = typer.Argument(..., help="要查询的 NL 标签（可多个）"),  # noqa: B008
+    as_json: bool = typer.Option(False, "--json", help="JSON 输出（API 同构）"),
+) -> None:
+    """NL 标签三态查询：resolved / ambiguous（候选交用户点选）/ unresolved。"""
+    from .ontology import OntologyService
+
+    svc = OntologyService(_settings())
+    results = svc.resolve_batch(list(labels))
+    if as_json:
+        import json as _json
+
+        console.print_json(
+            _json.dumps([r.to_dict() for r in results], ensure_ascii=False)
+        )
+        return
+    for r in results:
+        state_color = {
+            "resolved": "green",
+            "ambiguous": "yellow",
+            "unresolved": "red",
+        }.get(r.state, "white")
+        console.print(f"[{state_color}]{r.state}[/{state_color}]  {r.label}")
+        if r.state == "resolved" and r.entry:
+            console.print(
+                f"    -> totalseg_class: {r.entry.totalseg_class}"
+                f"  (SNOMED {r.entry.snomed_ct} / Uberon {r.entry.uberon})"
+                f"  [{r.reason}]"
+            )
+        for c in r.candidates:
+            console.print(
+                f"    候选: {c.entry.totalseg_class}"
+                f"  (SNOMED {c.entry.snomed_ct} / {c.entry.nl_label})"
+            )
+        if r.state == "unresolved":
+            console.print(f"    {r.reason}")
+
+
+@ontology_app.command("disambiguate")
+def ontology_disambiguate(
+    label: str = typer.Argument(..., help="ambiguous 态的 NL 标签"),
+    totalseg_class: str = typer.Argument(..., help="用户点选的 totalseg_class"),
+) -> None:
+    """用户消歧写回：点选结果写进 overrides.yaml，下次 resolve 直接 resolved。"""
+    from .ontology import OntologyError, OntologyService
+
+    svc = OntologyService(_settings())
+    try:
+        chosen = svc.disambiguate(label, totalseg_class)
+    except OntologyError as e:
+        err_console.print(f"[red]✘ {e}[/red]")
+        raise typer.Exit(1) from None
+    console.print(
+        f"[green]✔ 已写回[/green] {label} -> {chosen.totalseg_class}"
+        f"（ontology/{svc.version}/overrides.yaml）"
+    )
+
+
+@ontology_app.command("escape")
+def ontology_escape(
+    labels: list[str] = typer.Argument(..., help="要试逃生通道的 NL 标签"),  # noqa: B008
+    enable: bool = typer.Option(
+        False, "--experimental-text-prompt", help="显式开启实验逃生通道"
+    ),
+) -> None:
+    """实验逃生通道（SegVol/SAT 真文本提示）状态查询。
+
+    默认关闭；--experimental-text-prompt 显式开启后结果打 experimental 标记，
+    绝不进蒸馏训练集。M2 只落地开关与隔离逻辑（模型接入 M3+）。
+    """
+    from .ontology import OntologyService
+
+    settings = _settings()
+    if enable and not settings.experimental_text_prompt.enabled:
+        settings.experimental_text_prompt.enabled = True
+    svc = OntologyService(settings)
+    for lb in labels:
+        out = svc.escape_hatch(lb)
+        color = "green" if out["allowed"] else "red"
+        tag = " [experimental]" if out["experimental"] else ""
+        console.print(f"[{color}]{out['allowed']}[/{color}]  {lb}{tag} — {out['reason']}")
 
 
 # ---------------------------------------------------------------------------

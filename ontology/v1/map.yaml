@@ -1,0 +1,273 @@
+# BodyDonor 本体映射表 v1（M2，proposal §3）
+# 自然语言标签 -> TotalSegmentator `total` 任务类别。
+# 字段：nl_label / synonyms（中英双语同义词，Q1）/ snomed_ct / uberon / totalseg_class / status
+# status: active | deprecated（deprecated 不参与查询，保留供 diff/回溯）
+#
+# 本文件是产品资产（不是补丁）：用户消歧写回走 overrides.yaml（同目录，与本表分离），
+# git diff 本表 = 领域变更评审，git diff overrides = 用户决策记录。
+#
+# SNOMED CT 编码取常用临床概念 ID；Uberon 取解剖学本体 ID。编码人工核对，
+# M5 引全量 SNOMED/Uberon 图谱后再机校。
+version: v1
+entries:
+  # --- 腹盆腔主要器官 ---
+  - nl_label: 肝
+    synonyms: [liver, 肝脏]
+    snomed_ct: "10200004"
+    uberon: "UBERON:0002107"
+    totalseg_class: liver
+    status: active
+  - nl_label: 胆囊
+    synonyms: [gallbladder]
+    snomed_ct: "28231008"
+    uberon: "UBERON:0002110"
+    totalseg_class: gallbladder
+    status: active
+  - nl_label: 食管
+    synonyms: [esophagus, oesophagus]
+    snomed_ct: "89202004"
+    uberon: "UBERON:0001043"
+    totalseg_class: esophagus
+    status: active
+  - nl_label: 胃
+    synonyms: [stomach]
+    snomed_ct: "69695003"
+    uberon: "UBERON:0000945"
+    totalseg_class: stomach
+    status: active
+  - nl_label: 十二指肠
+    synonyms: [duodenum]
+    snomed_ct: "72050000"
+    uberon: "UBERON:0002114"
+    totalseg_class: duodenum
+    status: active
+  - nl_label: 小肠
+    synonyms: [small bowel, small intestine]
+    snomed_ct: "30315005"
+    uberon: "UBERON:0002108"
+    totalseg_class: small_bowel
+    status: active
+  - nl_label: 结肠
+    synonyms: [colon, large intestine, 大肠]
+    snomed_ct: "71854001"
+    uberon: "UBERON:0000059"
+    totalseg_class: colon
+    status: active
+  - nl_label: 直肠
+    synonyms: [rectum]
+    snomed_ct: "34402009"
+    uberon: "UBERON:0001052"
+    totalseg_class: rectum
+    status: active
+  - nl_label: 脾
+    synonyms: [spleen, 脾脏]
+    snomed_ct: "78961009"
+    uberon: "UBERON:0002106"
+    totalseg_class: spleen
+    status: active
+  - nl_label: 胰腺
+    synonyms: [pancreas]
+    snomed_ct: "15776009"
+    uberon: "UBERON:0001264"
+    totalseg_class: pancreas
+    status: active
+  - nl_label: 肾上腺
+    synonyms: [adrenal gland, suprarenal gland]
+    snomed_ct: "23495003"
+    uberon: "UBERON:0002369"
+    totalseg_class: adrenal_gland_left
+    status: active
+  - nl_label: 左肾上腺
+    synonyms: [left adrenal gland, 左侧肾上腺]
+    snomed_ct: "23495003"
+    uberon: "UBERON:0001836"
+    totalseg_class: adrenal_gland_left
+    status: active
+  - nl_label: 右肾上腺
+    synonyms: [right adrenal gland, 右侧肾上腺]
+    snomed_ct: "23495003"
+    uberon: "UBERON:0001835"
+    totalseg_class: adrenal_gland_right
+    status: active
+  - nl_label: 左肾
+    synonyms: [left kidney, 左侧肾]
+    snomed_ct: "98460003"
+    uberon: "UBERON:0004538"
+    totalseg_class: kidney_left
+    status: active
+  - nl_label: 右肾
+    synonyms: [right kidney, 右侧肾]
+    snomed_ct: "98460003"
+    uberon: "UBERON:0004539"
+    totalseg_class: kidney_right
+    status: active
+  - nl_label: 膀胱
+    synonyms: [urinary bladder]
+    snomed_ct: "89837001"
+    uberon: "UBERON:0001255"
+    totalseg_class: urinary_bladder
+    status: active
+  - nl_label: 前列腺
+    synonyms: [prostate]
+    snomed_ct: "41216001"
+    uberon: "UBERON:0002367"
+    totalseg_class: prostate
+    status: active
+  - nl_label: 子宫
+    synonyms: [uterus]
+    snomed_ct: "35039007"
+    uberon: "UBERON:0000995"
+    totalseg_class: uterus
+    status: active
+
+  # --- 血管结构（"肝血管"多候选歧义的来源） ---
+  - nl_label: 肝血管
+    synonyms: [hepatic vessel, liver vessel, 肝脏血管]
+    snomed_ct: "55441007"
+    uberon: "UBERON:0004948"
+    totalseg_class: hepaticvessel
+    status: active
+  - nl_label: 主动脉
+    synonyms: [aorta]
+    snomed_ct: "15825003"
+    uberon: "UBERON:0000947"
+    totalseg_class: aorta
+    status: active
+  - nl_label: 下腔静脉
+    synonyms: [inferior vena cava, IVC]
+    snomed_ct: "48333005"
+    uberon: "UBERON:0001072"
+    totalseg_class: inferiorvenacava
+    status: active
+  - nl_label: 门静脉
+    synonyms: [portal vein, 门脉]
+    snomed_ct: "128572003"
+    uberon: "UBERON:0001585"
+    totalseg_class: portalveinandsplenicvein
+    status: active
+  - nl_label: 肺血管
+    synonyms: [pulmonary vessel, lung vessel]
+    snomed_ct: "40086000"
+    uberon: "UBERON:0002012"
+    totalseg_class: lung_lobe_upper_left
+    status: deprecated
+
+  # --- 胸部 ---
+  - nl_label: 肺
+    synonyms: [lung]
+    snomed_ct: "39607008"
+    uberon: "UBERON:0002048"
+    totalseg_class: lung_upper_lobe_left
+    status: active
+  - nl_label: 左肺上叶
+    synonyms: [left lung upper lobe, 左肺上叶]
+    snomed_ct: "39607008"
+    uberon: "UBERON:0002168"
+    totalseg_class: lung_upper_lobe_left
+    status: active
+  - nl_label: 左肺下叶
+    synonyms: [left lung lower lobe]
+    snomed_ct: "39607008"
+    uberon: "UBERON:0002170"
+    totalseg_class: lung_lower_lobe_left
+    status: active
+  - nl_label: 右肺上叶
+    synonyms: [right lung upper lobe]
+    snomed_ct: "39607008"
+    uberon: "UBERON:0002171"
+    totalseg_class: lung_upper_lobe_right
+    status: active
+  - nl_label: 右肺中叶
+    synonyms: [right lung middle lobe]
+    snomed_ct: "39607008"
+    uberon: "UBERON:0002172"
+    totalseg_class: lung_middle_lobe_right
+    status: active
+  - nl_label: 右肺下叶
+    synonyms: [right lung lower lobe]
+    snomed_ct: "39607008"
+    uberon: "UBERON:0002169"
+    totalseg_class: lung_lower_lobe_right
+    status: active
+  - nl_label: 气管
+    synonyms: [trachea]
+    snomed_ct: "44567001"
+    uberon: "UBERON:0003126"
+    totalseg_class: trachea
+    status: active
+  - nl_label: 支气管
+    synonyms: [bronchus]
+    snomed_ct: "44198006"
+    uberon: "UBERON:0002185"
+    totalseg_class: lung_trachea_bronchia
+    status: active
+  - nl_label: 心脏
+    synonyms: [heart, myocardium]
+    snomed_ct: "80248007"
+    uberon: "UBERON:0000948"
+    totalseg_class: heart
+    status: active
+  - nl_label: 心肌
+    synonyms: [myocardium]
+    snomed_ct: "74262004"
+    uberon: "UBERON:0002084"
+    totalseg_class: myocardium
+    status: active
+
+  # --- 骨骼 ---
+  - nl_label: 股骨
+    synonyms: [femur, thigh bone]
+    snomed_ct: "71341001"
+    uberon: "UBERON:0000981"
+    totalseg_class: femur_left
+    status: active
+  - nl_label: 左股骨
+    synonyms: [left femur, 左侧股骨]
+    snomed_ct: "71341001"
+    uberon: "UBERON:0006291"
+    totalseg_class: femur_left
+    status: active
+  - nl_label: 右股骨
+    synonyms: [right femur, 右侧股骨]
+    snomed_ct: "71341001"
+    uberon: "UBERON:0006292"
+    totalseg_class: femur_right
+    status: active
+  - nl_label: 髋骨
+    synonyms: [hip bone, innominate bone]
+    snomed_ct: "85544002"
+    uberon: "UBERON:0001270"
+    totalseg_class: hip_left
+    status: active
+  - nl_label: 脊柱
+    synonyms: [spine, vertebral column]
+    snomed_ct: "119255005"
+    uberon: "UBERON:0001130"
+    totalseg_class: vertebrae_L1
+    status: active
+  - nl_label: 腰椎
+    synonyms: [lumbar vertebrae]
+    snomed_ct: "1076521000122104"
+    uberon: "UBERON:0006072"
+    totalseg_class: vertebrae_L1
+    status: active
+  - nl_label: 肋骨
+    synonyms: [rib, ribs]
+    snomed_ct: "77692002"
+    uberon: "UBERON:0002228"
+    totalseg_class: rib_left_1
+    status: active
+  - nl_label: 胸骨
+    synonyms: [sternum, breastbone]
+    snomed_ct: "13365006"
+    uberon: "UBERON:0000975"
+    totalseg_class: sternum
+    status: active
+
+  # --- 腺体与其他 ---
+  - nl_label: 甲状腺
+    synonyms: [thyroid gland]
+    snomed_ct: "304789004"
+    uberon: "UBERON:0002046"
+    totalseg_class: thyroid_gland
+    status: active
