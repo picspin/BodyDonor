@@ -294,3 +294,82 @@ def ontology_summary() -> dict[str, Any]:
 
     svc = OntologyService(settings)
     return svc.summary()
+
+
+# ---------------------------------------------------------------------------
+# M2：监控端点（TUI 轮询数据源）：GPU / 队列 / 流水线状态
+# ---------------------------------------------------------------------------
+
+# 进程内流水线阶段注册表（proposal §6 的 8 阶段；worker/编排层更新，TUI 只读）
+_pipeline_stages: dict[str, str] = {
+    "1_ingest": "idle",
+    "2_deid": "idle",
+    "3_teacher_inference": "idle",
+    "4_auto_qc": "idle",
+    "5_manual_review": "idle",
+    "6_distill_train": "idle",
+    "7_relabel": "idle",
+    "8_recheck": "idle",
+}
+
+
+def _gpu_snapshot() -> dict[str, Any]:
+    """GPU 显存快照（nvidia-smi；不可用时返回 available=False，不猜数字）。"""
+    import shutil
+    import subprocess
+
+    exe = shutil.which("nvidia-smi") or "/usr/lib/wsl/lib/nvidia-smi"
+    try:
+        out = subprocess.run(
+            [
+                exe,
+                "--query-gpu=name,memory.used,memory.total,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if out.returncode != 0:
+            return {"available": False, "reason": f"nvidia-smi exit {out.returncode}"}
+        fields = [v.strip() for v in out.stdout.strip().split(",")]
+        if len(fields) < 3:
+            return {"available": False, "reason": "nvidia-smi 输出格式异常"}
+        return {
+            "available": True,
+            "name": fields[0],
+            "memory_used_mi_b": int(fields[1]),
+            "memory_total_mi_b": int(fields[2]),
+            "utilization_pct": int(fields[3]) if len(fields) > 3 and fields[3] else None,
+        }
+    except FileNotFoundError:
+        return {"available": False, "reason": "nvidia-smi 不存在"}
+    except subprocess.TimeoutExpired:
+        return {"available": False, "reason": "nvidia-smi 超时"}
+    except (ValueError, IndexError) as e:
+        return {"available": False, "reason": f"nvidia-smi 解析失败：{e}"}
+
+
+@app.get("/monitor/gpu")
+def monitor_gpu() -> dict[str, Any]:
+    """GPU 显存/利用率快照（TUI 轮询）。不可用时 available=false（不猜数字）。"""
+    return _gpu_snapshot()
+
+
+@app.get("/monitor/pipeline")
+def monitor_pipeline() -> dict[str, Any]:
+    """流水线 8 阶段状态（TUI 轮询；worker/编排层更新，单进程内存态）。"""
+    return {
+        "stages": dict(_pipeline_stages),
+        "queue_size": queue.qsize(),
+        "active_jobs": sorted(queue.pending_ids()),
+    }
+
+
+@app.post("/monitor/pipeline/{stage}")
+def monitor_pipeline_set(stage: str, status: str = Query("running")) -> dict[str, Any]:
+    """更新流水线阶段状态（worker/编排层调用；TUI 只读不写）。"""
+    if stage not in _pipeline_stages:
+        raise HTTPException(status_code=404, detail=f"unknown stage: {stage}")
+    _pipeline_stages[stage] = status
+    return {"stage": stage, "status": status}

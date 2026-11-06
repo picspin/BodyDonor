@@ -138,6 +138,11 @@ class InProcessQueue(QueueBackend):
     def qsize(self) -> int:
         return self._q.qsize()
 
+    def pending_ids(self) -> set[str]:
+        """未完成 job_id 集合（监控端点/TUI 只读）。"""
+        with self._lock:
+            return set(self._pending)
+
     def ack(self, job: Job) -> None:
         with self._lock:
             self._pending.discard(job.job_id)

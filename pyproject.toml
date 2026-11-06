@@ -13,6 +13,7 @@ dependencies = [
     "rich>=13.9",
     "sqlalchemy>=2.1.8",
     "alembic>=1.20.1",
+    "textual>=8.2.8",
 ]
 
 [project.optional-dependencies]
@@ -54,3 +55,8 @@ ignore = ["SIM108"]
 testpaths = ["tests"]
 addopts = "-q"
 pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.4.1.post1",
+]
