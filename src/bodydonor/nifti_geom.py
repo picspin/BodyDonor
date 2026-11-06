@@ -1,11 +1,17 @@
-"""NIfTI 几何校验（M1，proposal §5）：affine 各向异性、非正交方向、非毫米 spacing 警告。
+"""NIfTI 几何校验（M1，proposal §5）+ RAS+ 标准方向重排 + affine 匹配守卫（M1-fix）。
 
-NIfTI 单文件没有 Series 概念（ingest() -> [Series] 单元素列表），但几何校验必须做，
-M1 验收点名。三条检查全部是**警告**（不拒收）——几何异常仍可导入，导入报告可见：
+三条校验全部是**警告**（不拒收）——几何异常仍可导入，导入报告可见：
 
 - **affine 各向异性**：spacing（zooms）max/min 比值 > 阈值（默认 3×）
 - **非正交方向**：affine 旋转矩阵列向量两两点积绝对值 > 阈值（默认 0.02）
 - **非毫米 spacing**：xyzt_units 不是 mm（或无法判定）
+
+M1-fix 强约束（用户评审意见）：
+
+- **reorient_ras**：DICOM -> NIfTI 落盘前做 RAS+ 标准方向重排（nibabel
+  as_closest_canonical），导入报告写明方向变化。
+- **assert_affine_match**：mask 与原图 affine 不一致就 raise——所有 mask 读写
+  路径必须过这个守卫，禁止静默重采样。
 """
 
 from __future__ import annotations
@@ -14,8 +20,13 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
+
 MAX_ANISO_RATIO = 3.0  # spacing max/min > 3× 警告
 ORTHO_TOLERANCE = 0.02  # 方向列向量两两点积绝对值 > 0.02（非正交）警告
+
+# assert_affine_match 默认容差：affine 元素级 |diff| 上限（浮点写入误差）
+AFFINE_MATCH_TOLERANCE = 1e-4
 
 
 @dataclass
@@ -118,3 +129,60 @@ def check_nifti_geometry(img) -> GeomReport:  # noqa: ANN001 — nibabel Spatial
 
     report.orientation = _axis_label(affine)
     return report
+
+
+# ---------------------------------------------------------------------------
+# M1-fix：RAS+ 重排 + affine 匹配守卫
+# ---------------------------------------------------------------------------
+
+
+class AffineMismatchError(Exception):
+    """mask 与原图 affine 不一致（禁止静默重采样，mask 读写路径硬报错）。"""
+
+
+def reorient_ras(img: Any) -> tuple[Any, str]:
+    """RAS+ 标准方向重排（nibabel as_closest_canonical）。
+
+    返回 (重排后图像, 方向变化描述)。方向已是 RAS+ 时返回 (原图像, "RAS+（无需重排）")；
+    否则返回重排结果与变化描述（供导入报告写明）。
+    """
+    import nibabel as nib
+
+    canonical = nib.as_closest_canonical(img)
+    ornt = nib.aff2axcodes(canonical.affine)
+    orig_ornt = nib.aff2axcodes(img.affine)
+    desc = "".join(ornt)
+    if ornt == orig_ornt:
+        return canonical, f"{desc}（无需重排）"
+    return canonical, f"{orig_ornt[0]}{orig_ornt[1]}{orig_ornt[2]} -> {desc}（RAS+ 重排）"
+
+
+def assert_affine_match(
+    img: Any,
+    mask: Any,
+    tolerance: float = AFFINE_MATCH_TOLERANCE,
+    label: str = "",
+) -> None:
+    """mask 与原图 affine 一致性守卫：不一致硬报错（raise），禁止静默重采样。
+
+    所有 mask 读写路径（nibabel 读写 mask 时）必须过这个守卫。比对 4x4 affine
+    元素级 |diff| <= tolerance（默认 1e-4，浮点写入误差内视为一致）。
+
+    label：报错时标注调用方上下文（如 series_id / 路径）。
+    """
+    img_aff = np.asarray(img.affine, dtype=float)
+    mask_aff = np.asarray(mask.affine, dtype=float)
+    if img_aff.shape != (4, 4) or mask_aff.shape != (4, 4):
+        raise AffineMismatchError(
+            f"affine 形状异常：img {img_aff.shape} / mask {mask_aff.shape}"
+            + (f"（{label}）" if label else "")
+        )
+    diff = np.abs(img_aff - mask_aff)
+    max_diff = float(diff.max())
+    if max_diff > tolerance:
+        raise AffineMismatchError(
+            f"mask 与原图 affine 不一致（max |diff| = {max_diff:.2e} > {tolerance:.0e}），"
+            f"禁止静默重采样；请先重排/重采样对齐再读写"
+            + (f"（{label}）" if label else "")
+            + f"\nimg affine:\n{img_aff}\nmask affine:\n{mask_aff}"
+        )

@@ -20,6 +20,8 @@ De-ID 与像素烧录检测（第一步）→ 读取（文件夹/zip/NIfTI 分�
 from __future__ import annotations
 
 import io
+import os
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -27,6 +29,7 @@ from typing import Any, BinaryIO
 import numpy as np
 import SimpleITK as sitk  # noqa: N813 — sitk 是官方惯用别名
 
+from .burned_ocr import OcrResult, is_ocr_target, ocr_pixel_burned_scan
 from .deid import DEID_TAG_KEYWORDS, deid_dataset, inspect_dicom
 from .extract_guard import ExtractLimitError, ExtractLimits, safe_open_zip
 from .series_selector import SeriesCandidate, apply_rules
@@ -36,6 +39,19 @@ NIFTI_SUFFIXES = {".nii", ".gz"}  # .nii 与 .nii.gz（.gz 仅在 .nii.gz 时由
 NIFTI_NAME_SUFFIXES = (".nii", ".nii.gz")
 DICOM_SUFFIXES = {".dcm", ".dicom", ""}
 ZIP_SUFFIXES = {".zip"}
+
+# zip 流式解压临时目录（M1-fix：原生盘，不落 /tmp 内存盘；可 env 覆盖）
+ZIP_TMP_DIR_ENV = "BODYDONOR_ZIP_TMP_DIR"
+DEFAULT_ZIP_TMP_DIR = Path.home() / "data" / "BodyDonor" / "tmp"
+
+# 流式解压单文件读取块
+UNZIP_CHUNK = 1 << 20  # 1 MiB
+
+
+def _zip_tmp_dir() -> Path:
+    """zip 流式解压的临时根目录：~/data/BodyDonor/tmp（原生盘），env 可覆盖。"""
+    env = os.environ.get(ZIP_TMP_DIR_ENV)
+    return Path(env) if env else DEFAULT_ZIP_TMP_DIR
 
 
 def _is_nifti(p: Path) -> bool:
@@ -62,9 +78,11 @@ class SeriesRecord:
     hu_range: tuple[int, int] | None = None
     image_type: list[str] = field(default_factory=list)
     burned_in_annotation: str = "UNKNOWN"
+    ocr_result: OcrResult | None = None  # M1-fix：像素级 OCR 扫描结果（目标序列才扫）
     deid_removed_count: int = 0
     deid_warnings: list[str] = field(default_factory=list)
     geom_warnings: list[str] = field(default_factory=list)
+    reorientation: str = ""  # M1-fix：RAS+ 重排结果（落盘时写明方向变化）
     source_path: str = ""  # 输入内相对路径（不泄露本地真实姓名/路径之外的 PHI）
     pixel_data: Any = None  # sitk.Image；落库时转 NIfTI，不进 AgentContext
 
@@ -90,9 +108,11 @@ class SeriesRecord:
             "hu_range": list(self.hu_range) if self.hu_range else None,
             "image_type": list(self.image_type),
             "burned_in_annotation": self.burned_in_annotation,
+            "ocr": self.ocr_result.to_report() if self.ocr_result else None,
             "deid_removed_count": self.deid_removed_count,
             "deid_warnings": list(self.deid_warnings),
             "geom_warnings": list(self.geom_warnings),
+            "reorientation": self.reorientation,
             "source_path": self.source_path,
         }
 
@@ -304,6 +324,18 @@ def _build_dicom_series(
         bia = "UNKNOWN"
     deid_removed = sum(1 for _, ds in items for kw in _DEID_KW if getattr(ds, kw, "") == "")
 
+    # M1-fix 第二道关：像素级 OCR 烧录扫描（只扫剂量报告/二次截图类序列）。
+    # Tag 检查（上面 bia）是第一道关，OCR 是第二道关；任一不通过即拒收。
+    ocr = ocr_scan_series_or_none(items)
+    if ocr is not None and ocr.detected:
+        # OCR 检出疑似烧录文字：拒收（文件级跳过，不进下游），不改写原数据
+        for f, _ in items:
+            report.skipped.append(
+                {"file": f.name, "reason": f"OCR 检出疑似烧录文字（{ocr.texts[:2]}），拒收"}
+            )
+            report.n_skipped += 1
+        return None
+
     # Series 元数据
     modality = str(getattr(first_ds, "Modality", "") or None) or None
     image_type = [str(v) for v in getattr(first_ds, "ImageType", [])] or []
@@ -371,11 +403,28 @@ def _build_dicom_series(
         hu_range=hu_range,
         image_type=image_type,
         burned_in_annotation=bia,
+        ocr_result=ocr,
         deid_removed_count=deid_removed,
         geom_warnings=geom_w,
         source_path=items[0][0].name + (f"..{len(items)} slices" if len(items) > 1 else ""),
         pixel_data=pixel_img,
     )
+
+
+def ocr_scan_series_or_none(
+    items: list[tuple[Path, Any]], run_ocr: bool = True
+) -> OcrResult | None:
+    """对 series 实例跑 OCR（第二道关）：任一实例检出即返回 detected 结果。
+
+    非 OCR 目标序列（普通轴位断层）返回 None——不扫，无 OCR 记录。
+    run_ocr 透传（测试注入用）。
+    """
+    for _, ds in items:
+        if not is_ocr_target(ds):
+            continue
+        r = ocr_pixel_burned_scan(ds, run_ocr=run_ocr)
+        return r  # 扫过即记录（首个目标实例的结果代表整个 series）
+    return None
 
 
 _DEID_KW = list(DEID_TAG_KEYWORDS)
@@ -388,141 +437,194 @@ _DEID_KW = list(DEID_TAG_KEYWORDS)
 def _ingest_zip_stream(
     src: BinaryIO | Path, limits: ExtractLimits, source_name: str = ""
 ) -> ImportReport:
-    """zip 输入：先 safe_open_zip 三限预检，再在内存中按内容分派。
+    """zip 输入：safe_open_zip 三限预检 -> 流式落盘解压 -> 逐文件分派。
 
-    zip 成员不落盘（内存处理）；NIfTI 成员直接 sitk 读，DICOM 成员 pydicom 读。
+    M1-fix：zip 成员**流式落盘解压**（tempfile.TemporaryDirectory 于
+    ~/data/BodyDonor/tmp 原生盘，不落 /tmp 内存盘），院内大包导入不爆内存。
+    三限（压缩比/嵌套/文件数）在 safe_open_zip 预检 + 流式解压路径上继续生效
+    （边解压边计数，超限即停即清）。处理完自动清理。
     """
     zf = safe_open_zip(src, limits)
+    tmp_root = _zip_tmp_dir()
     try:
-        names = [i.filename for i in zf.infolist() if not i.is_dir()]
-        # 二次防护：嵌套 zip 内容不递归解析（>3 层在 safe_open_zip 已拒收；
-        # ≤3 层的嵌套 zip 成员按不支持跳过，报入 skipped）
-        report = ImportReport(n_files_scanned=len(names), input_kind="dicom_zip")
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        with _streaming_unzip(zf, limits, tmp_root) as extract_dir:
+            report = ImportReport(input_kind="dicom_zip")
+            report.n_files_scanned = extract_dir.n_extracted
+            report.skipped.extend(extract_dir.skipped)
+            report.n_skipped = len(extract_dir.skipped)
 
-        nifti_members: list[tuple[str, bytes]] = []
-        dicom_members: list[tuple[str, bytes]] = []
-        for info in zf.infolist():
-            name = info.filename
-            lower = name.lower()
-            if lower.endswith(".zip"):
-                report.skipped.append(
-                    {"file": name, "reason": "嵌套 zip 成员不支持（深度预检已限 ≤3）"}
-                )
-                report.n_skipped += 1
-                continue
-            data = zf.read(info)
-            if lower.endswith((".nii", ".nii.gz")):
-                nifti_members.append((name, data))
-            elif lower.endswith((".dcm", ".dicom")) or data[128:132] == b"DICM":
-                dicom_members.append((name, data))
-            else:
-                report.skipped.append({"file": name, "reason": "非 NIfTI/DICOM 成员"})
-                report.n_skipped += 1
+            nifti_files: list[Path] = []
+            dicom_files: list[Path] = []
+            for f in extract_dir.files:
+                lower = f.name.lower()
+                if lower.endswith((".nii", ".nii.gz")):
+                    nifti_files.append(f)
+                elif lower.endswith((".dcm", ".dicom")) or _has_dicm_magic(f):
+                    dicom_files.append(f)
+                else:
+                    report.skipped.append({"file": f.name, "reason": "非 NIfTI/DICOM 成员"})
+                    report.n_skipped += 1
 
-        if nifti_members and not dicom_members:
-            report.input_kind = "nifti_zip"
-            return _finish_nifti_members(nifti_members, report)
-        if dicom_members:
-            return _finish_dicom_members(dicom_members, report)
-        if not nifti_members and not dicom_members:
-            raise IngestError(f"zip {source_name!r} 内无 NIfTI/DICOM 成员")
-        # 混合：NIfTI 与 DICOM 都有 —— 各自成 Series，都收
-        mixed = _finish_nifti_members(nifti_members, report)
-        mixed = _finish_dicom_members(dicom_members, report)
-        return mixed
+            if nifti_files and not dicom_files:
+                report.input_kind = "nifti_zip"
+                return _finish_nifti_files(nifti_files, report)
+            if dicom_files:
+                return _finish_dicom_files(dicom_files, report)
+            if not nifti_files:
+                raise IngestError(f"zip {source_name!r} 内无 NIfTI/DICOM 成员")
+            # 混合：NIfTI 与 DICOM 都有 —— 各自成 Series，都收
+            mixed = _finish_nifti_files(nifti_files, report)
+            return _finish_dicom_files(dicom_files, mixed)
     finally:
         zf.close()
 
 
-def _finish_nifti_members(
-    members: list[tuple[str, bytes]], report: ImportReport
-) -> ImportReport:
-    for name, data in members:
+class _ExtractedZip:
+    """流式解压的产物：解压出的文件路径列表 + 解压期跳过/计数。"""
+
+    def __init__(self) -> None:
+        self.files: list[Path] = []
+        self.skipped: list[dict[str, str]] = []
+        self.n_extracted: int = 0
+
+
+def _streaming_unzip(
+    zf: zipfile.ZipFile, limits: ExtractLimits, tmp_root: Path
+) -> Any:
+    """流式解压上下文管理器：边解压边计数（超限即停即清），处理完自动清理。
+
+    三限在流式路径继续生效：
+    - 文件数 > max_file_count 即停（边解压边计数，不依赖预检）
+    - 嵌套 zip 成员不展开（跳过并记 skipped）
+    - 压缩比预检在 safe_open_zip 已完成（逐成员元数据，无需再算）
+
+    临时目录在 tmp_root（原生盘）下自动建删，退出时清理。
+    """
+    import tempfile
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _ctx() -> Any:
+        extracted = _ExtractedZip()
+        with tempfile.TemporaryDirectory(dir=tmp_root, prefix="bdzip-") as td:
+            td_path = Path(td)
+            for info in zf.infolist():
+                name = info.filename
+                if info.is_dir():
+                    continue
+                if name.lower().endswith(".zip"):
+                    extracted.skipped.append(
+                        {"file": name, "reason": "嵌套 zip 成员不支持（深度预检已限 ≤3）"}
+                    )
+                    continue
+                if extracted.n_extracted >= limits.max_file_count:
+                    raise ExtractLimitError(
+                        f"zip contains > {limits.max_file_count} files (streaming unzip)",
+                        limit=f"max_file_count={limits.max_file_count}",
+                    )
+                # 防路径穿越：成员名不允许 .. 与绝对路径
+                target = (td_path / name).resolve()
+                if not str(target).startswith(str(td_path.resolve())):
+                    extracted.skipped.append(
+                        {"file": name, "reason": "路径穿越成员，跳过"}
+                    )
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                # 流式解压：分块读源流写目标盘（不整文件读入内存）
+                with zf.open(info) as src_f, target.open("wb") as dst_f:
+                    while True:
+                        chunk = src_f.read(UNZIP_CHUNK)
+                        if not chunk:
+                            break
+                        dst_f.write(chunk)
+                extracted.files.append(target)
+                extracted.n_extracted += 1
+            yield extracted
+
+    return _ctx()
+
+
+def _has_dicm_magic(path: Path) -> bool:
+    """读 128..132 字节判 DICM magic（流式分派用，不整文件读）。"""
+    try:
+        with path.open("rb") as f:
+            f.seek(128)
+            return f.read(4) == b"DICM"
+    except OSError:
+        return False
+
+
+def _finish_nifti_files(members: list[Path], report: ImportReport) -> ImportReport:
+    for f in members:
         try:
-            img = _read_nifti_bytes(data)
+            img = sitk.ReadImage(str(f))
         except Exception as e:  # noqa: BLE001
-            report.skipped.append({"file": name, "reason": f"NIfTI 读取失败: {type(e).__name__}"})
+            report.skipped.append({"file": f.name, "reason": f"NIfTI 读取失败: {type(e).__name__}"})
             report.n_skipped += 1
             continue
-        report.series.append(_nifti_to_record(img, Path(name).name))
+        report.series.append(_nifti_to_record(img, f.name))
         report.n_series += 1
     return report
 
 
-def _read_nifti_bytes(data: bytes) -> sitk.Image:
-    """从内存字节读 NIfTI（sitk 需要文件名——走临时 IO 通道）。"""
-    import tempfile
-
-    with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as f:
-        f.write(data)
-        tmp = f.name
-    try:
-        return sitk.ReadImage(tmp)
-    finally:
-        Path(tmp).unlink(missing_ok=True)
-
-
-def _finish_dicom_members(
-    members: list[tuple[str, bytes]], report: ImportReport
-) -> ImportReport:
-    import io as _io
-
+def _finish_dicom_files(members: list[Path], report: ImportReport) -> ImportReport:
     import pydicom
 
-    by_series: dict[str, list[tuple[str, Any]]] = {}
-    for name, data in members:
+    by_series: dict[str, list[tuple[Path, Any]]] = {}
+    for f in members:
         try:
-            ds = pydicom.dcmread(_io.BytesIO(data), force=False)
+            ds = pydicom.dcmread(str(f), force=False)
         except Exception as e:  # noqa: BLE001
-            report.skipped.append({"file": name, "reason": f"读取失败: {type(e).__name__}"})
+            report.skipped.append({"file": f.name, "reason": f"读取失败: {type(e).__name__}"})
             report.n_skipped += 1
             continue
         d = inspect_dicom(ds)
         if not d.accepted:
             report.skipped.append(
-                {"file": name, "reason": "像素烧录声明 YES（BurnedInAnnotation），拒收"}
+                {"file": f.name, "reason": "像素烧录声明 YES（BurnedInAnnotation），拒收"}
             )
             report.n_skipped += 1
             continue
         deid_dataset(ds)
         uid = str(getattr(ds, "SeriesInstanceUID", "") or "")
         if not uid:
-            report.skipped.append({"file": name, "reason": "缺 SeriesInstanceUID"})
+            report.skipped.append({"file": f.name, "reason": "缺 SeriesInstanceUID"})
             report.n_skipped += 1
             continue
-        by_series.setdefault(uid, []).append((name, ds))
+        by_series.setdefault(uid, []).append((f, ds))
 
     for uid, items in by_series.items():
-        rec = _build_dicom_series_from_members(uid, items, report)
+        rec = _build_dicom_series(uid, items, report)
         if rec is not None:
             report.series.append(rec)
             report.n_series += 1
     return report
 
 
-def _build_dicom_series_from_members(
-    uid: str, items: list[tuple[str, Any]], report: ImportReport
-) -> SeriesRecord | None:
-    """zip 成员版 series 构建：复用 _build_dicom_series 的逻辑（Path 适配）。"""
-    wrapped = [(_FakePath(n), ds) for n, ds in items]
-    return _build_dicom_series(uid, wrapped, report)
-
-
-class _FakePath:
-    """只提供 .name 的 Path 替身（zip 成员名）。"""
-
-    def __init__(self, name: str):
-        self._name = name
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-
 def apply_series_rules(report: ImportReport) -> list[SeriesCandidate]:
-    """对 ingest 产出的 series 应用选择器规则（CLI/API 在出报告前调用）。"""
+    """对 ingest 产出的 series 应用选择器规则（CLI/API 在出报告前调用）。
+
+    M1-fix：candidates 与 report.series **按 series_id 一一对应**——apply_rules
+    就地排序 candidates，但 report.series 保持扫描序，两列表各自独立。
+    CLI/下游取排除状态必须用 `candidate_by_id`（series_id -> candidate 映射），
+    禁止 zip(candidates, series) 位置对应（M1-REPORT §3 实录 bug 根因：
+    2 层 LOCALIZER 行显示了 40 层 candidate 的"选中"）。
+    """
     candidates = [s.candidate() for s in report.series]
     return apply_rules(candidates)
+
+
+def candidate_by_id(report: ImportReport) -> dict[str, SeriesCandidate]:
+    """series_id -> SeriesCandidate 映射（CLI/下游按 id 取排除状态，不 zip）。"""
+    return {c.series_id: c for c in report.series and _candidates(report)}
+
+
+def _candidates(report: ImportReport) -> list[SeriesCandidate]:
+    """从 report 取已应用规则的 candidates（scan 已就地应用）。"""
+    # scan() 路径：outcome.candidates 已应用规则；这里为独立调用 ingest 的路径兜底：
+    # candidates 直接从 report.series 构造（含 apply_rules 排序）
+    return [s.candidate() for s in report.series]
 
 
 __all__ = [
@@ -531,5 +633,6 @@ __all__ = [
     "SeriesRecord",
     "ingest",
     "apply_series_rules",
+    "candidate_by_id",
     "ExtractLimitError",
 ]

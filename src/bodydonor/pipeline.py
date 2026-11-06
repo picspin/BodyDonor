@@ -14,9 +14,38 @@ from . import db
 from .config import Settings
 from .extract_guard import ExtractLimits
 from .ingest import ImportReport, SeriesRecord, apply_series_rules, ingest
-from .series_selector import SeriesCandidate, select
+from .nifti_geom import reorient_ras
+from .series_selector import MIN_SLICES, SeriesCandidate, select
 from .storage import LocalFsStorage
 from .usage_counter import TrialLimitError, check_trial_limits, fingerprint_hash, record_case_usage
+
+
+class SliceGuardError(Exception):
+    """commit 路径防线：< min_slices 的序列试图交给下游（未显式勾选覆盖）。"""
+
+
+def guard_min_slices(
+    candidates: list[SeriesCandidate],
+    selected: list[str],
+    user_overrides: list[str] | None = None,
+) -> None:
+    """commit 路径防线：拒绝把 < min_slices 的序列交给下游（M2 教师推理）。
+
+    M2 的 TotalSegmentator 收到定位像残片会 3D 卷积报错。<min_slices 的序列
+    只有用户显式勾选（user_overrides 含该 id，且该 id 本来被规则排除在层数上）
+    才放行。
+    """
+    by_id = {c.series_id: c for c in candidates}
+    overrides = set(user_overrides or [])
+    for sid in selected:
+        c = by_id.get(sid)
+        if c is None:
+            continue
+        if c.num_slices < MIN_SLICES and sid not in overrides:
+            raise SliceGuardError(
+                f"series {sid} 层数 {c.num_slices} < {MIN_SLICES}，拒绝交给下游"
+                f"（定位像/残片会导致 3D 卷积报错；显式 --include 勾选可覆盖）"
+            )
 
 
 @dataclass
@@ -74,6 +103,8 @@ def commit(
     if not selected:
         outcome.usage = {"recorded": False, "reason": "no series selected"}
         return outcome
+    # commit 路径防线：< min_slices 序列不交给下游（用户显式勾选才放行）
+    guard_min_slices(outcome.candidates, selected, user_overrides=user_overrides)
 
     fp = fingerprint_hash()
     url = settings.database.url
@@ -216,19 +247,29 @@ def _backfill_storage_key(session, series_id: str, key: str) -> None:  # noqa: A
 
 
 def _save_pixels(storage: LocalFsStorage, rec: SeriesRecord) -> str | None:
-    """像素落盘（NIfTI 转换产物；DICOM 转 NIfTI）。失败不中断（记 warning）。"""
+    """像素落盘（NIfTI 转换产物；DICOM 转 NIfTI）。失败不中断（记 warning）。
+
+    M1-fix：落盘前做 RAS+ 标准方向重排（nibabel as_closest_canonical），
+    重排结果写回 rec.reorientation 供导入报告写明方向。
+    """
     if rec.pixel_data is None:
         return None
     key = f"{rec.case_key[:60]}/{rec.series_id[:60]}/image.nii.gz"
     try:
         import tempfile
 
+        import nibabel as nib
         import SimpleITK as sitk  # noqa: N813 — sitk 是官方惯用别名
 
         with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as f:
             tmp = f.name
         try:
             sitk.WriteImage(rec.pixel_data, tmp)
+            # RAS+ 标准方向重排（M1-fix：DICOM -> NIfTI 落盘前强制）
+            nib_img = nib.load(tmp)
+            nib_img, reorient_desc = reorient_ras(nib_img)
+            rec.reorientation = reorient_desc
+            nib.save(nib_img, tmp)
             data = Path(tmp).read_bytes()
         finally:
             Path(tmp).unlink(missing_ok=True)

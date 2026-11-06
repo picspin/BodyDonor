@@ -103,8 +103,13 @@ def import_cmd(
 
 
 def _print_import_report(outcome, path: Path) -> None:  # noqa: ANN001 — ImportOutcome
-    """导入报告（自检门）：rich.table 打印（proposal §5）。"""
+    """导入报告（自检门）：rich.table 打印（proposal §5）。
+
+    M1-fix：选择器列按 **series_id** 从 candidates 取（apply_rules 排序 candidates
+    但 report.series 保持扫描序，位置 zip 会错位——M1-REPORT §3 实录 bug 根因）。
+    """
     report = outcome.report
+    cand_map = {c.series_id: c for c in outcome.candidates}
     table = Table(title=f"导入报告（自检门）— {path}")
     table.add_column("Series", style="cyan", overflow="fold")
     table.add_column("模态")
@@ -114,12 +119,19 @@ def _print_import_report(outcome, path: Path) -> None:  # noqa: ANN001 — Impor
     table.add_column("HU 范围", justify="right")
     table.add_column("烧录")
     table.add_column("选择器")
-    for cand, rec in zip(outcome.candidates, report.series, strict=False):
-        sel = (
-            f"[red]排除：{cand.exclude_reason}[/red]" if cand.excluded else "[green]选中[/green]"
-        )
-        if cand.flags:
-            sel += " [yellow]" + "; ".join(cand.flags) + "[/yellow]"
+    for rec in report.series:
+        cand = cand_map.get(rec.series_id)
+        if cand is not None:
+            sel_state = "[green]选中[/green]" if not cand.excluded else "[red]排除[/red]"
+            sel = (
+                sel_state
+                if not cand.excluded
+                else f"[red]排除：{cand.exclude_reason}[/red]"
+            )
+            if cand.flags:
+                sel += " [yellow]" + "; ".join(cand.flags) + "[/yellow]"
+        else:
+            sel = "—"
         hu = f"{rec.hu_range[0]}..{rec.hu_range[1]}" if rec.hu_range else "—"
         bia = rec.burned_in_annotation
         bia_s = {"YES": "[red]YES[/red]", "NO": "no", "UNKNOWN": "[yellow]?[/yellow]"}.get(bia, bia)
@@ -146,10 +158,19 @@ def _print_import_report(outcome, path: Path) -> None:  # noqa: ANN001 — Impor
         meta.add_row(f"  跳过：{sk['file'][:40]}", sk["reason"])
     for w in report.warnings[:5]:
         meta.add_row("  警告", w)
-    # 几何警告（NIfTI）
+    # 几何警告（NIfTI）+ 重排方向（M1-fix）
     for rec in report.series:
         for w in rec.geom_warnings[:3]:
             meta.add_row(f"  几何：{rec.series_id[:24]}", w)
+        if rec.reorientation:
+            meta.add_row(f"  重排：{rec.series_id[:24]}", rec.reorientation)
+        if rec.ocr_result is not None and rec.ocr_result.scanned:
+            ocr_s = (
+                f"[red]{rec.ocr_result.reason}: {rec.ocr_result.texts[:3]}[/red]"
+                if rec.ocr_result.detected
+                else rec.ocr_result.reason
+            )
+            meta.add_row(f"  OCR：{rec.series_id[:24]}", ocr_s)
         for w in rec.deid_warnings[:2]:
             meta.add_row(f"  De-ID：{rec.series_id[:24]}", w)
     console.print(meta)

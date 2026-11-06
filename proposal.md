@@ -188,7 +188,7 @@ ingest(path_or_stream) -> [Series]
 | 阶段 | 内容 |
 |---|---|
 | **M0** | 仓库（本地 git，GitHub 远程待用户确认再建）、FastAPI 骨架、SQLite（默认）+ 本地文件系统（`StorageBackend`、`QueueBackend` 接口抽象）、CI 最小集、许可证登记。**TotalSegmentator 许可证核查提到最前面并产出结论**（6 项 checklist：`total` 基础任务权重许可、高级任务授权边界、商业授权持有主体、nnInteractive 许可、nnU-Net v2 许可 + 蒸馏传染、SegVol/SAT 许可；产出物 `LICENSES-THIRD-PARTY.md` + config 任务白名单 `teacher.allowed_tasks` + CI 白名单负测试）。版本 pin：独立 venv/uv lock，逐个验证 import 链，不共享环境。CLI 命令树起步（`bodydonor import`、`bodydonor license`、`bodydonor status`）。**数据模型：落定 7 个核心实体（Project / Case / Series / MaskVersion / QCReport / ReviewTask / ModelVersion）的 SQLAlchemy/SQLModel 定义 + Alembic 初始化与初始迁移**。SQLite 开 WAL + busy_timeout，写操作走单一写入纪律（防 database is locked）。许可证基础：LicenseState/UsageLedger 实体（机器指纹哈希、license ID、试用计数 年/月），为无 License 试用限制（每年 200 例 / 每月 20 例，先到者为准）提供计数基础；强制执行分阶段：M1 导入路径计数并拦截超限，M4/M5 落完整 Ed25519 激活流程 |
-| **M1** | Import Bundle（NIfTI、DICOM 文件夹、zip、多序列）、Series 选择器、导入报告、De-ID、NIfTI 几何校验。验收：三种输入各跑通一次，产出导入报告；zip 炸弹三 case 负测试通过。QC 数据集下载与许可登记（TotalSegmentator Zenodo + AMOS22） |
+| **M1** | Import Bundle（NIfTI、DICOM 文件夹、zip、多序列）、Series 选择器、导入报告、De-ID、NIfTI 几何校验。验收：三种输入各跑通一次，产出导入报告；zip 炸弹三 case 负测试通过。QC 数据集下载与许可登记（TotalSegmentator Zenodo + AMOS22）。**M1-fix（进 M2 前补齐）**：highdicom DICOM SEG 导出与校验（`src/bodydonor/export_seg.py`，pydicom 重读 + highdicom 校验 + 逐体素 diff）；像素级 OCR 烧录扫描（只扫 Dose Report / Secondary Capture 序列，普通轴位 CT 不扫）；DICOM→NIfTI 落盘做 RAS+ 标准方向重排；nibabel 读写时 mask 与原图 affine 不一致硬报错 `assert_affine_match(img, mask)`，禁止静默重采样；`ingest()` 的 zip 处理改为流式落盘解压（`tempfile.TemporaryDirectory(dir=~/data/BodyDonor/tmp)`，原生盘、自动清理）；修选择器 bug：<30 层序列必须被自动排除（M1-REPORT §3 的 2 层序列曾显示选中）+ 回归测试 |
 | **M2** | TotalSegmentator worker、本体映射（静态查表 + 三态回退）、niivue 审阅（做/不做清单 + 性能红线）、TUI（`bodydonor tui` Textual 监控面 + TUI import） |
 | **M3** | QC 引擎（两级校准）与抽检（混合采样）。多教师规则延后（M4 学生模型出现后启用） |
 | **M4** | nnU-Net 蒸馏与门禁（3d_lowres 起步；训练输入 = 教师 + 人工修正，学生输出不回灌）。准入项：蒸馏许可传染性书面结论；无结论则产物仅限科研用途 |
@@ -230,6 +230,10 @@ lint + 单测 + zip 炸弹负测试 + 许可白名单负测试 + AgentContext PH
 - 抽检角色：科研期单人修正，权限模型预留 role 字段（Q10）
 - 无 License 试用限制：每年 200 例 / 每月 20 例（先到者为准）；计数基础（LicenseState/UsageLedger 实体）进 M0，导入路径强制执行从 M1 起，完整 Ed25519 指纹激活流程 M4/M5
 - SQLite 并发：WAL + busy_timeout + 单一写入纪律；PG 仍为可选 profile（多进程 worker 时再切）
+- DICOM SEG 导出：highdicom 导出与校验（`src/bodydonor/export_seg.py`），M1-fix 补，进 M2 前完成
+- 像素烧录 OCR：只扫 Dose Report / Secondary Capture 序列（普通螺旋 CT 轴位断层几乎无烧录），Tag 检查仍为第一道关
+- 几何强约束：DICOM→NIfTI 做 RAS+ 标准方向重排；`assert_affine_match(img, mask)` 硬报错，禁止静默重采样
+- zip 解压：流式落盘（`~/data/BodyDonor/tmp`，原生盘、自动清理），不用内存分派
 
 ## 14. 待定项
 
