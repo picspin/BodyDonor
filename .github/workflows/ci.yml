@@ -34,7 +34,14 @@ jobs:
         run: uv run pytest -v
         # 覆盖：许可白名单负测试（tests/test_license_whitelist.py）、
         # AgentContext PHI 负测试（tests/test_agent_context_phi.py）、
-        # Storage/Queue/Config、FastAPI 骨架。
+        # Storage/Queue/Config、FastAPI 骨架、
+        # DB 纪律 + Alembic upgrade/downgrade（tests/test_db.py）。
+      - name: Alembic migration roundtrip (fresh db)
+        run: |
+          uv run alembic -x db_url=sqlite:///./ci_mig.db upgrade head
+          uv run alembic -x db_url=sqlite:///./ci_mig.db downgrade base
+          uv run alembic -x db_url=sqlite:///./ci_mig.db upgrade head
+          rm -f ci_mig.db
       - name: License whitelist negative test (CLI exit code)
         run: |
           uv run bodydonor license check total       # 允许 -> exit 0

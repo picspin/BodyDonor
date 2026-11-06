@@ -1,6 +1,7 @@
-"""FastAPI 骨架（M0）：健康检查、status、license、配置化限制。
+"""FastAPI 骨架（M0-fix）：健康检查、status、license、配置化限制、DB 实体计数查看。
 
-M1 起 ingest 端点在 router 层加 max_upload_mb 强制流式计数（前端预检/反代/后端三处之一）。
+M1 起 ingest 端点在 router 层加 max_upload_mb 强制流式计数（前端预检/反代/后端三处之一），
+且在导入路径写 UsageLedger 并拦截超限（LicenseState.trial_yearly/monthly_used）。
 """
 
 from __future__ import annotations
@@ -87,6 +88,43 @@ def enqueue(case_id: str, stage: str) -> dict[str, str]:
 @app.get("/queue/size")
 def queue_size() -> dict[str, int]:
     return {"size": queue.qsize()}
+
+
+@app.get("/license/usage")
+def license_usage() -> dict[str, object]:
+    """License 试用计数查看（只读，不强制执行）。
+
+    M0-fix：LicenseState/UsageLedger 计数基础的数据模型落地；强制执行 M1 起
+    （导入路径计数拦截），完整 Ed25519 激活流程 M4/M5。多指纹部署（多库/多容器）
+    时每库各自有 license_state 行；单机单库默认只有一行。
+    """
+    from sqlalchemy import select
+
+    from .db import _engine
+    from .models import LicenseState
+
+    engine = _engine(settings.database.url)
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            s = Session(conn)
+            states = s.execute(select(LicenseState)).scalars().all()
+            out = []
+            for st in states:
+                out.append(
+                    {
+                        "fingerprint_hash": st.fingerprint_hash[:16] + "...",
+                        "license_id": st.license_id,
+                        "mode": "licensed" if st.license_id else "trial",
+                        "yearly": {"used": st.trial_yearly_used, "limit": st.trial_yearly_limit},
+                        "monthly": {"used": st.trial_monthly_used, "limit": st.trial_monthly_limit},
+                    }
+                )
+            s.close()
+    finally:
+        engine.dispose()
+    return {"states": out, "enforcement": "deferred_to_m1"}
 
 
 @app.post("/agent-context/preview")

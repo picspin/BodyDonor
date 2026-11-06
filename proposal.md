@@ -187,7 +187,7 @@ ingest(path_or_stream) -> [Series]
 
 | 阶段 | 内容 |
 |---|---|
-| **M0** | 仓库（本地 git，GitHub 远程待用户确认再建）、FastAPI 骨架、SQLite（默认）+ 本地文件系统（`StorageBackend`、`QueueBackend` 接口抽象）、CI 最小集、许可证登记。**TotalSegmentator 许可证核查提到最前面并产出结论**（6 项 checklist：`total` 基础任务权重许可、高级任务授权边界、商业授权持有主体、nnInteractive 许可、nnU-Net v2 许可 + 蒸馏传染、SegVol/SAT 许可；产出物 `LICENSES-THIRD-PARTY.md` + config 任务白名单 `teacher.allowed_tasks` + CI 白名单负测试）。版本 pin：独立 venv/uv lock，逐个验证 import 链，不共享环境。CLI 命令树起步（`bodydonor import`、`bodydonor license`、`bodydonor status`） |
+| **M0** | 仓库（本地 git，GitHub 远程待用户确认再建）、FastAPI 骨架、SQLite（默认）+ 本地文件系统（`StorageBackend`、`QueueBackend` 接口抽象）、CI 最小集、许可证登记。**TotalSegmentator 许可证核查提到最前面并产出结论**（6 项 checklist：`total` 基础任务权重许可、高级任务授权边界、商业授权持有主体、nnInteractive 许可、nnU-Net v2 许可 + 蒸馏传染、SegVol/SAT 许可；产出物 `LICENSES-THIRD-PARTY.md` + config 任务白名单 `teacher.allowed_tasks` + CI 白名单负测试）。版本 pin：独立 venv/uv lock，逐个验证 import 链，不共享环境。CLI 命令树起步（`bodydonor import`、`bodydonor license`、`bodydonor status`）。**数据模型：落定 7 个核心实体（Project / Case / Series / MaskVersion / QCReport / ReviewTask / ModelVersion）的 SQLAlchemy/SQLModel 定义 + Alembic 初始化与初始迁移**。SQLite 开 WAL + busy_timeout，写操作走单一写入纪律（防 database is locked）。许可证基础：LicenseState/UsageLedger 实体（机器指纹哈希、license ID、试用计数 年/月），为无 License 试用限制（每年 200 例 / 每月 20 例，先到者为准）提供计数基础；强制执行分阶段：M1 导入路径计数并拦截超限，M4/M5 落完整 Ed25519 激活流程 |
 | **M1** | Import Bundle（NIfTI、DICOM 文件夹、zip、多序列）、Series 选择器、导入报告、De-ID、NIfTI 几何校验。验收：三种输入各跑通一次，产出导入报告；zip 炸弹三 case 负测试通过。QC 数据集下载与许可登记（TotalSegmentator Zenodo + AMOS22） |
 | **M2** | TotalSegmentator worker、本体映射（静态查表 + 三态回退）、niivue 审阅（做/不做清单 + 性能红线）、TUI（`bodydonor tui` Textual 监控面 + TUI import） |
 | **M3** | QC 引擎（两级校准）与抽检（混合采样）。多教师规则延后（M4 学生模型出现后启用） |
@@ -200,7 +200,7 @@ lint + 单测 + zip 炸弹负测试 + 许可白名单负测试 + AgentContext PH
 
 ## 12. 给 Claude Code 的启动指令（精简版 v2）
 
-1. 仓库 BodyDonor，按 M0 开工：本地 git init（**不要擅自创建 GitHub 远程仓库，远程待用户确认**）；FastAPI 骨架、SQLite（默认）+ 本地文件系统（`StorageBackend`、`QueueBackend` 接口抽象，后续可替换）、CI 最小集（lint/单测/zip 炸弹/许可白名单/PHI 负测试）、许可证登记。docker-compose 只含 PG（可选）。
+1. 仓库 BodyDonor，按 M0 开工：本地 git init（**不要擅自创建 GitHub 远程仓库，远程待用户确认**）；FastAPI 骨架、SQLite（默认）+ 本地文件系统（`StorageBackend`、`QueueBackend` 接口抽象，后续可替换）、CI 最小集（lint/单测/zip 炸弹/许可白名单/PHI 负测试）、许可证登记。docker-compose 只含 PG（可选）。**数据模型先落定 7 个核心实体（Project / Case / Series / MaskVersion / QCReport / ReviewTask / ModelVersion）+ Alembic 初始化与初始迁移；SQLite 开 WAL + busy_timeout，写操作走单一写入纪律。**
 2. **先做 TotalSegmentator 许可证核查并产出结论**（6 项 checklist + `LICENSES-THIRD-PARTY.md` + 任务白名单 + 负测试），再写推理代码。核查范围包括 nnInteractive、nnU-Net v2、SegVol/SAT。
 3. 版本 pin：独立 venv/uv lock，逐个验证 import 链，不共享环境。数据目录 `~/data/BodyDonor/`，不要放 `/mnt/c/`。
 4. CLI 命令树起步：`bodydonor import`、`bodydonor license`、`bodydonor status`（argparse 或 Typer + rich.table）。
@@ -228,6 +228,8 @@ lint + 单测 + zip 炸弹负测试 + 许可白名单负测试 + AgentContext PH
 - demo 病例：公开 CT 样例（Q8）
 - mTLS：M0–M4 不碰，M5 再实现（Q9）
 - 抽检角色：科研期单人修正，权限模型预留 role 字段（Q10）
+- 无 License 试用限制：每年 200 例 / 每月 20 例（先到者为准）；计数基础（LicenseState/UsageLedger 实体）进 M0，导入路径强制执行从 M1 起，完整 Ed25519 指纹激活流程 M4/M5
+- SQLite 并发：WAL + busy_timeout + 单一写入纪律；PG 仍为可选 profile（多进程 worker 时再切）
 
 ## 14. 待定项
 

@@ -9,7 +9,7 @@
 
 ### 1.1 仓库
 
-- 本地 `git init`（main 分支）。**未创建 GitHub 远程仓库、未 push**（proposal §12 第 1 条：远程 picsum/BodyDonor 待用户确认）。
+- 本地 `git init`（main 分支）。**未创建 GitHub 远程仓库、未 push**（proposal §12 第 1 条：远程 picspin/BodyDonor 待用户确认）。
 - `.gitignore` 排除 `.venv/`、`bodydonor.db`、`__pycache__`；`uv.lock` 进仓（版本 pin，Q7）。
 
 ### 1.2 第三方许可证核查（先于推理代码，proposal §12 第 2 条）
@@ -118,7 +118,7 @@ sqlite bodydonor.db 落盘，~/data/BodyDonor/storage/ 创建。
 
 ## 5. 遗留问题（按优先级）
 
-1. **GitHub 远程仓库**：未建未推（待用户确认 picsum/BodyDonor）。CI workflow 就绪，push 后即生效。
+1. **GitHub 远程仓库**：未建未推（待用户确认 picspin/BodyDonor）。CI workflow 就绪，push 后即生效。
 2. **BSL 1.1 LICENSE 文件**：proposal §14 待定项——Additional Use Grant 需法务把关，M0 未放 LICENSE 文件
    （pyproject 声明 `BSL-1.1` 占位）。产出前建议加占位说明文件。
 3. **BAAI/SegVol 权重许可待核实**：逃生通道启用前向 BAAI 确认（M5 前完成即可）。
