@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# 运行时产物
+bodydonor.db
+*.sqlite3
+logs/
+
+# 数据目录不在仓内（~/data/BodyDonor），但防误放
+data/
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+
+# uv
+# .venv 已排除；uv.lock 必须进仓（版本 pin，Q7）

@@ -1,0 +1,42 @@
+# BodyDonor CI 最小集（M0，proposal §11 CI 最小集）：
+#   lint + 单测 + zip 炸弹负测试 + 许可白名单负测试 + AgentContext PHI 负测试。
+# GPU 推理不进 CI（显存/耗时基线手工汇报）。
+# zip 炸弹三 case 负测试在 M1 ingest 落地后补齐（tests/test_zip_bomb.py）。
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Ruff lint
+        run: uvx ruff check src tests
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install (locked, all extras)
+        run: uv sync --all-extras --locked
+      - name: Unit tests
+        run: uv run pytest -v
+        # 覆盖：许可白名单负测试（tests/test_license_whitelist.py）、
+        # AgentContext PHI 负测试（tests/test_agent_context_phi.py）、
+        # Storage/Queue/Config、FastAPI 骨架。
+      - name: License whitelist negative test (CLI exit code)
+        run: |
+          uv run bodydonor license check total       # 允许 -> exit 0
+          ! uv run bodydonor license check brain_aneurysm   # 禁用 -> exit 非 0
+          ! uv run bodydonor license check heartchambers_highres  # licensed 未加白 -> exit 非 0

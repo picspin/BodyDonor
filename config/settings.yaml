@@ -1,0 +1,88 @@
+# BodyDonor 全局配置（M0）
+# 改限制/阈值 = config diff，不是代码 diff（proposal §4.3、§7）。
+# 许可事实来源：LICENSES-THIRD-PARTY.md（M0 联网核查结论）。
+
+# 部署形态：cloud_demo | on_prem
+deployment_mode: on_prem
+
+# 数据目录：WSL2 原生文件系统，禁 /mnt/c（9P 慢一个量级，proposal §10）
+data_dir: null  # null -> 默认 ~/data/BodyDonor
+
+limits:
+  # 仅 cloud_demo 生效；on_prem 的 max_upload_mb 为 null（不限）
+  cloud_demo:
+    max_upload_mb: 100
+    retention_hours: 24
+    pixel_egress: allow_public_only
+  on_prem:
+    max_upload_mb: null
+    ingest: [upload, folder_import]
+
+# 解压保护（zip 炸弹负测试的判定值，M1 起用于 ingest）
+extract_limits:
+  max_compression_ratio: 100   # 压缩比 > 100x 拒收
+  max_nested_zip_depth: 3      # 嵌套 zip > 3 层拒收
+  max_file_count: 10000        # 文件数 > 10k 拒收
+
+# 教师任务白名单（许可核查结论，详见 LICENSES-THIRD-PARTY.md §6）
+# research: M0–M4 科研期可跑；commercial_distill: 商用蒸馏唯一安全教师
+teacher:
+  engine: totalsegmentator
+  allowed_tasks:
+    - total
+    - total_mr
+    - lung_vessels
+    - lung_vessels_LEGACY
+    - body
+    - body_mr
+    - vertebrae_mr
+    - cerebral_bleed
+    - hip_implant
+    - pleural_pericard_effusion
+    - head_glands_cavities
+    - head_muscles
+    - headneck_bones_vessels
+    - headneck_muscles
+    - liver_vessels
+    - oculomotor_muscles
+    - lung_nodules
+    - kidney_cysts
+    - breasts
+    - liver_segments
+    - liver_segments_mr
+    - craniofacial_structures
+    - abdominal_muscles
+    - teeth
+    - trunk_cavities
+    - ventricle_parts
+    - liver_lesions
+    - liver_lesions_mr
+    - vertebrae_pp
+    - vertebrae_pp_refined
+    - vertebrae_body
+  # 商用蒸馏只允许 total（LICENSES-THIRD-PARTY.md §7：唯一 "Openly available for any usage" 的教师 mask 来源）
+  commercial_distill_tasks:
+    - total
+  # 禁用：brain_aneurysm —— CC BY-NC 4.0 且无商业授权渠道，连付费路径都不存在，不得出现在任何白名单
+  blocked_tasks:
+    - brain_aneurysm
+
+# 交互式修正工具（不走任务白名单，约束见 LICENSES-THIRD-PARTY.md §2.2）
+nninteractive:
+  # 权重 CC BY-NC-SA 4.0：仅交互式标注辅助；产物不进商用蒸馏训练集
+  role: interactive_correction_only
+  outputs_enter_commercial_training: false
+
+# 实验逃生通道（SegVol/SAT）：必须显式开启，结果打 experimental 标记，不进蒸馏训练集
+experimental_text_prompt:
+  enabled: false
+
+# 存储与队列（M0 默认组合；MinIO/Redis/PG profile 后置）
+storage:
+  backend: local_fs
+queue:
+  backend: inprocess
+
+# 数据库（默认 SQLite；PG 为可选 profile，docker-compose 只含 PG）
+database:
+  url: sqlite:///./bodydonor.db

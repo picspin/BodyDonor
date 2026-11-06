@@ -1,0 +1,24 @@
+# BodyDonor M0 compose：只含 PG（可选 profile，proposal §9）。
+# 默认组合是 SQLite + 本地文件系统 + 进程内队列，不需要任何容器。
+# 启动可选 PG：docker compose --profile pg up -d
+# Orthanc / MinIO / Redis 不在 compose 里（MVP 砍掉）。
+services:
+  db:
+    image: postgres:16-alpine
+    profiles: ["pg"]
+    environment:
+      POSTGRES_USER: bodydonor
+      POSTGRES_PASSWORD: bodydonor
+      POSTGRES_DB: bodydonor
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bodydonor"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
