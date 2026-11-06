@@ -1,7 +1,8 @@
-# BodyDonor CI 最小集（M0，proposal §11 CI 最小集）：
+# BodyDonor CI 最小集（M0 + M1，proposal §11 CI 最小集）：
 #   lint + 单测 + zip 炸弹负测试 + 许可白名单负测试 + AgentContext PHI 负测试。
+#   M1：zip 炸弹三 case 负测试（tests/test_zip_bomb.py）+ ingest/De-ID/试用计数（tests/test_ingest.py、
+#   tests/test_deid_usage.py、tests/test_api_ingest.py）。
 # GPU 推理不进 CI（显存/耗时基线手工汇报）。
-# zip 炸弹三 case 负测试在 M1 ingest 落地后补齐（tests/test_zip_bomb.py）。
 
 name: ci
 

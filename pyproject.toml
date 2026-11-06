@@ -21,6 +21,7 @@ ingest = [
     "pydicom>=3.0",
     "SimpleITK>=2.4",
     "nibabel>=5.3",
+    "python-multipart>=0.0.20",
 ]
 dev = [
     "pytest>=8.3",

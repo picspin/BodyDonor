@@ -24,6 +24,14 @@ extract_limits:
   max_nested_zip_depth: 3      # 嵌套 zip > 3 层拒收
   max_file_count: 10000        # 文件数 > 10k 拒收
 
+# 试用限制（M1 导入路径强制执行；计数以 Case 为单位，UsageLedger 为真相源）
+# 无 License：每年 200 例 / 每月 20 例，先到者为准；超限拦截（CLI exit 1 / API 403）
+# Series 选择器（M1，规则过滤 ≠ 硬删）：LOCALIZER 排除、DERIVED 置后标注、
+# 层数 < 30 排除、非轴位排除可勾回——阈值在 series_selector.py，M2 随 Web UI 前移入本文件
+# QC 数据集（M1 下载登记见 LICENSES-THIRD-PARTY.md §5.1）：
+#   AMOS22 40-case 子集已下载（hold-out 用，不进训练）
+#   TotalSegmentator dataset 全量延后（QC 冷启动 M3 前执行）
+
 # 教师任务白名单（许可核查结论，详见 LICENSES-THIRD-PARTY.md §6）
 # research: M0–M4 科研期可跑；commercial_distill: 商用蒸馏唯一安全教师
 teacher:

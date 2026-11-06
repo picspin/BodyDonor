@@ -1,14 +1,18 @@
-"""FastAPI 骨架（M0-fix）：健康检查、status、license、配置化限制、DB 实体计数查看。
+"""FastAPI 骨架（M0-fix + M1 ingest 端点）：健康检查、status、license、配置化限制、
+DB 实体计数查看、Import Bundle 端点（scan / commit / selector）。
 
-M1 起 ingest 端点在 router 层加 max_upload_mb 强制流式计数（前端预检/反代/后端三处之一），
-且在导入路径写 UsageLedger 并拦截超限（LicenseState.trial_yearly/monthly_used）。
+M1 ingest 端点在后端做 max_upload_mb 强制流式计数（前端预检/反代/后端三处之一，
+仅 cloud_demo；proposal §4.3/§5），且在导入路径写 UsageLedger 并拦截超限
+（LicenseState.trial_yearly/monthly_used；年 200 例 / 月 20 例）。
 """
 
 from __future__ import annotations
 
+import io
 from contextlib import asynccontextmanager
+from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 
 from . import __version__
@@ -92,10 +96,10 @@ def queue_size() -> dict[str, int]:
 
 @app.get("/license/usage")
 def license_usage() -> dict[str, object]:
-    """License 试用计数查看（只读，不强制执行）。
+    """License 试用计数查看。
 
-    M0-fix：LicenseState/UsageLedger 计数基础的数据模型落地；强制执行 M1 起
-    （导入路径计数拦截），完整 Ed25519 激活流程 M4/M5。多指纹部署（多库/多容器）
+    M1 起：计数由导入路径维护（usage_counter.record_case_usage，幂等），
+    本端点只读。完整 Ed25519 激活流程 M4/M5。多指纹部署（多库/多容器）
     时每库各自有 license_state 行；单机单库默认只有一行。
     """
     from sqlalchemy import select
@@ -124,7 +128,7 @@ def license_usage() -> dict[str, object]:
             s.close()
     finally:
         engine.dispose()
-    return {"states": out, "enforcement": "deferred_to_m1"}
+    return {"states": out, "enforcement": "active_on_import"}
 
 
 @app.post("/agent-context/preview")
@@ -148,3 +152,95 @@ def agent_context_preview(case_id: str, series_id: str) -> JSONResponse:
     if violations:
         raise HTTPException(status_code=500, detail=f"PHI leak: {violations}")
     return JSONResponse({"context": ctx.to_dict(), "prompt": prompt, "phi_violations": []})
+
+
+# ---------------------------------------------------------------------------
+# M1：Import Bundle 端点（scan 自检门 / commit 落库 / selector 勾选）
+# ---------------------------------------------------------------------------
+
+# 进程内 scan 结果缓存（scan -> 用户勾选 -> commit 两步的中间态；单进程 M1 足够）
+_scan_cache: dict[str, Any] = {}
+
+
+def _get_storage() -> LocalFsStorage:
+    if storage is None:
+        raise HTTPException(status_code=500, detail="data_dir 配置非法，存储不可用")
+    return storage
+
+
+@app.post("/ingest/scan")
+async def ingest_scan(
+    file: UploadFile = File(...),  # noqa: B008
+    recursive: bool = Query(True),
+) -> JSONResponse:
+    """Import Bundle 上传通道（zip）：后端流式计数（100MB 限制三处之一，仅 cloud_demo）。
+
+    流程：流式读取（超限即中断）-> safe_open_zip 三限预检 -> ingest 拆分 ->
+    选择器规则 -> 导入报告（自检门）。返回 outcome_id 供 /ingest/commit 引用。
+    """
+    from .extract_guard import UploadLimitError, read_upload_stream
+    from .pipeline import scan
+
+    try:
+        data = read_upload_stream(file.file, settings.max_upload_mb)
+    except UploadLimitError as e:
+        raise HTTPException(status_code=413, detail=str(e)) from None
+    try:
+        outcome = scan(io.BytesIO(data), settings, source_name=file.filename or "upload.zip")
+    except Exception as e:  # noqa: BLE001 — ExtractLimitError/IngestError 统一 422
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    outcome_id = f"scan-{len(_scan_cache) + 1}"
+    _scan_cache[outcome_id] = outcome
+    body = outcome.to_dict()
+    body["outcome_id"] = outcome_id
+    return JSONResponse(body)
+
+
+@app.post("/ingest/{outcome_id}/commit")
+def ingest_commit(
+    outcome_id: str,
+    include: list[str] | None = Query(  # noqa: B008 — FastAPI Query 默认值写法
+        None, description="显式勾选的 series_id"
+    ),
+) -> JSONResponse:
+    """落库（确认门之后）：建 Case/Series、写像素、维护试用计数。
+
+    include：用户勾选的 series_id（勾回被规则排除的序列）；缺省 = 未被排除的全部。
+    试用超限 -> 403；outcome_id 未知 -> 404。
+    """
+    from .pipeline import commit
+    from .usage_counter import TrialLimitError
+
+    outcome = _scan_cache.get(outcome_id)
+    if outcome is None:
+        raise HTTPException(status_code=404, detail=f"unknown outcome_id: {outcome_id}")
+    try:
+        storage = _get_storage()
+        committed = commit(outcome, settings, storage, user_overrides=include)
+    except TrialLimitError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from None
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e)) from None
+    return JSONResponse(committed.to_dict())
+
+
+@app.get("/ingest/{outcome_id}/selector")
+def ingest_selector(outcome_id: str) -> JSONResponse:
+    """Series 选择器列表（M1 CLI/API；Web UI 勾选在 M2）。
+
+    返回规则过滤结果（excluded/exclude_reason/flags），用户据此调用
+    /ingest/{outcome_id}/commit?include=...。
+    """
+    outcome = _scan_cache.get(outcome_id)
+    if outcome is None:
+        raise HTTPException(status_code=404, detail=f"unknown outcome_id: {outcome_id}")
+    return JSONResponse(
+        {
+            "outcome_id": outcome_id,
+            "candidates": [c.to_report() for c in outcome.candidates],
+            "default_selected": [
+                c.series_id for c in outcome.candidates if not c.excluded
+            ],
+        }
+    )

@@ -267,6 +267,42 @@ M1 下载登记时在引用文献里完成署名义务。
 
 （Grand-Challenge 镜像 AMOS 的注册流程不适用——直接走 Zenodo 免审批通道。）
 
+### 5.1 M1 下载与登记（2026-11-06）
+
+**下载情况**（M1 执行实录）：
+
+| 数据集 | 下载源 | 实际下载 | 用途 | 存放 |
+|---|---|---|---|---|
+| AMOS22 | **HuggingFace 镜像 `MedOtter/amos22-ct-dataset`**（CC-BY-4.0，per-case NIfTI） | **40 cases 子集**（imagesTr + labelsTr，1.3 GB，`amos_0001`–`amos_0067` 非连续 ID） | 独立金标准 hold-out | `~/data/BodyDonor/downloads/amos22_subset/` |
+| TotalSegmentator dataset | **Zenodo 6802614 (v1) / 10047292 (v2) 已核实，未全量下载**（单流 ~218 KB/s，28.4 GB 全量需 >30h） | QC 冷启动延后至 M3 前执行；候选镜像 `YongchengYAO/TotalSegmentator-CT-Lite`（CC-BY-4.0，1228 CT）已核实 | QC 冷启动（M3 前） | — |
+| AMOS22 全量 500 例 | Zenodo 7262581 amos22.zip 24.2 GB | **未全量下载**（对笔记本负担过大，见下） | — | — |
+
+**40-case 子集的理由（文档化，proposal §7.1 / 任务 8）**：
+
+- M1 期间仅需满足 hold-out 规模下限（≥30 cases、覆盖 15 个腹盆腔器官、每类 ≥10 cases——
+  AMOS22 每 case 均含全部 15 类精标，40 cases 即每类出现 40 次）。
+- 全量 500 例（24.2 GB Zenodo / 21.6 GB×2 HF 分卷）下载需 6–31 小时且占盘 >50 GB，
+  笔记本（WSL2，952 GB 可用）无即时需求——M3/M4 蒸馏训练才需要更多训练数据。
+- 子集镜像逐条核实为 CC-BY-4.0（HF API tags `license:cc-by-4.0`），上游为 Zenodo 7262581
+  同一数据集；许可链无分叉。
+
+**署名义务（CC-BY-4.0 Attribution）**：
+
+> **AMOS22**: Ji, Yuanfeng et al. (2022).
+> *Amos: A large-scale abdominal multi-organ benchmark for versatile medical image segmentation*.
+> arXiv:2206.08016. Dataset: [doi:10.5281/zenodo.7262581](https://zenodo.org/records/7262581)
+> (CC-BY-4.0; Zenodo creators: JI YUANFENG et al.). 40-case subset via HuggingFace mirror
+> `MedOtter/amos22-ct-dataset` (CC-BY-4.0, upstream = Zenodo 7262581).
+> Used by BodyDonor as independent gold-standard hold-out (never enters training).
+>
+> **TotalSegmentator dataset**: Wasserthal, J., Meyer, D., & Hannemann, R. (2022).
+> *Dataset with segmentations of 104 important anatomical structures in 1204 CT images*.
+> [doi:10.5281/zenodo.6802614](https://zenodo.org/records/6802614) (CC-BY-4.0);
+> v2: [doi:10.5281/zenodo.10047292](https://zenodo.org/records/10047292).
+> Planned for QC cold-start calibration (M3 prerequisite).
+
+（Grand-Challenge 镜像 AMOS 的注册流程不适用——直接走 Zenodo 免审批通道。）
+
 ---
 
 ## 6. M0 结论落实：config 白名单 + 负测试
