@@ -224,3 +224,9 @@ LICENSES-THIRD-PARTY.md          §5.1：M1 下载登记 + 署名义务（CC-BY-
 ```
 
 本地 main 共 4 个 commit（`516a03e` M0 → `25fb6df` M0-fix → `b5aa043` M0-fix 报告 → `5fec096` M1），未推。
+
+---
+
+## 9. M1-fix（复核时发现并修复）
+
+复核发现：`uv run pytest`（CI 的原命令）在收集阶段报 4 个 `ModuleNotFoundError: No module named tests`——新测试用 `from tests.factories import ...`，但裸 `pytest` 入口不把仓库根目录放进 sys.path，`python -m pytest` 能过而 `uv run pytest` 不能过。修复：`pyproject.toml` 的 `[tool.pytest.ini_options]` 加一行 `pythonpath = ["."]`。修复后 `uv run pytest` 实测 **96 passed**，ruff 全绿。本节与该修复同 commit 提交。
