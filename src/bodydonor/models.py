@@ -101,6 +101,13 @@ class Series(Base):
     orientation: Mapped[str | None] = mapped_column(String(32), nullable=True)
     hu_range: Mapped[str | None] = mapped_column(String(64), nullable=True)  # "-1024..3071"
     storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # M2-5(a)：源 DICOM 实例信息持久化（逐层 SOP UID + 几何三要素，JSON）。
+    # DICOM 来源序列 ingest 时从头提取，commit 时落库；export_seg 用它写真实
+    # 源实例引用（ReferencedSOPInstanceUID），合成源实例降级为无 DICOM 来源
+    # （如 NIfTI 输入）时的 fallback。结构见 ingest.extract_source_instances。
+    source_instances_json: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     case: Mapped[Case] = relationship(back_populates="series")

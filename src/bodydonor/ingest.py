@@ -85,6 +85,10 @@ class SeriesRecord:
     reorientation: str = ""  # M1-fix：RAS+ 重排结果（落盘时写明方向变化）
     source_path: str = ""  # 输入内相对路径（不泄露本地真实姓名/路径之外的 PHI）
     pixel_data: Any = None  # sitk.Image；落库时转 NIfTI，不进 AgentContext
+    # M2-5(a)：源 DICOM 实例信息（逐层 SOP UID + 几何三要素）。commit 时持久化
+    # 进 Series.source_instances_json；export_seg 用它写真实源实例引用。
+    # NIfTI 输入无此信息（合成源实例 fallback）。不含像素（不进 AgentContext）。
+    source_instances: dict[str, Any] | None = None
 
     def candidate(self) -> SeriesCandidate:
         """转成选择器候选。"""
@@ -114,6 +118,7 @@ class SeriesRecord:
             "geom_warnings": list(self.geom_warnings),
             "reorientation": self.reorientation,
             "source_path": self.source_path,
+            "has_source_instances": self.source_instances is not None,
         }
 
 
@@ -393,6 +398,11 @@ def _build_dicom_series(
     if hu_range and hu_range[1] > 4000:
         geom_w.append(f"HU 上限 {hu_range[1]} 高于常见 CT 上界（4000），请检查 Rescale")
 
+    # M2-5(a)：源 DICOM 实例信息（逐层 SOP UID + 几何三要素）——commit 时持久化，
+    # export_seg 用它写真实源实例引用（合成源实例降级为无 DICOM 来源时的 fallback）
+    rows, cols = rows_cols(items)
+    source_instances = extract_source_instances(items, rows=rows, cols=cols)
+
     return SeriesRecord(
         series_id=uid,
         case_key=study_uid,
@@ -408,7 +418,74 @@ def _build_dicom_series(
         geom_warnings=geom_w,
         source_path=items[0][0].name + (f"..{len(items)} slices" if len(items) > 1 else ""),
         pixel_data=pixel_img,
+        source_instances=source_instances,
     )
+
+
+def rows_cols(items: list[tuple[Path, Any]]) -> tuple[int, int]:
+    """首个实例的 rows/cols（源几何）。"""
+    ds = items[0][1]
+    return int(getattr(ds, "Rows", 0) or 0), int(getattr(ds, "Columns", 0) or 0)
+
+
+def extract_source_instances(items: list[tuple[Path, Any]], rows: int, cols: int) -> dict[str, Any]:
+    """从 DICOM 头提取源实例信息（M2-5(a)）：逐层 SOP UID + 几何三要素。
+
+    只取头字段（SOP UID / IOP / IPP / PixelSpacing / SliceThickness），不取像素
+    （像素不进 AgentContext / 不持久化两份）。按 DICOM 帧序惯例沿法向**反向**
+    排布（帧 0 = 法向距离最大）——与 export_seg 合成源实例的方向一致。
+    """
+    import pydicom  # noqa: F401 — 仅为类型提示一致性
+
+    entries = []
+    for _, ds in items:
+        sop_uid = str(getattr(ds, "SOPInstanceUID", "") or "")
+        iop = [float(v) for v in (getattr(ds, "ImageOrientationPatient", None) or [])]
+        ipp = [float(v) for v in (getattr(ds, "ImagePositionPatient", None) or [])]
+        ps = getattr(ds, "PixelSpacing", None) or []
+        st = getattr(ds, "SliceThickness", None)
+        entries.append(
+            {
+                "sop_instance_uid": sop_uid,
+                "image_orientation_patient": iop,
+                "image_position_patient": ipp,
+                "pixel_spacing": [float(v) for v in ps],
+                "slice_thickness_mm": float(st) if st else None,
+            }
+        )
+    # 沿法向反向排布（DICOM 帧序惯例），export_seg 直接按此序写帧引用
+    entries = _sort_by_normal_descending(entries)
+    return {
+        "rows": rows,
+        "columns": cols,
+        "instances": entries,
+    }
+
+
+def _sort_by_normal_descending(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按法向投影降序排布（帧 0 = 法向距离最大，DICOM 帧序惯例）。
+
+    缺 IPP 或 IOP 异常的实例保持原序（尽力排序，不拒收）。
+    """
+    import numpy as _np
+
+    iops = [e["image_orientation_patient"] for e in entries]
+    ipps = [e["image_position_patient"] for e in entries]
+    if not all(len(v) == 6 for v in iops) or not all(len(v) == 3 for v in ipps):
+        return entries
+    iop0 = _np.asarray(iops[0], dtype=float)
+    row_cos, col_cos = iop0[0:3], iop0[3:6]
+    normal = _np.cross(row_cos, col_cos)
+    if not _np.any(normal):
+        return entries
+
+    def proj(e: dict[str, Any]) -> float:
+        return float(_np.dot(_np.asarray(e["image_position_patient"], dtype=float), normal))
+
+    try:
+        return sorted(entries, key=proj, reverse=True)
+    except TypeError:
+        return entries
 
 
 def ocr_scan_series_or_none(

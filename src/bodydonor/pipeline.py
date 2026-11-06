@@ -124,6 +124,7 @@ def commit(
                         continue
                     case_id = _ensure_case(s, rec)
                     _ensure_series(s, rec, case_id)
+                    _persist_source_instances(s, rec)  # M2-5(a)：源实例信息回填
                     key = _save_pixels(storage, rec)
                     if key is not None:
                         _backfill_storage_key(s, rec.series_id[:60], key)
@@ -244,6 +245,88 @@ def _backfill_storage_key(session, series_id: str, key: str) -> None:  # noqa: A
     if existing is not None:
         existing.storage_key = key
         session.flush()
+
+
+def _persist_source_instances(session, rec: SeriesRecord) -> None:  # noqa: ANN001
+    """M2-5(a)：源 DICOM 实例信息持久化（ingest 提取 -> Series.source_instances_json）。
+
+    DICOM 来源序列才有（NIfTI 输入无源实例，export_seg 走合成 fallback）。
+    幂等：已有则不覆盖。
+    """
+    if rec.source_instances is None:
+        return
+    from sqlalchemy import select
+
+    from .models import Series
+
+    existing = session.execute(
+        select(Series).where(Series.series_id == rec.series_id[:60])
+    ).scalar_one_or_none()
+    if existing is not None and existing.source_instances_json is None:
+        existing.source_instances_json = rec.source_instances
+        session.flush()
+
+
+def load_source_instances(series_id: str, settings: Settings) -> dict[str, Any] | None:
+    """从 DB 读回源实例信息（export_seg 真实引用路径的入口）。
+
+    无记录 / 无 DICOM 来源（NIfTI 输入）返回 None —— 调用方走合成 fallback。
+    """
+    from sqlalchemy import select
+
+    from . import db
+    from .models import Series
+
+    url = settings.database.url
+    engine = db._engine(url)
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            s = Session(conn)
+            row = s.execute(
+                select(Series).where(Series.series_id == series_id[:60])
+            ).scalar_one_or_none()
+            out = row.source_instances_json if row is not None else None
+            s.close()
+            return out
+    finally:
+        engine.dispose()
+
+
+def source_info_from_persisted(
+    persisted: dict[str, Any], series_uid: str, study_uid: str, modality: str = "CT"
+) -> Any:
+    """把持久化的源实例信息转成 export_seg.SourceSeriesInfo（真实引用路径）。
+
+    persisted 结构见 ingest.extract_source_instances。调用方（export 联调层）
+    传 series/study UID；persisted 为 None 时调用方走合成 fallback。
+    """
+    from .export_seg import SourceSeriesInfo
+
+    instances = persisted.get("instances", [])
+    first = instances[0] if instances else {}
+    iop = tuple(first.get("image_orientation_patient") or (1.0, 0.0, 0.0, 0.0, 1.0, 0.0))
+    ps = first.get("pixel_spacing") or (1.0, 1.0)
+    st = first.get("slice_thickness_mm") or 1.0
+    src_insts = [
+        {
+            "sop_instance_uid": inst.get("sop_instance_uid", ""),
+            "image_position_patient": inst.get("image_position_patient") or [0.0, 0.0, 0.0],
+        }
+        for inst in instances
+    ]
+    return SourceSeriesInfo(
+        series_uid=series_uid,
+        study_uid=study_uid,
+        modality=modality,
+        rows=int(persisted.get("rows", 0)),
+        columns=int(persisted.get("columns", 0)),
+        pixel_spacing=(float(ps[0]), float(ps[1]) if len(ps) > 1 else float(ps[0])),
+        slice_thickness_mm=float(st),
+        orientation_patient=tuple(float(v) for v in iop),
+        source_instances=src_insts,
+    )
 
 
 def _save_pixels(storage: LocalFsStorage, rec: SeriesRecord) -> str | None:
