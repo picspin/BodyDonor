@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import queue
 import threading
 from abc import ABC, abstractmethod
@@ -153,3 +154,103 @@ class InProcessQueue(QueueBackend):
         else:
             with self._lock:
                 self._pending.discard(job.job_id)
+
+
+class SqliteJobsQueue(QueueBackend):
+    """SQLite jobs 表队列（M3，M2-REPORT 遗留 7：队列状态源落库）。
+
+    M0 schema 的 jobs 表（db.SCHEMA）为真相源：job_id PK / case_id / stage /
+    status（queued|running|done|failed）/ payload / created_at / updated_at。
+    与 InProcessQueue 的差别：**跨进程可见**（FastAPI 与 CLI worker 各自进程
+    都读写同一张表），重启不丢。
+
+    dequeue：status=queued 最老一条置 running（单一写入纪律：写路径短事务）。
+    ack/nack：置 done / failed（nack requeue=True 则回到 queued）。
+    """
+
+    def __init__(self, db_url: str) -> None:
+        from . import db as _db
+
+        self._db_url = db_url
+        self._db = _db
+        # 幂等建 jobs 表（init_db 兜底；CLI 直连路径无 lifespan）
+        _db.init_db(db_url)
+
+    def _connect(self):
+        return self._db.connect(self._db_url)
+
+    def enqueue(self, job: Job) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO jobs (job_id, case_id, stage, status, payload)"
+                " VALUES (?, ?, ?, 'queued', ?)",
+                (job.job_id, job.case_id, job.stage, json.dumps(job.payload, ensure_ascii=False)),
+            )
+            conn.commit()
+
+    def dequeue(self, timeout: float | None = None) -> Job | None:
+        import time as _time
+
+        deadline = _time.monotonic() + (timeout or 0.0)
+        while True:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT job_id, case_id, stage, payload FROM jobs"
+                    " WHERE status='queued' ORDER BY created_at LIMIT 1"
+                ).fetchone()
+                if row is not None:
+                    conn.execute(
+                        "UPDATE jobs SET status='running', updated_at=datetime('now')"
+                        " WHERE job_id=?",
+                        (row["job_id"],),
+                    )
+                    conn.commit()
+                    return Job(
+                        job_id=row["job_id"], case_id=row["case_id"] or "",
+                        stage=row["stage"],
+                        payload=json.loads(row["payload"]) if row["payload"] else {},
+                    )
+            if timeout is None or _time.monotonic() >= deadline:
+                return None
+            _time.sleep(0.2)
+
+    def qsize(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM jobs WHERE status='queued'"
+            ).fetchone()
+            return int(row["n"])
+
+    def pending_ids(self) -> set[str]:
+        """未完成 job_id 集合（queued + running；监控端点/TUI 只读）。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT job_id FROM jobs WHERE status IN ('queued','running')"
+            ).fetchall()
+            return {r["job_id"] for r in rows}
+
+    def ack(self, job: Job) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE jobs SET status='done', updated_at=datetime('now')"
+                " WHERE job_id=?",
+                (job.job_id,),
+            )
+            conn.commit()
+
+    def nack(self, job: Job, requeue: bool = True) -> None:
+        status = "queued" if requeue else "failed"
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE jobs SET status=?, updated_at=datetime('now') WHERE job_id=?",
+                (status, job.job_id),
+            )
+            conn.commit()
+
+    def status_counts(self) -> dict[str, int]:
+        """status 分布（监控端点/TUI 展示）。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) AS n FROM jobs GROUP BY status"
+            ).fetchall()
+            return {r["status"]: int(r["n"]) for r in rows}

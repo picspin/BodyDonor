@@ -21,7 +21,7 @@ from .agent_context import scan_for_phi
 from .config import Settings, load_settings
 from .db import init_db
 from .license_registry import LicenseRegistry
-from .storage import InProcessQueue, Job, LocalFsStorage
+from .storage import Job, LocalFsStorage, SqliteJobsQueue
 
 settings: Settings = load_settings()
 
@@ -36,8 +36,8 @@ app = FastAPI(title="BodyDonor", version=__version__, lifespan=lifespan)
 
 registry = LicenseRegistry(settings)
 
-# 队列与存储（M0 默认组合）
-queue = InProcessQueue()
+# 队列与存储（M3：队列状态源切 SQLite jobs 表，M2-REPORT 遗留 7）
+queue = SqliteJobsQueue(settings.database.url)
 try:
     storage = LocalFsStorage(settings.resolved_data_dir / "storage")
 except ValueError:
@@ -358,11 +358,12 @@ def monitor_gpu() -> dict[str, Any]:
 
 @app.get("/monitor/pipeline")
 def monitor_pipeline() -> dict[str, Any]:
-    """流水线 8 阶段状态（TUI 轮询；worker/编排层更新，单进程内存态）。"""
+    """流水线 8 阶段状态（TUI 轮询；队列状态源 = SQLite jobs 表，M3 落库）。"""
     return {
         "stages": dict(_pipeline_stages),
         "queue_size": queue.qsize(),
         "active_jobs": sorted(queue.pending_ids()),
+        "job_status_counts": queue.status_counts(),
     }
 
 
