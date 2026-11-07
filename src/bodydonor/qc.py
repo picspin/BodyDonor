@@ -56,6 +56,10 @@ RULE_LEFT_RIGHT = "left_right_symmetry"
 RULE_EMPTY_MASK = "empty_mask"
 RULE_FULL_MASK = "full_mask"
 
+# 在线校准（proposal §7）：规则判别力下限（flag 组与 clean 组标签均值差下限，
+# 低于此说明规则无判别力，只更新注记不改数值）
+MIN_SEPARATION = 0.1
+
 # 骨类关键字（HU 软组织窗不适用，hu_distribution 跳过）
 BONE_CLASS_KEYWORDS = (
     "vertebrae", "rib", "femur", "hip", "skull", "clavicula", "scapula",
@@ -584,6 +588,77 @@ def _default_settings() -> Settings:
     return load_settings()
 
 
+# ---------------------------------------------------------------------------
+# 在线校准（proposal §7.2：决策回流标签 -> 阈值本体重算，bodydonor qc-calibrate）
+# ---------------------------------------------------------------------------
+
+# 决策 -> 校准标签（quality label）：accepted=1.0 / corrected=0.5 / rejected=0.0
+DECISION_LABELS: dict[str, float] = {"accepted": 1.0, "corrected": 0.5, "rejected": 0.0}
+
+
+def calibrate_thresholds(
+    labels: list[dict[str, Any]],
+    thresholds: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """阈值本体重算（proposal §7 在线校准；决策回流标签足够后调用）。
+
+    labels：每条 {decision: accepted|corrected|rejected, flags: [规则名...]}——
+    一条抽检决策 + 该 case 被 flag 的规则（QCReport.flags）。
+
+    方法（最小合理选择，M3）：逐规则把「该规则 flag 过的 case 的标签均值」
+    与「未 flag 过的 case 的标签均值」对比——flag 组标签均值显著低（差 >
+    MIN_SEPARATION）说明规则有判别力，保留阈值；无判别力（差 <= MIN_SEPARATION）
+    只更新 calibrated_on 注记、不改数值（**不静默放水**）。
+
+    返回更新后的 thresholds dict（调用方落盘）。
+    """
+    th = thresholds or load_qc_thresholds()
+    n = len(labels)
+    if n == 0:
+        return th
+    y = [DECISION_LABELS.get(lb["decision"], 0.5) for lb in labels]
+
+    for rule, cfg in th.get("rules", {}).items():
+        if not isinstance(cfg, dict):
+            continue
+        # 该规则 flag 过 / 没 flag 过的 case 标签均值
+        flagged_y = [y[i] for i, lb in enumerate(labels) if rule in lb.get("flags", [])]
+        clean_y = [y[i] for i, lb in enumerate(labels) if rule not in lb.get("flags", [])]
+        # 判别力：flag 组均值应低于 clean 组（flag 过的更可能被人工拒绝）
+        sep = (sum(clean_y) / len(clean_y) if clean_y else 0.0) - (
+            sum(flagged_y) / len(flagged_y) if flagged_y else 0.0
+        )
+        cfg["calibrated_on"] = n
+        cfg["calibrated_at"] = _today()
+        if sep > MIN_SEPARATION and flagged_y:
+            # 有判别力：source 注记变 calibrated_on_N（阈值数值不动——M3 标签量
+            # 不足以重算数值阈值；重算是 M4+ 标签 ≥ 20 例后的事，§7 明示）
+            cfg["source"] = f"calibrated_on_{n}"
+        cfg["discrimination"] = round(sep, 4)
+
+    overall = th.setdefault("overall", {})
+    overall["calibrated_on"] = n
+    overall["calibrated_at"] = _today()
+    return th
+
+
+def save_calibrated_thresholds(
+    thresholds: dict[str, Any], path: Any = None
+) -> None:
+    """校准结果写回 qc_thresholds.yaml（config diff 可评审）。"""
+    import yaml as _yaml
+
+    p = path or QC_THRESHOLDS_PATH
+    with open(p, "w", encoding="utf-8") as f:
+        _yaml.safe_dump(thresholds, f, allow_unicode=True, sort_keys=False)
+
+
+def _today() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).strftime("%Y-%m-%d")
+
+
 __all__ = [
     "QCResult",
     "RULE_BOUNDARY_SMOOTHNESS",
@@ -595,9 +670,12 @@ __all__ = [
     "RULE_LEFT_RIGHT",
     "RULE_MULTI_TEACHER",
     "RULE_VOLUME_PRIOR",
+    "MIN_SEPARATION",
     "QC_THRESHOLDS_PATH",
     "SamplingPlan",
+    "calibrate_thresholds",
     "load_qc_thresholds",
     "run_qc",
     "sample_review_tasks",
+    "save_calibrated_thresholds",
 ]

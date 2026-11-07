@@ -264,3 +264,64 @@ def test_sample_review_tasks_empty_pools(th):
     plan2 = sample_review_tasks(only_flagged, thresholds=th)
     assert plan2.flagged_ids == ["mv-1"]
     assert plan2.n_total == 1
+
+
+# ---------------------------------------------------------------------------
+# 在线校准（proposal §7.2：决策回流标签 -> 阈值本体重算，bodydonor qc-calibrate）
+# ---------------------------------------------------------------------------
+
+def test_calibrate_thresholds_discriminative_rule():
+    """有判别力的规则：source 变 calibrated_on_N + discrimination 落注记。"""
+    from bodydonor.qc import calibrate_thresholds, load_qc_thresholds
+
+    th = load_qc_thresholds()
+    before_frac = th["rules"]["connected_component"]["min_main_frac"]
+    labels = [
+        {"decision": "rejected", "flags": ["connected_component"]},
+        {"decision": "rejected", "flags": ["connected_component"]},
+        {"decision": "accepted", "flags": []},
+    ]
+    out = calibrate_thresholds(labels, th)
+    cc = out["rules"]["connected_component"]
+    assert cc["source"] == "calibrated_on_3"
+    assert cc["calibrated_on"] == 3
+    assert cc["discrimination"] == 1.0  # flag 组全拒(0)，clean 组全收(1) -> 差 1.0
+    assert cc["min_main_frac"] == before_frac  # 数值不动（M3 标签量不足以重算）
+
+
+def test_calibrate_thresholds_non_discriminative_rule():
+    """无判别力的规则：source 注记不变（cold_start），discrimination 落注记。"""
+    from bodydonor.qc import calibrate_thresholds, load_qc_thresholds
+
+    th = load_qc_thresholds()
+    labels = [
+        {"decision": "rejected", "flags": ["volume_prior"]},   # clean 侧也被拒
+        {"decision": "rejected", "flags": []},
+        {"decision": "accepted", "flags": ["volume_prior"]},   # flagged 侧也有收
+    ]
+    out = calibrate_thresholds(labels, th)
+    vp = out["rules"]["volume_prior"]
+    # flag 组均值 (0+1)/2=0.5，clean 组均值 0.0 -> sep = -0.5 < 0.1 -> 无判别力
+    assert vp["source"] == "cold_start"
+    assert vp["discrimination"] == -0.5
+    assert vp["calibrated_on"] == 3
+
+
+def test_calibrate_thresholds_empty_labels():
+    """空标签：不 crash，原样返回。"""
+    from bodydonor.qc import calibrate_thresholds, load_qc_thresholds
+
+    th = load_qc_thresholds()
+    out = calibrate_thresholds([], th)
+    assert out["rules"]["connected_component"]["source"] == "cold_start"
+
+
+def test_calibrate_thresholds_updates_overall():
+    """overall.calibrated_on/at 同步更新。"""
+    from bodydonor.qc import calibrate_thresholds, load_qc_thresholds
+
+    th = load_qc_thresholds()
+    labels = [{"decision": "accepted", "flags": []} for _ in range(2)]
+    out = calibrate_thresholds(labels, th)
+    assert out["overall"]["calibrated_on"] == 2
+    assert out["overall"]["calibrated_at"]

@@ -482,6 +482,66 @@ def version() -> None:
     console.print(f"BodyDonor v{__version__}")
 
 
+@app.command("qc-calibrate")
+def qc_calibrate() -> None:
+    """在线校准（proposal §7.2）：抽检决策回流标签 -> 重算 QC 阈值注记。
+
+    从 ReviewTask.decision（accepted/corrected/rejected）+ QCReport.flags 取
+    校准标签，逐规则算判别力（flag 组 vs clean 组标签均值差），写回
+    config/qc_thresholds.yaml（calibrated_on/at + discrimination + source 注记）。
+    阈值数值 M3 不动（标签量不足以重算数值，§7 明示只当起点）。
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from . import db
+    from .models import QCReport, ReviewTask
+    from .qc import calibrate_thresholds, load_qc_thresholds, save_calibrated_thresholds
+
+    settings = _settings()
+    engine = db._engine(settings.database.url)
+    try:
+        with engine.connect() as conn:
+            s = Session(conn)
+            try:
+                rows = s.execute(
+                    select(ReviewTask.decision, QCReport.flags)
+                    .join(QCReport, ReviewTask.qc_report_id == QCReport.qc_report_id)
+                    .where(ReviewTask.decision.is_not(None))
+                    .order_by(ReviewTask.created_at)
+                ).all()
+            finally:
+                s.close()
+    finally:
+        engine.dispose()
+    labels = [{"decision": d, "flags": list(f or [])} for d, f in rows]
+    if not labels:
+        console.print(
+            "[yellow]无已决策的抽检任务（ReviewTask.decision 全空）——先在抽检台完成决策[/yellow]"
+        )
+        raise typer.Exit(0)
+
+    th = load_qc_thresholds()
+    out = calibrate_thresholds(labels, th)
+    save_calibrated_thresholds(out)
+
+    table = Table(title=f"QC 在线校准 — {len(labels)} 条决策标签")
+    table.add_column("规则", style="cyan")
+    table.add_column("判别力")
+    table.add_column("source")
+    table.add_column("calibrated_on")
+    for rule, cfg in out.get("rules", {}).items():
+        if isinstance(cfg, dict):
+            table.add_row(
+                rule,
+                f"{cfg.get('discrimination', 0):.4f}",
+                cfg.get("source", ""),
+                str(cfg.get("calibrated_on", 0)),
+            )
+    console.print(table)
+    console.print(f"[green]✔ qc_thresholds.yaml 已更新（{len(labels)} 条标签）[/green]")
+
+
 def main() -> None:
     app()
 
