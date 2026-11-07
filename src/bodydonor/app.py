@@ -427,6 +427,27 @@ def static_file(filename: str) -> Any:
     return FileResponse(path, media_type=media)
 
 
+@app.post("/segments")
+def segments_create(
+    series_id: str = Query(..., description="已 ingest 的 Series ID"),
+    task: str = Query("total", description="TS 任务（白名单判定）"),
+    device: str = Query("gpu", description="gpu | cpu"),
+) -> JSONResponse:
+    """TotalSegmentator worker 入口（同步）：原图 → 多类 mask → MaskVersion。
+
+    白名单判定（blocked 一票否决）→ 422；<30 层防线 → 422；CLI 未知 → 404。
+    """
+    from .segmentation import SegmentWorkerError, segment_series
+
+    try:
+        result = segment_series(series_id, settings, task=task, device=device)
+    except SegmentWorkerError as e:
+        msg = str(e)
+        status = 404 if "unknown series" in msg else 422
+        raise HTTPException(status_code=status, detail=msg) from None
+    return JSONResponse(result.to_dict())
+
+
 def _series_row(series_id: str) -> Any:
     from sqlalchemy import select
 

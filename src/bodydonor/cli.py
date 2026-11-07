@@ -370,8 +370,53 @@ def ontology_escape(
 
 
 # ---------------------------------------------------------------------------
+# bodydonor segment（M2，TotalSegmentator worker 入口）
+# ---------------------------------------------------------------------------
+
+@app.command()
+def segment(
+    series_id: str = typer.Argument(..., help="已 ingest 的 Series ID"),
+    task: str = typer.Option("total", "--task", help="TS 任务（白名单判定）"),
+    device: str = typer.Option("gpu", "-d", "--device", help="gpu | cpu"),
+    as_json: bool = typer.Option(False, "--json", help="JSON 输出（API 同构）"),
+) -> None:
+    """对已 ingest 的 Series 跑 TotalSegmentator：原图 → 多类 mask → MaskVersion。
+
+    - 白名单判定（license_registry.check_task）：blocked 一票否决，不许绕过
+    - <30 层防线复查（定位像残片 3D 卷积报错）
+    - mask 落盘 case_id/series_id/ 目录 + MaskVersion 记录（affine 守卫强制）
+    """
+    from .segmentation import SegmentWorkerError, segment_series
+
+    settings = _settings()
+    try:
+        result = segment_series(series_id, settings, task=task, device=device)
+    except SegmentWorkerError as e:
+        err_console.print(f"[red]✘ 分割失败：{e}[/red]")
+        raise typer.Exit(1) from None
+    if as_json:
+        console.print_json(json.dumps(result.to_dict(), ensure_ascii=False))
+        return
+    table = Table(title=f"TotalSegmentator {task} — {series_id}")
+    table.add_column("项", style="cyan")
+    table.add_column("值")
+    table.add_row("case", result.case_id)
+    table.add_row("mask", result.mask_key)
+    table.add_row("类别数", str(result.n_classes))
+    table.add_row("耗时", f"{result.elapsed_s:.1f}s")
+    if result.peak_memory_mi_b is not None:
+        table.add_row("显存峰值", f"{result.peak_memory_mi_b:.0f} MiB")
+    shown = ", ".join(result.class_names[:8])
+    if len(result.class_names) > 8:
+        shown += f" … 共 {len(result.class_names)} 类"
+    table.add_row("类别", shown or "—")
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
 # bodydonor tui（M2，Textual 监控面）
 # ---------------------------------------------------------------------------
+
 
 @app.command()
 def tui(
