@@ -246,8 +246,13 @@ async function loadSeries() {
 
     nvMip = makeNV($("vp-mip"), { ...opts });
     await nvMip.loadVolumes([img]);
-    // niivue 0.53.1 无原生 MIP slice type（RENDER=4 是体绘制）。
-    // 体绘制视口（正交方位相机近似 MIP 视觉）；M3+ 换 vendored 新版。
+    // MIP 决策（M3，M2-REPORT 遗留 1）：实测 niivue 0.69.0 stable 也无原生
+    // MIP slice type（SLICE_TYPE 同为 AXIAL/CORONAL/SAGITTAL/MULTIPLANAR/
+    // RENDER——M1 遗留"0.69/1.x 有原生 MIP"的前提有误）；真正的 MIP 在 1.x
+    // （VOLUME_RENDER_MODE.MAXIMUM），但 1.0.0 仍是 rc 预发布且 API 不兼容
+    // （审阅页需重写）。自定义 MIP shader 不可行：vendored UMD bundle 无法
+    // 扩展。故 M3 保持体绘制（RENDER）+ 正交方位相机近似 MIP 视觉，真 MIP
+    // 升级推迟到 1.x stable（显式决策，记入 M3-REPORT）。
     nvMip.setSliceType(niivue.SLICE_TYPE.RENDER);
     nvMip.setRenderAzimuthElevation(0, 0);  // 正交方位（近似轴位 MIP）
 
