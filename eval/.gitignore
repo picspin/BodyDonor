@@ -1,0 +1,7 @@
+# eval/ 运行产物不入仓（holdout_results.json / coldstart_results.json 等实测结果）；
+# holdout.txt 是固化的门禁构成（case_id 列表），必须入仓（proposal §8）。
+*
+!holdout.txt
+!.gitignore
+!build_holdout.py
+!evaluate_holdout.py

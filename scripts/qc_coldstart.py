@@ -25,7 +25,6 @@ from pathlib import Path
 import numpy as np
 
 from bodydonor.config import load_settings
-from bodydonor.holdout import dice_per_class
 from bodydonor.qc import run_qc
 
 
