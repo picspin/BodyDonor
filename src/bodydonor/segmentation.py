@@ -56,7 +56,7 @@ class SegmentationResult:
     elapsed_s: float = 0.0
     peak_memory_mi_b: float | None = None  # runner torch 分配器实测（主值，MiB）
     peak_memory_nvidia_smi_mi_b: float | None = None  # nvidia-smi 轮询（交叉核对值）
-    combined_mask_key: str = ""  # combined_mask.nii.gz（M2-align 3.5）
+    combined_mask_key: str = ""  # M3 收敛后与 mask_key 同值（兼容字段，不再单独落盘）
     labels_json_key: str = ""  # labels.json（索引->类名/中英名/颜色，M2-align 3.5）
     tmp_output: str = ""  # TS 原始输出目录（调试用）
 
@@ -436,7 +436,6 @@ def segment_series(
     assert_affine_match(orig, merged, label=f"segment_series {series_id}")
 
     mask_key = row.storage_key.replace("image.nii.gz", "mask.nii.gz")
-    combined_key = row.storage_key.replace("image.nii.gz", "combined_mask.nii.gz")
     labels_key = row.storage_key.replace("image.nii.gz", "labels.json")
     buf_path = image_path.parent / "mask.nii.gz"
     nib.save(merged, str(buf_path))
@@ -446,11 +445,14 @@ def segment_series(
         buf_path.unlink(missing_ok=True)
     st.save(mask_key, payload)
 
-    # 合并产物（M2-align 3.5）：combined_mask.nii.gz（uint8 多标签）+ labels.json
+    # 合并产物（M3 收敛，遗留 (g)）：单一产物 mask.nii.gz（uint8 多标签，
+    # 0=背景，1..N=类别索引）+ labels.json（TS 类别名单）。
+    # combined_mask.nii.gz 不再落盘——与 mask.nii.gz 逐体素完全一致（diff=0
+    # 实测），双落盘只浪费空间且构成两套产物；审阅页 fallback 直接读
+    # mask.nii.gz（app.py 已收敛）。
     labels_doc = build_labels_json(class_names)
     import json as _json
 
-    st.save(combined_key, payload)  # 同一 uint8 合并图（0=背景，1..N=类别索引）
     st.save(labels_key, _json.dumps(labels_doc, ensure_ascii=False).encode("utf-8"))
 
     # MaskVersion 记录（version 递增，source=teacher，task 打标）
@@ -498,7 +500,7 @@ def segment_series(
         elapsed_s=elapsed,
         peak_memory_mi_b=peak,
         peak_memory_nvidia_smi_mi_b=peak_smi,
-        combined_mask_key=combined_key,
+        combined_mask_key=mask_key,  # M3 收敛：与 mask.nii.gz 同一产物
         labels_json_key=labels_key,
     )
 

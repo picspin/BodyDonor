@@ -608,11 +608,13 @@ def _series_row(series_id: str) -> Any:
 
 @app.get("/review/{series_id}/meta")
 def review_meta(series_id: str) -> dict[str, Any]:
-    """序列元数据 + mask 存在性（审阅页首屏；M2-align 3.5：优先 combined mask）。"""
+    """序列元数据 + mask 存在性（审阅页首屏；M3 收敛：单一产物 mask.nii.gz）。"""
     row = _series_row(series_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
     st = _get_storage()
+    # M3 收敛（遗留 (g)）：combined_mask.nii.gz 不再落盘；has_combined 仅对
+    # 历史产物为 true（兼容字段）
     has_combined = bool(row.storage_key) and st.exists(
         row.storage_key.replace("image.nii.gz", "combined_mask.nii.gz")
     )
@@ -685,13 +687,10 @@ def review_mask(series_id: str) -> Any:
     finally:
         engine.dispose()
     if mv is None:
-        # 无 MaskVersion 记录时 fallback：combined_mask.nii.gz（teacher 初版），
-        # 再退化裸 mask.nii.gz（M1 兼容路径）
+        # 无 MaskVersion 记录时 fallback：裸 mask.nii.gz（teacher 初版落盘产物；
+        # M3 收敛后 combined_mask.nii.gz 不再单独落盘，历史产物仍兼容）
         row = _series_row(series_id)
         if row and row.storage_key:
-            combined_key = row.storage_key.replace("image.nii.gz", "combined_mask.nii.gz")
-            if st.exists(combined_key):
-                return Response(content=st.load(combined_key), media_type="application/gzip")
             mask_key = row.storage_key.replace("image.nii.gz", "mask.nii.gz")
             if st.exists(mask_key):
                 return Response(content=st.load(mask_key), media_type="application/gzip")
