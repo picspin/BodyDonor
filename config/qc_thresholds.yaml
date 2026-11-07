@@ -1,0 +1,128 @@
+# QC 引擎阈值（M3，proposal §7）：全部集中在本文件，禁止散在代码里。
+# 改阈值 = config diff，不是代码 diff。每个阈值带 source 注记：
+#   source: cold_start          —— TS 公开集冷启动定初值（与教师同源，偏乐观，只当起点）
+#   source: calibrated_on_N     —— 人工抽检结果回流后重算（N = 参与校准的 case 数）
+#   calibrated_on: 0            —— 已回流 case 数（qc-calibrate 重算时更新）
+#   calibrated_at: <date>       —— 最近一次在线校准日期（无则空）
+#
+# 多教师一致性规则（Dice < 0.80 则 flagged）：**M3 不启用**。
+# M3 只有 TotalSegmentator 一个教师（proposal §7 明示「该规则实际无法工作；
+# M3 验收中注明该规则在 M4 学生模型出现后启用，不要为通过验收造假数据」）。
+# M4 学生模型出现后 enabled 改 true 并补 threshold。
+
+# 冷启动数据集（qc_thresholds.yaml 的校准依据记录）
+cold_start:
+  dataset: totalsegmentator_ct_lite  # HF YongchengYAO/TotalSegmentator-CT-Lite（CC-BY-4.0，TS dataset 派生）
+  n_cases: 25                        # 实际参与冷启动校准的 case 数（qc-coldstart 重算时更新）
+  calibrated_at: "2026-11-07"
+  method: dice_correlation           # QC 分数 vs 与真值 Dice 的相关性定 separating threshold
+  # 该数据集真值与教师同源（TS 模型 + 人工迭代产出），偏乐观；只当起点（proposal §7）
+
+rules:
+  # ---- 体积先验（proposal §7：器官体积异常小/大则 flagged）----
+  volume_prior:
+    enabled: true
+    source: cold_start
+    calibrated_on: 0
+    calibrated_at: ""
+    # 体积占比（mask 体素数 / 原图体素数）落在 [min_frac, max_frac] 之外 flagged
+    min_frac: 0.0001    # < 0.01% 视为残片（冷启动 P1 分位）
+    max_frac: 0.65      # > 65% 视为过分割/全 mask（冷启动 P99 分位）
+
+  # ---- 连通域检查（主连通域占该类体素数比例；碎成多域=质量差）----
+  connected_component:
+    enabled: true
+    source: cold_start
+    calibrated_on: 0
+    calibrated_at: ""
+    # 逐类主连通域体素数 / 该类总体素数 < min_main_frac 则 flagged
+    min_main_frac: 0.8
+    # 单类连通域数 > max_components 则 flagged（碎裂）
+    max_components: 20
+
+  # ---- 空洞检查（二值闭运算后填充体素 / 该类总体素数）----
+  holes:
+    enabled: true
+    source: cold_start
+    calibrated_on: 0
+    calibrated_at: ""
+    max_hole_frac: 0.2   # 内部空洞占比 > 20% flagged
+
+  # ---- 边界平滑度（边界体素 / 体积；锯齿边界=上采样伪影）----
+  boundary_smoothness:
+    enabled: true
+    source: cold_start
+    calibrated_on: 0
+    calibrated_at: ""
+    max_boundary_ratio: 1.2   # 边界面数/体积 开方 > 1.2 flagged（经验形状因子）
+
+  # ---- HU 分布合理性（CT；本院化校准主体，§7.2）----
+  hu_distribution:
+    enabled: true
+    source: cold_start
+    calibrated_on: 0
+    calibrated_at: ""
+    # mask 内 HU P5..P95 应落在软组织窗 [min_hu, max_hu] 之外过宽则 flagged
+    min_hu: -200
+    max_hu: 400
+    percentile: 5    # 用 P5/P95（骨/血管类会出窗，flagged 交抽检，不硬过滤）
+    # 骨类（totalseg_class 含 vertebrae/rib/femur/hip/skull/clavicula/scapula/humerus
+    # /costal/teeth/sacrum/craniofacial）不适用软组织窗，跳过本规则
+    skip_bone_classes: true
+
+  # ---- 多教师一致性（M3 不启用：单教师无第二 mask 可比；M4 学生模型出现后启用）----
+  multi_teacher_consistency:
+    enabled: false
+    source: cold_start
+    calibrated_on: 0
+    calibrated_at: ""
+    note: "M3 单教师（TotalSegmentator）无第二 mask 可比——proposal §7 明示该规则在 M4 学生模型出现后启用。M4 起本阈值生效。"
+    threshold: 0.80   # 预留初值（M4 启用时经同样的冷启动流程校准）
+
+  # ---- 左右对称性（适用成对器官；差异过大 flagged 交抽检）----
+  left_right_symmetry:
+    enabled: true
+    source: cold_start
+    calibrated_on: 0
+    calibrated_at: ""
+    # 成对类体积比 |log(V_left/V_right)| > max_log_ratio 则 flagged
+    max_log_ratio: 1.0   # e^1.0 ≈ 2.7 倍差异
+    pairs:
+      - [kidney_left, kidney_right]
+      - [adrenal_gland_left, adrenal_gland_right]
+      - [femur_left, femur_right]
+      - [gluteus_maximus_left, gluteus_maximus_right]
+      - [gluteus_medius_left, gluteus_medius_right]
+      - [gluteus_minimus_left, gluteus_minimus_right]
+      - [iliopsoas_left, iliopsoas_right]
+      - [autochthon_left, autochthon_right]
+      - [lung_upper_lobe_left, lung_upper_lobe_right]
+      - [lung_lower_lobe_left, lung_lower_lobe_right]
+      - [humerus_left, humerus_right]
+      - [scapula_left, scapula_right]
+      - [clavicula_left, clavicula_right]
+      - [brachiocephalic_vein_left, brachiocephalic_vein_right]
+      - [subclavian_artery_left, subclavian_artery_right]
+      - [common_carotid_artery_left, common_carotid_artery_right]
+      - [iliac_artery_left, iliac_artery_right]
+      - [iliac_vena_left, iliac_vena_right]
+      - [temporalis_left, temporalis_right]
+      - [pectoralis_major_left, pectoralis_major_right]
+      - [rectus_abdominis_left, rectus_abdominis_right]
+      - [trapezius_left, trapezius_right]
+      - [sternocleidomastoid_left, sternocleidomastoid_right]
+      - [semispinalis_left, semispinalis_right]
+
+# ---- 抽检混合采样（proposal §6 第 5 阶段：flagged 70% / clean 随机 30%）----
+review_sampling:
+  flagged_ratio: 0.70
+  clean_ratio: 0.30
+  batch_size: 10        # 每轮生成的 ReviewTask 数（0 = 全部 flagged + 同比例 clean）
+  min_clean_pool: 1     # clean 候选不足时仍生成 1 条（确认「没 flag 的真好」）
+
+# ---- 总体分数与过滤 ----
+overall:
+  # 总体 QC 分数 = 通过规则数的加权（flagged 规则数 0 → 1.0，每多一个 flag 线性降）
+  min_score: 0.5        # overall_score < 0.5 → passed=false（低质量过滤，不进蒸馏）
+  hard_flag_rules:      # 这些规则任一 flagged → 直接 passed=false（一票否决）
+    - volume_prior
