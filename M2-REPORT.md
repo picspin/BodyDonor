@@ -313,3 +313,42 @@ pyproject.toml + uv.lock        textual / pytest-asyncio / websocket-client
   精度边界是测试资产不是可调阈值。
 - **源实例排序**：法向降序（DICOM 帧序惯例，帧 0 = 法向距离最大），与
   export_seg 合成路径方向一致（roundtrip diff=0 验证）。
+
+---
+
+## 10. M2-A / M2-B 拆分说明（用户 2026-11-07 08:19 决定）
+
+> 拆分是执行记录（不改 proposal.md）；proposal §11 M2 行拆为两个子里程碑。
+
+### 10.1 边界
+
+| 子里程碑 | 内容 | 代码 | 验收 |
+|---|---|---|---|
+| **M2-A**（后端推理与 NL） | TotalSegmentator worker（分发层 + JSON runner 契约 + GPU 锁）、本体映射（117 类查表 + 分层 NL 解析 + IntentParser 注册点）、`bodydonor segment` / `bodydonor ontology` CLI + API（`/segments`、`/ontology/*`） | `src/bodydonor/segmentation.py`、`ts_runner.py`、`gpu_lock.py`、`ontology.py`、`ontology/v1/map.yaml`、`cli.py`（segment/ontology 子命令）、`app.py`（/segments /ontology/*） | 真卡端到端 `bodydonor segment` 跑通（显存峰值实测写回报告）；白名单负测试全过；20 条 NL 测试集断网全通过 |
+| **M2-B**（前端 niivue 与交互） | niivue 审阅页（单图 + 合并 mask 协议 + labels.json 驱动逐类开关/换色 + 整类删除/画笔粗修）、TUI 监控面（`bodydonor tui`）、`/review` + `/monitor` 端点 | `src/bodydonor/static/review.html`、`static/niivue.umd.js`、`tui.py`、`app.py`（/review/* /monitor/* /static/*） | CDP Edge headless 实测：审阅页只加载 2 个 volume（原图 + 合并 mask）、labels.json 类别数与 mask distinct label 数一致、逐类开关/保存 roundtrip 逐体素正确；TUI run_test 渲染冒烟 |
+
+### 10.2 接口契约（M2-A → M2-B 的边界）
+
+- **产物三件套**（worker → 审阅页）：
+  `mask.nii.gz`（多类标签图，与 MaskVersion 记录一致）+
+  `combined_mask.nii.gz`（uint8，0=背景，1..N=类别索引）+
+  `labels.json`（`{n_classes, labels: [{index, totalseg_class, name_cn, name_en, color}]}`，
+  颜色后端下发，不硬编码进页面 JS）。
+- **审阅页加载协议**：只加载 1 张原图（`/review/{sid}/image.nii.gz`）+ 1 个合并
+  mask（`/review/{sid}/mask.nii.gz`，最新 MaskVersion 或 combined_mask fallback）+
+  labels.json（`/review/{sid}/labels.json`）+ seg-meta（体素数统计）。
+  旧的多文件加载路径已删除，不留两套。
+- **修正写回**：`POST /review/{sid}/save` body `{deleted_classes: ["label-N"...],
+  drawing_nifti: [bytes] | null}`——整类删除按 label 索引，画笔按合并 mask 操作；
+  写回前 affine 守卫强制（M1-fix (b)）。
+- **TUI 数据源**：`/monitor/gpu` + `/monitor/pipeline`（只读轮询，2s 周期）；
+  TUI 不直接跑流水线。
+
+### 10.3 各自验收点
+
+- **M2-A**：① 真卡端到端跑通（本报告 §3 基线 + M2-ALIGN-REPORT 对照表）；
+  ② `uv run pytest` 全过（含白名单负测试、JSON 契约测试、GPU 锁单测）；
+  ③ 20 条 NL 测试集断网全通过；④ runner 侧 blocked 任务纵深拒绝。
+- **M2-B**：① CDP Edge headless 实测 2 volume + labels.json 一致性 + 保存
+  roundtrip 逐体素正确；② TUI Textual run_test 渲染冒烟；③ 不做清单
+  （§5）不回归。
