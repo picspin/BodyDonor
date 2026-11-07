@@ -254,8 +254,7 @@ qc_thresholds.yaml 全部规则 `source: cold_start`、`calibrated_on: 0`、
    了「0.69 有」的前提；真 MIP 在 1.x stable（rc 预发布不采纳，API 不兼容需
    重写审阅页）。升级是显式决策。
 6. **M1/M2 遗留不变**：TotalSegmentator dataset 全量下载（CT-Lite Range 抓取
-   已覆盖 M3 需求）、100 MB 三处强制的另两处、多指纹部署语义、GitHub 远程
-   未建、BSL LICENSE 占位、Uberon 56 条空串待核对（M2-ALIGN §7）。
+   已覆盖 M3 需求）、100 MB 三处强制的另两处、多指纹部署语义、远程 picspin/BodyDonor 已建（main 7a172db）、M3 commits 本地未推、BSL LICENSE 占位、Uberon 56 条空串待核对（M2-ALIGN §7）。
 
 ---
 
