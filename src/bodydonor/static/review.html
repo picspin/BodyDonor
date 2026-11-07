@@ -166,8 +166,11 @@
 <div id="toast"></div>
 
 <script>
-// BodyDonor 审阅台（M2）：三正交面 + MIP；mask 逐类开关；窗宽窗位；逐 slice 滚动同步重绘；
-// 导出人工修正（整类删除 + 画笔粗修）写回 NIfTI（POST /review/{series_id}/save）。
+// BodyDonor 审阅台（M2 + M2-align 3.5）：三正交面 + 体绘制第 4 视口；
+// **只加载 1 张原图 + 1 个合并 mask**（combined_mask.nii.gz，uint8 多标签）+
+// labels.json 驱动逐类开关/换色/体素数统计；窗宽窗位；逐 slice 滚动同步重绘；
+// 导出人工修正（整类删除 + 画笔粗修，按 label 索引操作）写回 NIfTI
+// （POST /review/{series_id}/save）。旧的多文件加载路径已删除，不留两套。
 // 不做（非目标）：4D/时间序列、DTI、自由角三维切面、多人协同、DICOM 原生渲染。
 
 const q = new URLSearchParams(location.search);
@@ -194,17 +197,18 @@ function makeNV(canvasParent, options) {
   return nv;
 }
 
-// 类别色（niivue 高辨识临床调色板代理；换色用 color input）
-const PALETTE = [
+// 类别色兜底（labels.json 缺失时才用；正常路径颜色来自 labels.json）
+const FALLBACK_PALETTE = [
   [1.0, 0.4, 0.4], [0.4, 0.7, 1.0], [0.5, 0.9, 0.5], [1.0, 0.8, 0.3],
   [0.8, 0.5, 1.0], [0.3, 0.9, 0.9], [1.0, 0.5, 0.8], [0.7, 0.7, 0.3],
   [0.4, 0.6, 0.3], [0.9, 0.6, 0.4], [0.6, 0.4, 0.8], [0.3, 0.5, 0.8],
 ];
-const segState = new Map(); // class -> {color:[r,g,b], visible:true}
+const segState = new Map(); // label_value(int) -> {color:[r,g,b], visible:true, name}
 
 let nvAxial, nvCoronal, nvSagittal, nvMip;
-let meta = null;       // {series_id, case_id, num_slices}
-let segMeta = [];      // [{class, n_voxels}]
+let meta = null;       // {series_id, case_id, num_slices, has_combined_mask}
+let segMeta = [];      // [{class, label_value, n_voxels, name_cn?, name_en?, color?}]
+let labelsDoc = null;  // {n_classes, labels: [{index, totalseg_class, name_cn, name_en, color}]}
 
 async function loadSeries() {
   if (!SERIES_ID) {
@@ -219,12 +223,9 @@ async function loadSeries() {
     meta = await r.json();
     $("series-label").textContent = `${meta.case_id} / ${meta.series_id} · ${meta.num_slices} 层`;
 
+    // M2-align 3.5：只加载 1 张原图 + 1 个合并 mask（两个 volume，不多不少）
     const img = { url: `/review/${encodeURIComponent(SERIES_ID)}/image.nii.gz` };
-    const layers = [];
-    // mask（若有）：多类 NIfTI 直接作为 overlay；逐类可见性在 seg 渲染控制
-    if (meta.has_mask) {
-      layers.push({ url: `/review/${encodeURIComponent(SERIES_ID)}/mask.nii.gz` });
-    }
+    const mask = { url: `/review/${encodeURIComponent(SERIES_ID)}/mask.nii.gz` };
     const opts = {
       showNIfTIHeaderWarning: false,
       loadingText: "加载中…",
@@ -232,22 +233,21 @@ async function loadSeries() {
     };
 
     nvAxial = makeNV($("vp-axial"), { ...opts, dragMode: "pan" });
-    await nvAxial.loadVolumes([img, ...layers]);
+    await nvAxial.loadVolumes(meta.has_mask ? [img, mask] : [img]);
     nvAxial.setSliceType(niivue.SLICE_TYPE.AXIAL);
 
     nvCoronal = makeNV($("vp-coronal"), { ...opts });
-    await nvCoronal.loadVolumes([img, ...layers]);
+    await nvCoronal.loadVolumes(meta.has_mask ? [img, mask] : [img]);
     nvCoronal.setSliceType(niivue.SLICE_TYPE.CORONAL);
 
     nvSagittal = makeNV($("vp-sagittal"), { ...opts });
-    await nvSagittal.loadVolumes([img, ...layers]);
+    await nvSagittal.loadVolumes(meta.has_mask ? [img, mask] : [img]);
     nvSagittal.setSliceType(niivue.SLICE_TYPE.SAGITTAL);
 
     nvMip = makeNV($("vp-mip"), { ...opts });
     await nvMip.loadVolumes([img]);
     // niivue 0.53.1 无原生 MIP slice type（RENDER=4 是体绘制）。
-    // M2 最小合理实现：体绘制视口（全体积正交投影近似 MIP 视觉），
-    // 旋转相机到正交方位；M3+ 换 vendored 新版或自实现 MIP shader（写进 M2-REPORT）。
+    // 体绘制视口（正交方位相机近似 MIP 视觉）；M3+ 换 vendored 新版。
     nvMip.setSliceType(niivue.SLICE_TYPE.RENDER);
     nvMip.setRenderAzimuthElevation(0, 0);  // 正交方位（近似轴位 MIP）
 
@@ -321,42 +321,61 @@ function bindScrollSync() {
 }
 
 // ---- mask 逐类开关与换色 -----------------------------------------------------
+// M2-align 3.5：labels.json 驱动（索引->类名/中英文名/颜色），seg-meta 提供体素数
 async function loadSegMeta() {
+  // 先取 labels.json（索引->名称/颜色）；404 = 旧版 mask（无合并产物），用兜底
+  try {
+    const lr = await fetch(`/review/${encodeURIComponent(SERIES_ID)}/labels.json`);
+    if (lr.ok) {
+      labelsDoc = await lr.json();
+    }
+  } catch (e) { /* labels.json 缺失不挡 seg-meta */ }
   const r = await fetch(`/review/${encodeURIComponent(SERIES_ID)}/seg-meta`);
-  segMeta = await r.json();  // [{class, n_voxels}]
+  segMeta = await r.json();  // [{class, label_value, n_voxels, name_cn?, color?}]
   renderSegList();
+}
+
+function labelDisplayName(s) {
+  // 类别显示名：labels.json 的中文名优先，其次英文，最后 label-N
+  const lb = labelsDoc?.labels?.[s.label_value - 1];
+  if (lb) {
+    return lb.name_cn ? `${lb.name_cn} (${lb.totalseg_class})` : lb.totalseg_class;
+  }
+  return s.name_cn ? `${s.name_cn} (${s.totalseg_class})` : s.class;
 }
 
 function renderSegList() {
   const el = $("seg-list");
   el.innerHTML = "";
   segMeta.forEach((s, i) => {
-    const color = PALETTE[i % PALETTE.length];
-    segState.set(s.class, { color, visible: true });
+    // 颜色：labels.json 的 color 优先（后端下发，不硬编码进页面 JS）；缺省用兜底色表
+    const rgb = (s.color && s.color.length === 3)
+      ? [s.color[0] / 255, s.color[1] / 255, s.color[2] / 255]
+      : FALLBACK_PALETTE[i % FALLBACK_PALETTE.length];
+    segState.set(s.label_value, { color: rgb, visible: true, name: s.class });
     const item = document.createElement("div");
     item.className = "seg-item";
-    const hex = rgbToHex(color);
+    const hex = rgbToHex(rgb);
     item.innerHTML = `
-      <input type="checkbox" checked data-class="${s.class}">
+      <input type="checkbox" checked data-class="${s.label_value}">
       <span class="swatch" style="background:${hex}"></span>
-      <span>${s.class}</span>
-      <input type="color" value="${hex}" data-color="${s.class}" title="换色">
+      <span title="${s.class}">${labelDisplayName(s)}</span>
+      <input type="color" value="${hex}" data-color="${s.label_value}" title="换色">
       <span class="n">${s.n_voxels ?? ""}</span>`;
     el.appendChild(item);
   });
   el.querySelectorAll('input[type=checkbox]').forEach(cb => {
     cb.addEventListener("change", () => {
-      const st = segState.get(cb.dataset.class);
+      const st = segState.get(parseInt(cb.dataset.class, 10));
       if (st) {
         st.visible = cb.checked;
-        // M2 粒度：逐类可见性 -> 更新 overlay（重新设 mask 透明度方案）
         updateSegVisibility();
       }
     });
   });
   el.querySelectorAll('input[type=color]').forEach(cp => {
     cp.addEventListener("change", () => {
-      const st = segState.get(cp.dataset.color);
+      const st = segState.get(parseInt(cp.dataset.color, 10));
       if (st) {
         st.color = hexToRgb(cp.value);
         updateSegVisibility();
@@ -366,8 +385,8 @@ function renderSegList() {
 }
 
 function updateSegVisibility() {
-  // 整体 overlay 透明度 + 逐类颜色（M2 粒度：niivue 单 overlay 多类统一色表，
-  // 逐类开关用 min/max/alpha 的类别级控制；完整逐类渲染 M3+ 换 mask 分通道）
+  // 逐类开关 -> overlay 透明度（M2 粒度：单 overlay 多类统一色表；
+  // 逐类独立渲染 M3+ 换 mask 分通道，见 M2-REPORT 遗留）
   for (const nv of [nvAxial, nvCoronal, nvSagittal]) {
     if (!nv || nv.volumes.length < 2) continue;
     const anyVisible = [...segState.values()].some((s) => s.visible);
@@ -388,7 +407,7 @@ $("btn-all-off").addEventListener("click", () => { setAllSeg(false); });
 function setAllSeg(v) {
   document.querySelectorAll("#seg-list input[type=checkbox]").forEach((cb) => {
     cb.checked = v;
-    const st = segState.get(cb.dataset.class);
+    const st = segState.get(parseInt(cb.dataset.class, 10));
     if (st) st.visible = v;
   });
   updateSegVisibility();
@@ -426,8 +445,11 @@ $("btn-save").addEventListener("click", async () => {
     toast("本序列无 mask，无修正可保存", "err");
     return;
   }
-  // M2 粒度：整类删除（segState.visible=false 的类别体素清零）+ niivue 画笔层
-  const deletedClasses = [...segState.entries()].filter(([, s]) => !s.visible).map(([c]) => c);
+  // M2-align 3.5：整类删除按 label 索引操作（合并 mask 的 1..N 索引）
+  // deleted_classes 形如 ["label-3", ...]，与 seg-meta 的 class 命名一致
+  const deletedClasses = [...segState.entries()]
+    .filter(([, s]) => !s.visible)
+    .map(([labelValue]) => `label-${labelValue}`);
   const drawing = nvAxial.drawBitmap;  // 画笔层（niivue 位图）
   let drawingBytes = null;
   if (drawing) {

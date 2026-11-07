@@ -402,10 +402,20 @@ def segment(
     table.add_column("值")
     table.add_row("case", result.case_id)
     table.add_row("mask", result.mask_key)
+    table.add_row("combined_mask", result.combined_mask_key or "—")
+    table.add_row("labels_json", result.labels_json_key or "—")
     table.add_row("类别数", str(result.n_classes))
     table.add_row("耗时", f"{result.elapsed_s:.1f}s")
+    # 显存峰值：主值 = runner torch 分配器实测；nvidia-smi 轮询交叉核对
     if result.peak_memory_mi_b is not None:
-        table.add_row("显存峰值", f"{result.peak_memory_mi_b:.0f} MiB")
+        smi_s = (
+            f"（nvidia-smi 交叉核对 {result.peak_memory_nvidia_smi_mi_b:.0f}）"
+            if result.peak_memory_nvidia_smi_mi_b is not None
+            else "（nvidia-smi 不可用，无交叉核对值）"
+        )
+        table.add_row("显存峰值（主值）", f"{result.peak_memory_mi_b:.0f} MiB {smi_s}")
+    else:
+        table.add_row("显存峰值", "null（不可用，不猜数字）")
     shown = ", ".join(result.class_names[:8])
     if len(result.class_names) > 8:
         shown += f" … 共 {len(result.class_names)} 类"

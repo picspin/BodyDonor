@@ -471,13 +471,17 @@ def _series_row(series_id: str) -> Any:
 
 @app.get("/review/{series_id}/meta")
 def review_meta(series_id: str) -> dict[str, Any]:
-    """序列元数据 + mask 存在性（审阅页首屏）。"""
+    """序列元数据 + mask 存在性（审阅页首屏；M2-align 3.5：优先 combined mask）。"""
     row = _series_row(series_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
     st = _get_storage()
-    has_mask = bool(row.storage_key) and st.exists(
-        row.storage_key.replace("image.nii.gz", "mask.nii.gz")
+    has_combined = bool(row.storage_key) and st.exists(
+        row.storage_key.replace("image.nii.gz", "combined_mask.nii.gz")
+    )
+    has_mask = has_combined or (
+        bool(row.storage_key)
+        and st.exists(row.storage_key.replace("image.nii.gz", "mask.nii.gz"))
     )
     return {
         "series_id": row.series_id,
@@ -486,6 +490,7 @@ def review_meta(series_id: str) -> dict[str, Any]:
         "num_slices": row.num_slices,
         "slice_thickness_mm": row.slice_thickness_mm,
         "has_mask": has_mask,
+        "has_combined_mask": has_combined,
     }
 
 
@@ -511,7 +516,11 @@ def review_image(series_id: str) -> Any:
 
 @app.get("/review/{series_id}/mask.nii.gz")
 def review_mask(series_id: str) -> Any:
-    """最新 MaskVersion 的 mask NIfTI（多类）。"""
+    """最新 MaskVersion 的 mask NIfTI（多类）。
+
+    M2-align 3.5：worker 的合并产物是 combined_mask.nii.gz（uint8 多标签），
+    与最新 MaskVersion 的多类标签图同内容；审阅页只加载 1 原图 + 1 合并 mask。
+    """
     from fastapi.responses import Response
     from sqlalchemy import select
 
@@ -539,11 +548,16 @@ def review_mask(series_id: str) -> Any:
     finally:
         engine.dispose()
     if mv is None:
-        # 无 MaskVersion 记录时 fallback：裸 mask.nii.gz（teacher 初版直接落盘）
+        # 无 MaskVersion 记录时 fallback：combined_mask.nii.gz（teacher 初版），
+        # 再退化裸 mask.nii.gz（M1 兼容路径）
         row = _series_row(series_id)
-        mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz") if row else ""
-        if mask_key and st.exists(mask_key):
-            return Response(content=st.load(mask_key), media_type="application/gzip")
+        if row and row.storage_key:
+            combined_key = row.storage_key.replace("image.nii.gz", "combined_mask.nii.gz")
+            if st.exists(combined_key):
+                return Response(content=st.load(combined_key), media_type="application/gzip")
+            mask_key = row.storage_key.replace("image.nii.gz", "mask.nii.gz")
+            if st.exists(mask_key):
+                return Response(content=st.load(mask_key), media_type="application/gzip")
         raise HTTPException(status_code=404, detail="no mask version for series")
     try:
         data = st.load(mv.storage_key)
@@ -552,26 +566,89 @@ def review_mask(series_id: str) -> Any:
     return Response(content=data, media_type="application/gzip")
 
 
-@app.get("/review/{series_id}/seg-meta")
-def review_seg_meta(series_id: str) -> list[dict[str, Any]]:
-    """mask 类别列表（class 名 + 体素数），审阅页逐类开关用。"""
+@app.get("/review/{series_id}/labels.json")
+def review_labels(series_id: str) -> Any:
+    """labels.json（M2-align 3.5）：索引 -> totalseg_class/中英文名/颜色 映射。
+
+    审阅页逐类开关/换色/体素数统计的数据源（不硬编码进页面 JS）。
+    """
+    from fastapi.responses import Response
+
     row = _series_row(series_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
     st = _get_storage()
-    mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
-    if not mask_key or not st.exists(mask_key):
+    if not row.storage_key:
+        raise HTTPException(status_code=404, detail="no labels for series")
+    labels_key = row.storage_key.replace("image.nii.gz", "labels.json")
+    if not st.exists(labels_key):
+        raise HTTPException(status_code=404, detail="no labels.json（旧版 mask 或无合并产物）")
+    return Response(
+        content=st.load(labels_key),
+        media_type="application/json",
+        headers={"Content-Disposition": "inline"},
+    )
+
+
+@app.get("/review/{series_id}/seg-meta")
+def review_seg_meta(series_id: str) -> list[dict[str, Any]]:
+    """mask 类别列表（class 名 + 体素数），审阅页逐类开关用。
+
+    M2-align 3.5：优先 combined_mask.nii.gz（uint8 多标签）。有合并产物时
+    **列出 labels.json 的全部类别**（体素数 0 = 该类在本序列非空为空），
+    labels.json 类别数与审阅页列表一致（协议一致性）；无合并产物（旧版 mask）
+    时只列 mask 里非空的 label。
+    """
+    row = _series_row(series_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
+    st = _get_storage()
+    if not row.storage_key:
         return []
+    combined_key = row.storage_key.replace("image.nii.gz", "combined_mask.nii.gz")
+    mask_key = row.storage_key.replace("image.nii.gz", "mask.nii.gz")
+    key = combined_key if st.exists(combined_key) else mask_key
+    if not st.exists(key):
+        return []
+
+    # labels.json（有合并产物时）-> index -> totalseg_class/中英文名
+    label_names: dict[int, dict[str, Any]] = {}
+    if st.exists(row.storage_key.replace("image.nii.gz", "labels.json")):
+        import json as _json
+
+        try:
+            doc = _json.loads(
+                bytes(st.load(row.storage_key.replace("image.nii.gz", "labels.json")))
+            )
+            for lb in doc.get("labels", []):
+                label_names[int(lb["index"])] = lb
+        except Exception:  # noqa: BLE001 — labels.json 损坏不挡 seg-meta
+            label_names = {}
+
     import numpy as np
 
-    with _nifti_from_bytes(st.load(mask_key)) as img:
+    with _nifti_from_bytes(st.load(key)) as img:
         arr = np.asarray(img.dataobj)
-        classes = sorted(set(int(v) for v in np.unique(arr)) - {0})
+        # 有 labels.json：列全部类别（labels.json 类别数与列表一致——协议契约）；
+        # 无 labels.json（旧版 mask）：只列非空 label
+        classes = sorted(label_names) if label_names else sorted(
+            set(int(v) for v in np.unique(arr)) - {0}
+        )
     return [
         {
             "class": f"label-{v}",
             "label_value": v,
             "n_voxels": int((arr == v).sum()),
+            **(
+                {
+                    "totalseg_class": label_names[v]["totalseg_class"],
+                    "name_cn": label_names[v].get("name_cn", ""),
+                    "name_en": label_names[v].get("name_en", ""),
+                    "color": label_names[v].get("color"),
+                }
+                if v in label_names
+                else {}
+            ),
         }
         for v in classes
     ]
