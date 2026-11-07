@@ -373,16 +373,97 @@ def run_qc(
     # ---- config 槽位规则 ----
     arr = np.asarray(mask_arr)
     rule_outputs: list[tuple[str, bool, float, dict[str, Any]]] = []
-    for rule in (RULE_VOLUME_PRIOR, RULE_CONNECTED_COMPONENT, RULE_HOLES,
-                 RULE_BOUNDARY_SMOOTHNESS):
-        cfg = _rule_cfg(th, rule)
-        if not cfg.get("enabled", True):
-            rule_scores[rule] = {"skipped": "disabled"}
+
+    # 体积先验（无 per-label 循环）
+    cfg = _rule_cfg(th, RULE_VOLUME_PRIOR)
+    if cfg.get("enabled", True):
+        flagged, score, detail = rule_volume_prior(arr, img_shape, cfg)
+        rule_outputs.append((RULE_VOLUME_PRIOR, flagged, score, detail))
+    else:
+        rule_scores[RULE_VOLUME_PRIOR] = {"skipped": "disabled"}
+
+    # connected_component + holes + boundary_smoothness：单次 per-label 循环
+    #（512×512×1000 层级 × 117 类逐规则循环会到分钟级；合并成一遍 + 早跳小类）
+    import numpy as np
+    from scipy import ndimage
+
+    cc_cfg = _rule_cfg(th, RULE_CONNECTED_COMPONENT)
+    holes_cfg = _rule_cfg(th, RULE_HOLES)
+    bnd_cfg = _rule_cfg(th, RULE_BOUNDARY_SMOOTHNESS)
+    cc_on, holes_on, bnd_on = (
+        cc_cfg.get("enabled", True), holes_cfg.get("enabled", True),
+        bnd_cfg.get("enabled", True),
+    )
+    struct = ndimage.generate_binary_structure(3, 1)
+    present, present_sizes = np.unique(arr, return_counts=True)
+    label_sizes = {
+        int(v): int(s) for v, s in zip(present, present_sizes, strict=True) if v != 0
+    }
+    labels = list(label_sizes)
+    # find_objects 一次拿全部类的外接框（2.2s vs 逐类 argwhere ~100 次全图扫描）
+    obj_slices = ndimage.find_objects(arr)
+    cc_detail = {"min_main_frac": float(cc_cfg.get("min_main_frac", 0.8)),
+                 "max_components": int(cc_cfg.get("max_components", 20)),
+                 "worst_main_frac": 1.0, "worst_label": 0, "worst_n_components": 0}
+    holes_detail = {"max_hole_frac": float(holes_cfg.get("max_hole_frac", 0.2)),
+                    "worst_hole_frac": 0.0, "worst_label": 0}
+    bnd_detail = {"max_boundary_ratio": float(bnd_cfg.get("max_boundary_ratio", 1.2)),
+                  "worst_sphericity": 0.0, "worst_label": 0}
+    for lb in labels:
+        if label_sizes[lb] < 50:
+            continue  # 小类体素太少，域/洞/形状因子无意义（与 HU 阈值一致）
+        # bbox 裁剪：逐类统计只在类的外接框内做（实测 44x 提速；域/洞/形状因子
+        # 都是局部统计，外接框外全为背景，结果与全图一致）
+        sl = obj_slices[lb - 1]
+        if sl is None:
             continue
-        flagged, score, detail = BUILTIN_RULES[rule](
-            arr, img_shape=img_shape, cfg=cfg
+        binary = arr[sl] == lb
+        if cc_on:
+            lab_arr, n_comp = ndimage.label(binary, structure=struct)
+            if n_comp > 0:
+                sizes = ndimage.sum(binary, lab_arr, range(1, n_comp + 1))
+                main_frac = float(sizes.max()) / float(label_sizes[lb])
+                if main_frac < cc_detail["worst_main_frac"]:
+                    cc_detail["worst_main_frac"] = round(main_frac, 4)
+                    cc_detail["worst_label"] = lb
+                    cc_detail["worst_n_components"] = int(n_comp)
+        if holes_on:
+            filled = ndimage.binary_fill_holes(binary, structure=struct)
+            total_lb = int(filled.sum())
+            if total_lb > 0:
+                hole_frac = float(total_lb - label_sizes[lb]) / float(total_lb)
+                if hole_frac > holes_detail["worst_hole_frac"]:
+                    holes_detail["worst_hole_frac"] = round(hole_frac, 4)
+                    holes_detail["worst_label"] = lb
+        if bnd_on:
+            n_vox_lb = float(label_sizes[lb])
+            if n_vox_lb >= 8:
+                eroded = ndimage.binary_erosion(binary, structure=struct)
+                surface = float(label_sizes[lb] - eroded.sum())
+                if surface > 0:
+                    sphericity = surface / (n_vox_lb ** (2.0 / 3.0))
+                    if sphericity > bnd_detail["worst_sphericity"]:
+                        bnd_detail["worst_sphericity"] = round(sphericity, 4)
+                        bnd_detail["worst_label"] = lb
+    if cc_on:
+        cc_flag = (cc_detail["worst_main_frac"] < float(cc_cfg["min_main_frac"])
+                   or cc_detail["worst_n_components"] > int(cc_cfg["max_components"]))
+        rule_outputs.append((RULE_CONNECTED_COMPONENT, cc_flag, 0.0 if cc_flag else 1.0, cc_detail))
+    else:
+        rule_scores[RULE_CONNECTED_COMPONENT] = {"skipped": "disabled"}
+    if holes_on:
+        holes_flag = holes_detail["worst_hole_frac"] > float(holes_cfg["max_hole_frac"])
+        rule_outputs.append((RULE_HOLES, holes_flag, 0.0 if holes_flag else 1.0, holes_detail))
+    else:
+        rule_scores[RULE_HOLES] = {"skipped": "disabled"}
+    if bnd_on:
+        bnd_flag = bnd_detail["worst_sphericity"] > float(bnd_cfg["max_boundary_ratio"])
+        rule_outputs.append(
+            (RULE_BOUNDARY_SMOOTHNESS, bnd_flag, 0.0 if bnd_flag else 1.0, bnd_detail)
         )
-        rule_outputs.append((rule, flagged, score, detail))
+    else:
+        rule_scores[RULE_BOUNDARY_SMOOTHNESS] = {"skipped": "disabled"}
+
     # hu_distribution（需要原图 HU + 类名）
     cfg = _rule_cfg(th, RULE_HU_DISTRIBUTION)
     if cfg.get("enabled", True):
