@@ -407,8 +407,19 @@ function updateSegVisibility() {
       R[i] = pal[0]; G[i] = pal[1]; B[i] = pal[2];
       A[i] = (st && st.visible) ? 0.6 : 0.0;  // 逐类可见性 = 每类 alpha
     }
+    // 构建完整 LUT（Uint8ClampedArray RGBA，按 label 值索引）：0.53.1 的
+    // refreshLayers 需要已构建的 .lut（init 时 makeLabelLut 只在构造路径跑）
+    const lut = new Uint8ClampedArray((nLabels + 1) * 4);
+    lut[0] = 0; lut[1] = 0; lut[2] = 0; lut[3] = 0;  // 背景（label 0）透明
+    for (let i = 0; i < nLabels; i++) {
+      const o = (i + 1) * 4;
+      lut[o] = Math.round(R[i] * 255);
+      lut[o + 1] = Math.round(G[i] * 255);
+      lut[o + 2] = Math.round(B[i] * 255);
+      lut[o + 3] = Math.round(A[i] * 255);
+    }
     const vol = nv.volumes[1];
-    vol.colormapLabel = { R: Array.from(R), G: Array.from(G), B: Array.from(B), A: Array.from(A) };
+    vol.colormapLabel = { lut: lut, min: 0, max: nLabels, labels: [] };
     vol.colormap = "red";  // 有 colormapLabel 时 shader 用 LUT，colormap 仅占位
     nv.updateGLVolume();
   }
