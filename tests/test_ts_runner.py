@@ -143,6 +143,7 @@ class TestRunnerPaths:
         assert RUNNER.exists()
         assert RUNNER.name == "ts_runner.py"
 
+    @pytest.mark.skipif(ts_python() is None, reason="TS venv 不存在")
     def test_build_runner_cmd(self) -> None:
         """命令 = TS venv python + runner 模块路径（JSON 契约通道）。"""
         cmd = build_runner_cmd()

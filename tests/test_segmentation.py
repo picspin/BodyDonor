@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from bodydonor.config import Settings, load_settings
 from bodydonor.segmentation import (
+    DEFAULT_TS_VENV,
     SegmentWorkerError,
     check_worker_task,
     merge_ts_output,
@@ -101,6 +102,10 @@ class TestMergeOutput:
 
 
 class TestVenvCli:
+    @pytest.mark.skipif(
+        not (DEFAULT_TS_VENV / "bin" / "python").exists(),
+        reason="TS venv 不存在",
+    )
     def test_cli_path_exists(self) -> None:
         """独立 venv 的 TotalSegmentator CLI 存在（Q7 隔离装好）。"""
         p = ts_venv_cli(Settings())
