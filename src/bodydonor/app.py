@@ -748,15 +748,18 @@ def review_seg_meta(series_id: str) -> list[dict[str, Any]]:
     if not st.exists(key):
         return []
 
-    # labels.json（有合并产物时）-> index -> totalseg_class/中英文名
+    # labels.json（TS 输出类别名单，M3 遗留 (d) 衔接）-> index -> totalseg_class/中英文名。
+    # labels.json 由 worker 推理落盘（build_labels_json，源自 TS 输出文件名 +
+    # 本体映射表）；manual 修正版本沿用同一份（label 值不变），审阅页逐类
+    # 开关/换色/体素统计的数据源。
     label_names: dict[int, dict[str, Any]] = {}
-    if st.exists(row.storage_key.replace("image.nii.gz", "labels.json")):
+    series_dir = "/".join((row.storage_key or "").split("/")[:2])
+    labels_key = f"{series_dir}/labels.json"
+    if st.exists(labels_key):
         import json as _json
 
         try:
-            doc = _json.loads(
-                bytes(st.load(row.storage_key.replace("image.nii.gz", "labels.json")))
-            )
+            doc = _json.loads(bytes(st.load(labels_key)))
             for lb in doc.get("labels", []):
                 label_names[int(lb["index"])] = lb
         except Exception:  # noqa: BLE001 — labels.json 损坏不挡 seg-meta
