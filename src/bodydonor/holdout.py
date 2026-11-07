@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import models
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EVAL_DIR = PROJECT_ROOT / "eval"
 HOLDOUT_FILE = EVAL_DIR / "holdout.txt"
@@ -52,6 +54,7 @@ class GateResult:
     mean_dice: float
     per_class_dice: dict[str, float] = field(default_factory=dict)
     per_class_cases: dict[str, int] = field(default_factory=dict)
+    n_cases: int = 0
     whole_class_missed: list[str] = field(default_factory=list)
     passed: bool = False
     failures: list[str] = field(default_factory=list)
@@ -61,6 +64,7 @@ class GateResult:
             "mean_dice": round(self.mean_dice, 4),
             "per_class_dice": {k: round(v, 4) for k, v in self.per_class_dice.items()},
             "per_class_cases": dict(self.per_class_cases),
+            "n_cases": self.n_cases,
             "whole_class_missed": list(self.whole_class_missed),
             "passed": self.passed,
             "failures": list(self.failures),
@@ -225,6 +229,7 @@ def evaluate_gate(
         mean_dice=mean,
         per_class_dice=per_class,
         per_class_cases=dict(per_class_case_count),
+        n_cases=n_cases,
         whole_class_missed=whole_class_missed,
         passed=not failures,
         failures=failures,
@@ -256,6 +261,65 @@ def check_per_class_coverage(
     return problems
 
 
+# ---------------------------------------------------------------------------
+# 门禁结果落库（ModelVersion.gate_metrics 来源，proposal §8）
+# ---------------------------------------------------------------------------
+
+def persist_gate_result(
+    settings: Any,
+    model_version_id: str,
+    gate: GateResult,
+    holdout_file: Path | None = None,
+) -> dict[str, Any]:
+    """门禁结果写 ModelVersion（gate_status/gate_metrics/gate_holdout_file）。
+
+    - model_version 不存在 → ModelVersionError（不静默建行；ModelVersion 由
+      蒸馏训练侧创建，本函数只更新门禁结果字段）
+    - 写路径走单一写入纪律（db.write_lock，M0-fix）
+    """
+    from sqlalchemy import select
+
+    from . import db
+
+    engine = db._engine(settings.database.url)
+    try:
+        with db.write_lock, engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            s = Session(conn)
+            try:
+                mv = s.execute(
+                    select(models.ModelVersion).where(
+                        models.ModelVersion.model_version_id
+                        == model_version_id[:60]
+                    )
+                ).scalar_one_or_none()
+                if mv is None:
+                    raise ModelVersionError(
+                        f"unknown model version: {model_version_id}"
+                        "（门禁结果只更新已存在的 ModelVersion 行）"
+                    )
+                mv.gate_status = "passed" if gate.passed else "failed"
+                mv.gate_metrics = gate.to_dict()
+                mv.gate_holdout_file = str(
+                    holdout_file or HOLDOUT_FILE.relative_to(PROJECT_ROOT)
+                )
+                s.commit()
+                return {
+                    "model_version_id": mv.model_version_id,
+                    "gate_status": mv.gate_status,
+                    "mean_dice": gate.to_dict()["mean_dice"],
+                }
+            finally:
+                s.close()
+    finally:
+        engine.dispose()
+
+
+class ModelVersionError(Exception):
+    """unknown model version（门禁结果落库要求行已存在）。"""
+
+
 __all__ = [
     "EVAL_DIR",
     "GateResult",
@@ -266,6 +330,7 @@ __all__ = [
     "MIN_CASES",
     "MIN_PER_CLASS",
     "PER_CLASS_DICE_FLOOR",
+    "ModelVersionError",
     "check_leak",
     "check_per_class_coverage",
     "check_holdout_composition",
@@ -273,5 +338,6 @@ __all__ = [
     "dice_per_class",
     "evaluate_gate",
     "load_holdout",
+    "persist_gate_result",
     "write_holdout",
 ]

@@ -16,6 +16,7 @@ from bodydonor.holdout import (
     dice_per_class,
     evaluate_gate,
     load_holdout,
+    persist_gate_result,
     write_holdout,
 )
 
@@ -144,3 +145,105 @@ def test_per_class_coverage_minimum():
 def test_min_cases_constant():
     """规模下限 30（proposal §8）。"""
     assert MIN_CASES == 30
+
+
+# ---------------------------------------------------------------------------
+# 门禁结果落库（ModelVersion.gate_metrics 来源，proposal §8）
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def settings_db(tmp_path):
+    """Settings + init_db 的独立 SQLite（落库测试不碰真实 bodydonor.db）。"""
+    from bodydonor.config import Settings
+    from bodydonor.db import init_db
+
+    url = f"sqlite:///{tmp_path / 'gate.db'}"
+    init_db(url)
+    s = Settings()
+    s.database.url = url
+    return s
+
+
+def _seed_model_version(settings, model_version_id="mv-student-r1"):
+    from sqlalchemy.orm import Session
+
+    from bodydonor import db
+    from bodydonor.models import ModelVersion
+
+    engine = db._engine(settings.database.url)
+    try:
+        with engine.connect() as c:
+            s = Session(c)
+            s.add(ModelVersion(model_version_id=model_version_id, name="student-r1"))
+            s.commit()
+            s.close()
+    finally:
+        engine.dispose()
+
+
+def test_persist_gate_result_passed(settings_db):
+    """门禁通过：gate_status=passed + gate_metrics 成对判据落库。"""
+    from sqlalchemy.orm import Session
+
+    from bodydonor import db
+    from bodydonor.models import ModelVersion
+
+    _seed_model_version(settings_db)
+    gate = evaluate_gate(
+        {"liver": 30.0, "spleen": 29.0},
+        {"liver": 30, "spleen": 30},
+        n_cases=30,
+    )
+    out = persist_gate_result(settings_db, "mv-student-r1", gate)
+    assert out["gate_status"] == "passed"
+
+    engine = db._engine(settings_db.database.url)
+    try:
+        with engine.connect() as c:
+            s = Session(c)
+            mv = s.get(ModelVersion, "mv-student-r1")
+            assert mv.gate_status == "passed"
+            assert mv.gate_metrics["passed"] is True
+            assert mv.gate_metrics["n_cases"] == 30
+            assert mv.gate_holdout_file == "eval/holdout.txt"
+            s.close()
+    finally:
+        engine.dispose()
+
+
+def test_persist_gate_result_failed(settings_db):
+    """门禁失败（整类漏检）：gate_status=failed + failures 落库。"""
+    from sqlalchemy.orm import Session
+
+    from bodydonor import db
+    from bodydonor.models import ModelVersion
+
+    _seed_model_version(settings_db)
+    gate = evaluate_gate(
+        {"liver": 30.0, "spleen": 0.0},
+        {"liver": 30, "spleen": 30},
+        n_cases=30,
+        whole_class_missed=["spleen"],
+    )
+    assert not gate.passed
+    persist_gate_result(settings_db, "mv-student-r1", gate)
+
+    engine = db._engine(settings_db.database.url)
+    try:
+        with engine.connect() as c:
+            s = Session(c)
+            mv = s.get(ModelVersion, "mv-student-r1")
+            assert mv.gate_status == "failed"
+            assert any("整类漏检" in f for f in mv.gate_metrics["failures"])
+            s.close()
+    finally:
+        engine.dispose()
+
+
+def test_persist_gate_result_unknown_model_version(settings_db):
+    """unknown model version：ModelVersionError（不静默建行）。"""
+    from bodydonor.holdout import ModelVersionError
+
+    gate = evaluate_gate({"liver": 30.0}, {"liver": 30}, n_cases=30)
+    with pytest.raises(ModelVersionError, match="unknown model version"):
+        persist_gate_result(settings_db, "mv-nonexistent", gate)
