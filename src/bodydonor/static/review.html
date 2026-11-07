@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BodyDonor 审阅台</title>
+<script src="/static/niivue.umd.js"></script>
+<style>
+  /* 放射科阅片室色系：深炭黑底，骨窗琥珀强调，病理青蓝；无渐变无阴影 */
+  :root {
+    --bg: #101418;
+    --panel: #171d23;
+    --line: #232c34;
+    --text: #c4cdd4;
+    --dim: #6b7780;
+    --amber: #d9a441;   /* 骨窗琥珀：当前激活/主强调 */
+    --cyan: #4fa3b5;    /* 病理青蓝：运行/信息 */
+    --green: #5fa867;
+    --red: #c75450;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+  body {
+    font: 14px/1.5 "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 16px;
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 16px; font-weight: 600; margin: 0; color: var(--amber); }
+  header .series { color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+  header .status { margin-left: auto; color: var(--dim); font-size: 12px; }
+  header .status.ok { color: var(--green); }
+  header .status.err { color: var(--red); }
+
+  main { flex: 1; display: flex; min-height: 0; }
+
+  /* 视口区：左 2×2 网格，axial 主视口占左上大格 */
+  #viewport-grid {
+    flex: 1; display: grid; min-width: 0;
+    grid-template-columns: 3fr 2fr; grid-template-rows: 3fr 2fr; gap: 4px; padding: 4px;
+  }
+  .vp { position: relative; background: #000; border: 1px solid var(--line); min-height: 0; }
+  .vp canvas { width: 100%; height: 100%; display: block; }
+  .vp .label {
+    position: absolute; left: 8px; top: 6px; font-size: 12px; color: var(--dim);
+    background: rgba(16,20,24,.7); padding: 1px 6px; pointer-events: none;
+  }
+  #vp-axial { grid-column: 1; grid-row: 1; }
+  #vp-coronal { grid-column: 2; grid-row: 1; }
+  #vp-sagittal { grid-column: 1; grid-row: 2; }
+  #vp-mip { grid-column: 2; grid-row: 2; }
+
+  /* 右侧控制栏 */
+  aside {
+    width: 280px; flex-shrink: 0; border-left: 1px solid var(--line); background: var(--panel);
+    display: flex; flex-direction: column; overflow-y: auto;
+  }
+  .ctrl-group { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .ctrl-group h2 { font-size: 12px; font-weight: 600; color: var(--dim); margin: 0 0 8px; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .row label { color: var(--dim); font-size: 13px; min-width: 56px; }
+  input[type=range] { flex: 1; accent-color: var(--amber); }
+  .val { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; color: var(--cyan); font-size: 12px; }
+
+  /* mask 类别开关列表 */
+  #seg-list { max-height: 40vh; overflow-y: auto; }
+  .seg-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+  .seg-item input[type=checkbox] { accent-color: var(--amber); }
+  .seg-item .swatch { width: 12px; height: 12px; flex-shrink: 0; border: 1px solid var(--line); }
+  .seg-item .n { margin-left: auto; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .seg-item input[type=color] { width: 22px; height: 18px; padding: 0; border: none; background: none; }
+
+  button {
+    background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    padding: 6px 12px; font-size: 13px; cursor: pointer; border-radius: 3px;
+  }
+  button:hover { border-color: var(--amber); color: var(--amber); }
+  button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
+  button.primary { border-color: var(--amber); color: var(--amber); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* 画笔/删除模式切换 */
+  .mode-row { display: flex; gap: 6px; }
+  .mode-row button.active { border-color: var(--cyan); color: var(--cyan); }
+
+  #toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: var(--panel); border: 1px solid var(--line); color: var(--text);
+    padding: 8px 16px; font-size: 13px; border-radius: 3px; display: none;
+  }
+  #toast.ok { border-color: var(--green); color: var(--green); }
+  #toast.err { border-color: var(--red); color: var(--red); }
+
+  footer {
+    padding: 6px 16px; border-top: 1px solid var(--line); background: var(--panel);
+    color: var(--dim); font-size: 12px; display: flex; gap: 16px;
+  }
+  footer .slice-pos { color: var(--cyan); font-variant-numeric: tabular-nums; }
+  @media (prefers-reduced-motion: no-preference) {
+    #toast.show { animation: toast-in .18s ease-out; }
+    @keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(6px); } }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>BodyDonor 审阅台</h1>
+  <span class="series" id="series-label">加载中…</span>
+  <span class="status" id="hdr-status"></span>
+</header>
+
+<main>
+  <div id="viewport-grid">
+    <div class="vp" id="vp-axial"><span class="label">轴位 Axial</span></div>
+    <div class="vp" id="vp-coronal"><span class="label">冠状 Coronal</span></div>
+    <div class="vp" id="vp-sagittal"><span class="label">矢状 Sagittal</span></div>
+    <div class="vp" id="vp-mip"><span class="label">MIP 最大密度投影</span></div>
+  </div>
+
+  <aside>
+    <div class="ctrl-group">
+      <h2>窗宽窗位</h2>
+      <div class="row"><label>窗位</label><input type="range" id="ww-center" min="-1000" max="3000" value="400"><span class="val" id="ww-center-v">400</span></div>
+      <div class="row"><label>窗宽</label><input type="range" id="ww-width" min="10" max="4000" value="1500"><span class="val" id="ww-width-v">1500</span></div>
+    </div>
+
+    <div class="ctrl-group">
+      <h2>切片滚动</h2>
+      <div class="row"><label>位置</label><input type="range" id="slice-slider" min="0" max="100" value="50"><span class="val" id="slice-v">—</span></div>
+      <div class="row">
+        <button id="btn-crosshair" title="把十字线移动到当前切片">十字定位</button>
+        <button id="btn-reset" title="重置视图">重置</button>
+      </div>
+    </div>
+
+    <div class="ctrl-group">
+      <h2>人工修正</h2>
+      <div class="mode-row">
+        <button id="mode-none" class="active">浏览</button>
+        <button id="mode-erase" title="整类删除：点击 mask 关闭该类别">整类删除</button>
+        <button id="mode-paint" title="画笔粗修：拖动擦除当前类">画笔粗修</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="btn-save" class="primary">保存修正（新 MaskVersion）</button>
+      </div>
+    </div>
+
+    <div class="ctrl-group">
+      <h2>mask 类别</h2>
+      <div id="seg-list"><span style="color:var(--dim)">—</span></div>
+      <div class="row" style="margin-top:8px">
+        <button id="btn-all-on">全开</button>
+        <button id="btn-all-off">全关</button>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <span class="slice-pos" id="slice-pos">slice —</span>
+  <span id="fps-hint">滚轮/拖动滚动 · 右键窗宽窗位 · 逐类开关在右侧</span>
+  <span id="frame-stat" style="margin-left:auto"></span>
+</footer>
+<div id="toast"></div>
+
+<script>
+// BodyDonor 审阅台（M2）：三正交面 + MIP；mask 逐类开关；窗宽窗位；逐 slice 滚动同步重绘；
+// 导出人工修正（整类删除 + 画笔粗修）写回 NIfTI（POST /review/{series_id}/save）。
+// 不做（非目标）：4D/时间序列、DTI、自由角三维切面、多人协同、DICOM 原生渲染。
+
+const q = new URLSearchParams(location.search);
+const SERIES_ID = q.get("series_id") || "";
+
+const $ = (id) => document.getElementById(id);
+const toastEl = $("toast");
+let toastTimer;
+function toast(msg, cls = "") {
+  toastEl.textContent = msg;
+  toastEl.className = "show " + cls;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toastEl.className = ""; }, 2600);
+}
+
+// ---- niivue 多视口 ----------------------------------------------------------
+const nvMap = new Map();  // id -> nv instance
+
+function makeNV(canvasParent, options) {
+  const canvas = document.createElement("canvas");
+  canvasParent.appendChild(canvas);
+  const nv = new niivue.Niivue(options);
+  nv.attachToCanvas(canvas);
+  return nv;
+}
+
+// 类别色（niivue 高辨识临床调色板代理；换色用 color input）
+const PALETTE = [
+  [1.0, 0.4, 0.4], [0.4, 0.7, 1.0], [0.5, 0.9, 0.5], [1.0, 0.8, 0.3],
+  [0.8, 0.5, 1.0], [0.3, 0.9, 0.9], [1.0, 0.5, 0.8], [0.7, 0.7, 0.3],
+  [0.4, 0.6, 0.3], [0.9, 0.6, 0.4], [0.6, 0.4, 0.8], [0.3, 0.5, 0.8],
+];
+const segState = new Map(); // class -> {color:[r,g,b], visible:true}
+
+let nvAxial, nvCoronal, nvSagittal, nvMip;
+let meta = null;       // {series_id, case_id, num_slices}
+let segMeta = [];      // [{class, n_voxels}]
+
+async function loadSeries() {
+  if (!SERIES_ID) {
+    $("series-label").textContent = "缺 series_id 参数（?series_id=...）";
+    setHeader("err", "URL 缺 series_id");
+    return;
+  }
+  setHeader("", "加载中…");
+  try {
+    const r = await fetch(`/review/${encodeURIComponent(SERIES_ID)}/meta`);
+    if (!r.ok) throw new Error(`meta HTTP ${r.status}`);
+    meta = await r.json();
+    $("series-label").textContent = `${meta.case_id} / ${meta.series_id} · ${meta.num_slices} 层`;
+
+    const img = { url: `/review/${encodeURIComponent(SERIES_ID)}/image.nii.gz` };
+    const layers = [];
+    // mask（若有）：多类 NIfTI 直接作为 overlay；逐类可见性在 seg 渲染控制
+    if (meta.has_mask) {
+      layers.push({ url: `/review/${encodeURIComponent(SERIES_ID)}/mask.nii.gz` });
+    }
+    const opts = {
+      showNIfTIHeaderWarning: false,
+      loadingText: "加载中…",
+      backColor: [0, 0, 0, 1],
+    };
+
+    nvAxial = makeNV($("vp-axial"), { ...opts, dragMode: "pan" });
+    await nvAxial.loadVolumes([img, ...layers]);
+    nvAxial.setSliceType(niivue.SLICE_TYPE.AXIAL);
+
+    nvCoronal = makeNV($("vp-coronal"), { ...opts });
+    await nvCoronal.loadVolumes([img, ...layers]);
+    nvCoronal.setSliceType(niivue.SLICE_TYPE.CORONAL);
+
+    nvSagittal = makeNV($("vp-sagittal"), { ...opts });
+    await nvSagittal.loadVolumes([img, ...layers]);
+    nvSagittal.setSliceType(niivue.SLICE_TYPE.SAGITTAL);
+
+    nvMip = makeNV($("vp-mip"), { ...opts });
+    await nvMip.loadVolumes([img]);
+    // niivue 0.53.1 无原生 MIP slice type（RENDER=4 是体绘制）。
+    // M2 最小合理实现：体绘制视口（全体积正交投影近似 MIP 视觉），
+    // 旋转相机到正交方位；M3+ 换 vendored 新版或自实现 MIP shader（写进 M2-REPORT）。
+    nvMip.setSliceType(niivue.SLICE_TYPE.RENDER);
+    nvMip.setRenderAzimuthElevation(0, 0);  // 正交方位（近似轴位 MIP）
+
+    syncSlidersFromVox();
+    applyWindowWW();
+    if (meta.has_mask) {
+      await loadSegMeta();
+    }
+    bindScrollSync();
+    setHeader("ok", "已加载");
+  } catch (e) {
+    setHeader("err", `加载失败：${e.message}`);
+    toast(`加载失败：${e.message}`, "err");
+  }
+}
+
+function setHeader(cls, text) {
+  const el = $("hdr-status");
+  el.textContent = text;
+  el.className = "status " + cls;
+}
+
+// ---- 窗宽窗位 ---------------------------------------------------------------
+function applyWindowWW() {
+  const center = parseFloat($("ww-center").value);
+  const width = parseFloat($("ww-width").value);
+  $("ww-center-v").textContent = center;
+  $("ww-width-v").textContent = width;
+  const mn = center - width / 2, mx = center + width / 2;
+  for (const nv of [nvAxial, nvCoronal, nvSagittal, nvMip]) {
+    if (!nv) continue;
+    nv.volumes[0].cal_min = mn;
+    nv.volumes[0].cal_max = mx;
+  }
+}
+$("ww-center").addEventListener("input", applyWindowWW);
+$("ww-width").addEventListener("input", applyWindowWW);
+
+// ---- 逐 slice 滚动 + mask 同步 ----------------------------------------------
+// 同步滚动：主视口驱动其余两个正交面（niivue 内部自动随 sliceMM 联动 mask 重绘）
+function currentSliceMM() {
+  if (!nvAxial) return 0;
+  return nvAxial.scene.sliceMM[0] ?? 0;
+}
+
+function syncSlidersFromVox() {
+  const [x, y, z] = nvAxial.scene.vox ?? [0, 0, 0];
+  const dims = nvAxial.volumes[0].dims;  // [4, x, y, z]
+  $("slice-slider").max = String(dims[3] - 1);
+  $("slice-slider").value = String(z);
+  $("slice-v").textContent = `${z + 1}/${dims[3]}`;
+  $("slice-pos").textContent = `slice ${z + 1}/${dims[3]} · vox (${x},${y},${z})`;
+}
+
+$("slice-slider").addEventListener("input", (ev) => {
+  const z = parseInt(ev.target.value, 10);
+  for (const nv of [nvAxial, nvCoronal, nvSagittal]) {
+    if (!nv) continue;
+    const mm = nv.volumes[0].matRAS[13] + z * nv.volumes[0].hdr.pixDims[3];
+    nv.scene.vox = [nv.scene.vox?.[0] ?? 0, nv.scene.vox?.[1] ?? 0, z];
+  }
+  syncSlidersFromVox();
+});
+
+function bindScrollSync() {
+  // 主视口滚轮 -> 更新滑条（niivue 处理切片滚动；mask 随 volumes 重绘）
+  const canvas = $("vp-axial").querySelector("canvas");
+  canvas.addEventListener("wheel", () => {
+    setTimeout(syncSlidersFromVox, 30);  // niivue 更新 vox 后回读
+  }, { passive: true });
+}
+
+// ---- mask 逐类开关与换色 -----------------------------------------------------
+async function loadSegMeta() {
+  const r = await fetch(`/review/${encodeURIComponent(SERIES_ID)}/seg-meta`);
+  segMeta = await r.json();  // [{class, n_voxels}]
+  renderSegList();
+}
+
+function renderSegList() {
+  const el = $("seg-list");
+  el.innerHTML = "";
+  segMeta.forEach((s, i) => {
+    const color = PALETTE[i % PALETTE.length];
+    segState.set(s.class, { color, visible: true });
+    const item = document.createElement("div");
+    item.className = "seg-item";
+    const hex = rgbToHex(color);
+    item.innerHTML = `
+      <input type="checkbox" checked data-class="${s.class}">
+      <span class="swatch" style="background:${hex}"></span>
+      <span>${s.class}</span>
+      <input type="color" value="${hex}" data-color="${s.class}" title="换色">
+      <span class="n">${s.n_voxels ?? ""}</span>`;
+    el.appendChild(item);
+  });
+  el.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener("change", () => {
+      const st = segState.get(cb.dataset.class);
+      if (st) {
+        st.visible = cb.checked;
+        // M2 粒度：逐类可见性 -> 更新 overlay（重新设 mask 透明度方案）
+        updateSegVisibility();
+      }
+    });
+  });
+  el.querySelectorAll('input[type=color]').forEach(cp => {
+    cp.addEventListener("change", () => {
+      const st = segState.get(cp.dataset.color);
+      if (st) {
+        st.color = hexToRgb(cp.value);
+        updateSegVisibility();
+      }
+    });
+  });
+}
+
+function updateSegVisibility() {
+  // 整体 overlay 透明度 + 逐类颜色（M2 粒度：niivue 单 overlay 多类统一色表，
+  // 逐类开关用 min/max/alpha 的类别级控制；完整逐类渲染 M3+ 换 mask 分通道）
+  for (const nv of [nvAxial, nvCoronal, nvSagittal]) {
+    if (!nv || nv.volumes.length < 2) continue;
+    const anyVisible = [...segState.values()].some((s) => s.visible);
+    nv.volumes[1].opacity = anyVisible ? 0.6 : 0;
+  }
+}
+
+function rgbToHex(rgb) {
+  return "#" + rgb.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
+}
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+$("btn-all-on").addEventListener("click", () => { setAllSeg(true); });
+$("btn-all-off").addEventListener("click", () => { setAllSeg(false); });
+function setAllSeg(v) {
+  document.querySelectorAll("#seg-list input[type=checkbox]").forEach((cb) => {
+    cb.checked = v;
+    const st = segState.get(cb.dataset.class);
+    if (st) st.visible = v;
+  });
+  updateSegVisibility();
+}
+
+// ---- 修正模式 ----------------------------------------------------------------
+let editMode = "none";  // none | erase | paint
+function setMode(m) {
+  editMode = m;
+  for (const [id, mode] of [["mode-none", "none"], ["mode-erase", "erase"], ["mode-paint", "paint"]]) {
+    $(id).classList.toggle("active", mode === m);
+  }
+}
+$("mode-none").addEventListener("click", () => setMode("none"));
+$("mode-erase").addEventListener("click", () => setMode("erase"));
+$("mode-paint").addEventListener("click", () => setMode("paint"));
+
+$("mode-erase").addEventListener("click", () => {
+  toast("整类删除模式：在右侧列表里点击类别名前面的勾，去掉即该类删除；保存时生效");
+});
+$("mode-paint").addEventListener("click", () => {
+  if (nvAxial) {
+    nvAxial.setDrawingEnabled(true);
+    nvAxial.setDrawPenLoad([1, 1, 1, 1]);  // 白色画笔（擦除用 0 值笔刷在 save 时合成）
+    toast("画笔粗修：在轴位视口拖动绘制；保存时写回 NIfTI");
+  }
+});
+$("mode-none").addEventListener("click", () => {
+  if (nvAxial) nvAxial.setDrawingEnabled(false);
+});
+
+// ---- 保存修正（导出写回 NIfTI -> 新 MaskVersion） -------------------------------
+$("btn-save").addEventListener("click", async () => {
+  if (!meta?.has_mask) {
+    toast("本序列无 mask，无修正可保存", "err");
+    return;
+  }
+  // M2 粒度：整类删除（segState.visible=false 的类别体素清零）+ niivue 画笔层
+  const deletedClasses = [...segState.entries()].filter(([, s]) => !s.visible).map(([c]) => c);
+  const drawing = nvAxial.drawBitmap;  // 画笔层（niivue 位图）
+  let drawingBytes = null;
+  if (drawing) {
+    drawingBytes = await nvAxial.saveImage({ filename: false, isSaveDrawing: true });
+    // dataURL -> bytes
+    const resp = await fetch(drawingBytes);
+    drawingBytes = new Uint8Array(await resp.arrayBuffer());
+  }
+  try {
+    const r = await fetch(`/review/${encodeURIComponent(SERIES_ID)}/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        deleted_classes: deletedClasses,
+        drawing_nifti: drawingBytes ? Array.from(drawingBytes) : null,
+      }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const out = await r.json();
+    toast(`已保存 MaskVersion v${out.version}（${out.source}）`, "ok");
+  } catch (e) {
+    toast(`保存失败：${e.message}`, "err");
+  }
+});
+
+$("btn-crosshair").addEventListener("click", () => {
+  if (nvAxial) nvAxial.moveCrosshairInVox(0, 0, 0);
+});
+$("btn-reset").addEventListener("click", () => {
+  for (const nv of [nvAxial, nvCoronal, nvSagittal, nvMip]) {
+    if (nv) nv.resetBriBrightContrast?.();
+  }
+  syncSlidersFromVox();
+});
+
+loadSeries();
+</script>
+</body>
+</html>

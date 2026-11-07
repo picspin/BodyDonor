@@ -158,6 +158,7 @@ _LEGACY_COLUMNS: dict[str, dict[str, str]] = {
         "orientation": "VARCHAR(32)",
         "hu_range": "VARCHAR(64)",
         "storage_key": "VARCHAR(512)",
+        "source_instances_json": "JSON",  # M2-5(a)：源 DICOM 实例信息
     },
 }
 

@@ -9,6 +9,7 @@ M1 ingest 端点在后端做 max_upload_mb 强制流式计数（前端预检/反
 from __future__ import annotations
 
 import io
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -33,7 +34,6 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="BodyDonor", version=__version__, lifespan=lifespan)
 
-settings: Settings = load_settings()
 registry = LicenseRegistry(settings)
 
 # 队列与存储（M0 默认组合）
@@ -373,3 +373,293 @@ def monitor_pipeline_set(stage: str, status: str = Query("running")) -> dict[str
         raise HTTPException(status_code=404, detail=f"unknown stage: {stage}")
     _pipeline_stages[stage] = status
     return {"stage": stage, "status": status}
+
+
+# ---------------------------------------------------------------------------
+# M2：niivue 审阅端点（静态页 + meta/image/mask/seg-meta/save）
+# ---------------------------------------------------------------------------
+
+from contextlib import contextmanager as _ctxmgr  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+_STATIC_DIR = _Path(__file__).resolve().parent / "static"
+
+
+@_ctxmgr
+def _nifti_from_bytes(payload: bytes) -> Any:
+    """bytes -> nibabel 图像（临时文件，nibabel 5.4.2 load() 只吃文件路径）。
+
+    nibabel 5.x 的 load() 移除了 fileobj 支持（os.stat 校验），落临时 .nii.gz
+    读取，用完即删（与 pipeline._save_pixels 同模式）。
+    """
+    import tempfile
+
+    import nibabel as nib
+
+    with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
+        tmp_name = tf.name
+    try:
+        _Path(tmp_name).write_bytes(payload)
+        yield nib.load(tmp_name)
+    finally:
+        _Path(tmp_name).unlink(missing_ok=True)
+
+
+@app.get("/review")
+def review_page() -> Any:
+    """审阅页（niivue 三正交面 + MIP + mask 逐类开关 + 修正导出）。"""
+    from fastapi.responses import HTMLResponse
+
+    return HTMLResponse((_STATIC_DIR / "review.html").read_text(encoding="utf-8"))
+
+
+@app.get("/static/{filename}")
+def static_file(filename: str) -> Any:
+    """本地 vendored 静态文件（niivue.umd.js 等；不走 CDN，院内可离线）。"""
+    from fastapi.responses import FileResponse
+
+    if "/" in filename or ".." in filename:
+        raise HTTPException(status_code=404, detail="invalid filename")
+    path = _STATIC_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"not found: {filename}")
+    media = "application/javascript" if filename.endswith(".js") else "text/html"
+    return FileResponse(path, media_type=media)
+
+
+def _series_row(series_id: str) -> Any:
+    from sqlalchemy import select
+
+    from . import db
+    from .models import Series
+
+    engine = db._engine(settings.database.url)
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            s = Session(conn)
+            row = s.execute(
+                select(Series).where(Series.series_id == series_id[:60])
+            ).scalar_one_or_none()
+            s.close()
+            return row
+    finally:
+        engine.dispose()
+
+
+@app.get("/review/{series_id}/meta")
+def review_meta(series_id: str) -> dict[str, Any]:
+    """序列元数据 + mask 存在性（审阅页首屏）。"""
+    row = _series_row(series_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
+    st = _get_storage()
+    has_mask = bool(row.storage_key) and st.exists(
+        row.storage_key.replace("image.nii.gz", "mask.nii.gz")
+    )
+    return {
+        "series_id": row.series_id,
+        "case_id": row.case_id,
+        "modality": row.modality,
+        "num_slices": row.num_slices,
+        "slice_thickness_mm": row.slice_thickness_mm,
+        "has_mask": has_mask,
+    }
+
+
+@app.get("/review/{series_id}/image.nii.gz")
+def review_image(series_id: str) -> Any:
+    """序列像素 NIfTI（RAS+ 标准方向，commit 时落盘）。"""
+    from fastapi.responses import Response
+
+    row = _series_row(series_id)
+    if row is None or not row.storage_key:
+        raise HTTPException(status_code=404, detail="no image for series")
+    st = _get_storage()
+    try:
+        data = st.load(row.storage_key)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="image file missing") from None
+    return Response(
+        content=data,
+        media_type="application/gzip",
+        headers={"Content-Disposition": "inline"},
+    )
+
+
+@app.get("/review/{series_id}/mask.nii.gz")
+def review_mask(series_id: str) -> Any:
+    """最新 MaskVersion 的 mask NIfTI（多类）。"""
+    from fastapi.responses import Response
+    from sqlalchemy import select
+
+    from . import db
+    from .models import MaskVersion
+
+    st = _get_storage()
+    engine = db._engine(settings.database.url)
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            s = Session(conn)
+            mv = (
+                s.execute(
+                    select(MaskVersion)
+                    .where(MaskVersion.series_id == series_id[:60])
+                    .order_by(MaskVersion.version.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            s.close()
+    finally:
+        engine.dispose()
+    if mv is None:
+        # 无 MaskVersion 记录时 fallback：裸 mask.nii.gz（teacher 初版直接落盘）
+        row = _series_row(series_id)
+        mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz") if row else ""
+        if mask_key and st.exists(mask_key):
+            return Response(content=st.load(mask_key), media_type="application/gzip")
+        raise HTTPException(status_code=404, detail="no mask version for series")
+    try:
+        data = st.load(mv.storage_key)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="mask file missing") from None
+    return Response(content=data, media_type="application/gzip")
+
+
+@app.get("/review/{series_id}/seg-meta")
+def review_seg_meta(series_id: str) -> list[dict[str, Any]]:
+    """mask 类别列表（class 名 + 体素数），审阅页逐类开关用。"""
+    row = _series_row(series_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
+    st = _get_storage()
+    mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
+    if not mask_key or not st.exists(mask_key):
+        return []
+    import numpy as np
+
+    with _nifti_from_bytes(st.load(mask_key)) as img:
+        arr = np.asarray(img.dataobj)
+        classes = sorted(set(int(v) for v in np.unique(arr)) - {0})
+    return [
+        {
+            "class": f"label-{v}",
+            "label_value": v,
+            "n_voxels": int((arr == v).sum()),
+        }
+        for v in classes
+    ]
+
+
+@app.post("/review/{series_id}/save")
+def review_save(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """人工修正写回（M2 粒度：整类删除 + 画笔粗修）-> 新 MaskVersion。
+
+    body: {deleted_classes: [class,...], drawing_nifti: [bytes] | null}
+    - 整类删除：deleted_classes 里的 label 体素清零（走 assert_affine_match 守卫）
+    - 画笔粗修：drawing_nifti 非零体素从 mask 中删除（粗修擦除）
+    写回前 affine 守卫（mask 与原图不一致 raise AffineMismatchError，禁止静默重采样）。
+    """
+    import nibabel as nib
+    import numpy as np
+
+    row = _series_row(series_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
+    st = _get_storage()
+    img_key = row.storage_key
+    mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
+    if not mask_key or not st.exists(mask_key):
+        raise HTTPException(status_code=422, detail="no mask to correct")
+
+    from .nifti_geom import AffineMismatchError, assert_affine_match
+
+    try:
+        with (
+            _nifti_from_bytes(st.load(img_key)) as img,
+            _nifti_from_bytes(st.load(mask_key)) as mask,
+        ):
+            # M1-fix (b)：affine 守卫——不一致硬报错，禁止静默重采样
+            assert_affine_match(img, mask, label=f"review_save {series_id}")
+            affine = mask.affine
+            arr = np.asarray(mask.dataobj).astype(np.int32)
+
+            deleted = body.get("deleted_classes", [])
+            for cls in deleted:
+                # class 名形如 "label-3"；整类体素清零
+                try:
+                    label_value = int(str(cls).removeprefix("label-"))
+                except ValueError:
+                    continue
+                arr[arr == label_value] = 0
+
+            drawing = body.get("drawing_nifti")
+            if drawing:
+                # 画笔粗修：非零体素从 mask 中删除
+                with _nifti_from_bytes(bytes(bytearray(drawing))) as draw_img:
+                    assert_affine_match(
+                        img, draw_img, label=f"review_save drawing {series_id}"
+                    )
+                    draw_arr = np.asarray(draw_img.dataobj)
+                arr[draw_arr > 0] = 0
+    except AffineMismatchError as e:
+        # affine 不一致 → 422（不静默重采样，错误带 affine 详情）
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    # 新 MaskVersion
+    from sqlalchemy import select
+
+    from . import db
+    from .models import MaskVersion
+
+    engine = db._engine(settings.database.url)
+    try:
+        with db.write_lock, engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            s = Session(conn)
+            try:
+                last = (
+                    s.execute(
+                        select(MaskVersion.version)
+                        .where(MaskVersion.series_id == series_id[:60])
+                        .order_by(MaskVersion.version.desc())
+                        .limit(1)
+                    )
+                    .scalars()
+                    .first()
+                )
+                version = (last or 0) + 1
+                # nib.save 需要 .nii.gz 后缀路径（BytesIO 不含 gzip 判定所需后缀语义）
+                import tempfile
+
+                with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
+                    tmp_name = tf.name
+                try:
+                    nib.save(nib.Nifti1Image(arr, affine), tmp_name)
+                    payload = _Path(tmp_name).read_bytes()
+                finally:
+                    _Path(tmp_name).unlink(missing_ok=True)
+                key = mask_key.replace("image.nii.gz", f"mask_v{version}.nii.gz")
+                st.save(key, payload)
+                s.add(
+                    MaskVersion(
+                        mask_version_id=f"mv-{uuid.uuid4().hex[:8]}",
+                        series_id=series_id[:60],
+                        version=version,
+                        source="manual",
+                        storage_key=key,
+                        created_by="review-ui",
+                    )
+                )
+                s.commit()
+            finally:
+                s.close()
+    finally:
+        engine.dispose()
+    return {"version": version, "source": "manual", "key": key}
