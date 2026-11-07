@@ -376,6 +376,142 @@ def monitor_pipeline_set(stage: str, status: str = Query("running")) -> dict[str
 
 
 # ---------------------------------------------------------------------------
+# M3：QC 端点（阶段 4 评分 / 阶段 5 抽检任务 / 抽检决策回流）
+# ---------------------------------------------------------------------------
+
+@app.post("/qc/series/{series_id}")
+def qc_run_series(series_id: str) -> JSONResponse:
+    """阶段 4（自动质控）：对最新 MaskVersion 评分并落 QCReport。"""
+    from .qc_pipeline import QCOrchestrationError, qc_series
+
+    try:
+        out = qc_series(series_id, settings)
+    except QCOrchestrationError as e:
+        msg = str(e)
+        status = 404 if "unknown" in msg else 422
+        raise HTTPException(status_code=status, detail=msg) from None
+    return JSONResponse(out)
+
+
+@app.get("/qc/thresholds")
+def qc_thresholds_summary() -> dict[str, Any]:
+    """QC 阈值配置（source 注记可见：cold_start | calibrated_on_N）。"""
+    from .qc import load_qc_thresholds
+
+    return load_qc_thresholds()
+
+
+@app.post("/qc/review-tasks")
+def qc_review_tasks_create(
+    batch_size: int = Query(0, description="0 = 用 config 的 batch_size"),
+) -> JSONResponse:
+    """阶段 5（人工抽检）：混合采样生成 ReviewTask（flagged 70% / clean 30%）。"""
+    from .qc_pipeline import generate_review_tasks
+
+    out = generate_review_tasks(
+        settings, batch_size=batch_size if batch_size > 0 else None
+    )
+    return JSONResponse(out)
+
+
+@app.get("/qc/review-tasks")
+def qc_review_tasks_list(status: str = Query("pending")) -> dict[str, Any]:
+    """抽检任务列表（审阅台数据源；status 过滤，缺省 pending）。"""
+    from sqlalchemy import select
+
+    from . import db
+    from .models import MaskVersion, QCReport, ReviewTask
+
+    engine = db._engine(settings.database.url)
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            s = Session(conn)
+            rows = (
+                s.execute(
+                    select(ReviewTask, QCReport, MaskVersion)
+                    .join(QCReport, ReviewTask.qc_report_id == QCReport.qc_report_id)
+                    .join(
+                        MaskVersion,
+                        QCReport.mask_version_id == MaskVersion.mask_version_id,
+                    )
+                    .where(ReviewTask.status == status)
+                    .order_by(ReviewTask.created_at.desc())
+                    .limit(50)
+                )
+                .all()
+            )
+            s.close()
+    finally:
+        engine.dispose()
+    tasks = []
+    for rt, qc, mv in rows:
+        tasks.append({
+            "review_task_id": rt.review_task_id,
+            "series_id": rt.series_id,
+            "mask_version_id": qc.mask_version_id,
+            "mask_version": mv.version,
+            "mask_source": mv.source,
+            "qc_report_id": qc.qc_report_id,
+            "overall_score": qc.overall_score,
+            "qc_flags": qc.flags,
+            "qc_passed": qc.passed,
+            "status": rt.status,
+            "notes": rt.notes,
+        })
+    return {"status": status, "tasks": tasks}
+
+
+@app.post("/qc/review-tasks/{review_task_id}/decision")
+def qc_review_task_decision(
+    review_task_id: str,
+    decision: str = Query(..., description="accepted | corrected | rejected"),
+    notes: str = Query(""),
+) -> dict[str, Any]:
+    """抽检决策（接受/修正/拒绝）——在线校准的标签回流入口（proposal §7）。
+
+    决策写进 ReviewTask（status/decision），并累计进 qc_thresholds.yaml 的
+    calibrated_on 计数（阈值本体由 bodydonor qc-calibrate 重算）。
+    """
+    from sqlalchemy import select
+
+    from . import db
+    from .models import ReviewTask
+    from .qc_reflux import record_review_decision
+
+    if decision not in ("accepted", "corrected", "rejected"):
+        raise HTTPException(status_code=422, detail="decision 必须是 accepted|corrected|rejected")
+    engine = db._engine(settings.database.url)
+    try:
+        with db.write_lock, engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            s = Session(conn)
+            try:
+                rt = s.execute(
+                    select(ReviewTask).where(
+                        ReviewTask.review_task_id == review_task_id[:60]
+                    )
+                ).scalar_one_or_none()
+                if rt is None:
+                    raise HTTPException(
+                        status_code=404, detail=f"unknown review task: {review_task_id}"
+                    )
+                rt.status = decision
+                rt.decision = decision
+                if notes:
+                    rt.notes = (rt.notes or "") + (f" | {notes}" if rt.notes else notes)
+                s.commit()
+            finally:
+                s.close()
+    finally:
+        engine.dispose()
+    reflux = record_review_decision(settings, decision)
+    return {"review_task_id": review_task_id, "decision": decision, "reflux": reflux}
+
+
+# ---------------------------------------------------------------------------
 # M2：niivue 审阅端点（静态页 + meta/image/mask/seg-meta/save）
 # ---------------------------------------------------------------------------
 
