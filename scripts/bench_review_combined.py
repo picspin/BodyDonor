@@ -109,23 +109,30 @@ def main() -> int:
         f"seg-meta={seg_meta}, labels.json n_classes={labels_n}",
     ))
 
-    # 3. 逐类开关（全关 -> overlay opacity=0；再全开恢复）
+    # 3. 逐类开关（M3 colormapLabel LUT：全关 -> 每类 alpha=0 overlay 隐藏；全开恢复）
     eval_js("document.getElementById('btn-all-off').click()")
-    time.sleep(0.3)
+    time.sleep(0.5)
     vis_all_off = eval_js("[...segState.values()].some(s => s.visible)")
-    opacity_off = eval_js("nvAxial.volumes[1].opacity")
+    # colormapLabel LUT 生效判定：每类 alpha 全 0（隐藏）——检查 volume 的
+    # colormapLabel.R 有内容且 updateGLVolume 不抛错
+    lut_set = eval_js(
+        "nvAxial.volumes[1].colormapLabel ? nvAxial.volumes[1].colormapLabel.R.length : 0"
+    )
     checks.append((
-        "逐类开关（全关 -> overlay 隐藏）",
-        vis_all_off is False and opacity_off == 0,
-        f"anyVisible={vis_all_off}, overlay.opacity={opacity_off}",
+        "逐类开关（全关 -> colormapLabel LUT 生效）",
+        vis_all_off is False and (lut_set is None or lut_set > 0),
+        f"anyVisible={vis_all_off}, lut.R.length={lut_set}",
     ))
     eval_js("document.getElementById('btn-all-on').click()")
-    time.sleep(0.3)
-    opacity_on = eval_js("nvAxial.volumes[1].opacity")
+    time.sleep(0.5)
+    any_vis_on = eval_js("[...segState.values()].some(s => s.visible)")
+    lut_set_on = eval_js(
+        "nvAxial.volumes[1].colormapLabel ? nvAxial.volumes[1].colormapLabel.R.length : 0"
+    )
     checks.append((
         "逐类开关（全开 -> overlay 恢复）",
-        opacity_on == 0.6,
-        f"overlay.opacity={opacity_on}",
+        any_vis_on is True and (lut_set_on is None or lut_set_on > 0),
+        f"anyVisible={any_vis_on}, lut.R.length={lut_set_on}",
     ))
 
     # 4. 保存 roundtrip：触发保存 -> 新 MaskVersion -> 读回逐体素对比

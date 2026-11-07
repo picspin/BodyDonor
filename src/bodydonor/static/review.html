@@ -385,12 +385,27 @@ function renderSegList() {
 }
 
 function updateSegVisibility() {
-  // 逐类开关 -> overlay 透明度（M2 粒度：单 overlay 多类统一色表；
-  // 逐类独立渲染 M3+ 换 mask 分通道，见 M2-REPORT 遗留）
+  // 逐类独立渲染（M3，M2-REPORT 遗留 3 落地）：niivue 0.53.1 的 overlay
+  // fragment shader 直接以 label 值索引 colormap 2D 纹理
+  // （uint idx = texture(intensityVol, vx.xyz).r; FragColor = texture(colormap, vec2((idx+0.5)/w, layer)).rgba），
+  // 所以 volume.colormapLabel = {R,G,B,A}（每类 RGBA，背景 alpha=0）即可
+  // 单个多标签 overlay 实现逐类独立颜色 + 逐类可见性（alpha），无需分通道。
   for (const nv of [nvAxial, nvCoronal, nvSagittal]) {
     if (!nv || nv.volumes.length < 2) continue;
-    const anyVisible = [...segState.values()].some((s) => s.visible);
-    nv.volumes[1].opacity = anyVisible ? 0.6 : 0;
+    const nLabels = labelsDoc ? labelsDoc.n_classes : FALLBACK_PALETTE.length * 4;
+    const R = new Float32Array(nLabels), G = new Float32Array(nLabels),
+          B = new Float32Array(nLabels), A = new Float32Array(nLabels);
+    for (let i = 0; i < nLabels; i++) {
+      const lv = i + 1;
+      const st = segState.get(lv);
+      const pal = st ? st.color : FALLBACK_PALETTE[i % FALLBACK_PALETTE.length];
+      R[i] = pal[0]; G[i] = pal[1]; B[i] = pal[2];
+      A[i] = (st && st.visible) ? 0.6 : 0.0;  // 逐类可见性 = 每类 alpha
+    }
+    const vol = nv.volumes[1];
+    vol.colormapLabel = { R: Array.from(R), G: Array.from(G), B: Array.from(B), A: Array.from(A) };
+    vol.colormap = "red";  // 有 colormapLabel 时 shader 用 LUT，colormap 仅占位
+    nv.updateGLVolume();
   }
 }
 
