@@ -48,7 +48,10 @@ AMOS_LABEL_MAP: dict[int, str] = {
     1: "spleen", 2: "kidney_right", 3: "kidney_left", 4: "gallbladder",
     5: "esophagus", 6: "liver", 7: "stomach", 8: "aorta", 9: "inferior_vena_cava",
     10: "pancreas", 11: "adrenal_gland_right", 12: "adrenal_gland_left",
-    13: "duodenum", 14: "urinary_bladder", 15: "prostate_or_uterus",
+    13: "duodenum", 14: "urinary_bladder",
+    # AMOS 15 = prostate（男）/uterus（女）；TS total 输出文件名是 prostate.nii.gz
+    #（amos_0001 实测：teacher prostate.nii.gz vs GT label 15 dice=0.69，映射成立）
+    15: "prostate",
 }
 
 
@@ -136,7 +139,7 @@ def main() -> int:
     results = []
     dice_sum_by_class: dict[str, float] = {}
     case_count_by_class: dict[str, int] = {}
-    missed_classes: set[str] = set()
+    zero_by_class: dict[str, int] = {}
     t0 = time.monotonic()
 
     import nibabel as nib
@@ -176,12 +179,13 @@ def main() -> int:
         }
 
         mean, per_class = dice_one_case(teacher_dir, gt_arr, image_path, name_to_value)
-        # 整类漏检：真值有该类但 teacher 完全没输出（dice=0 且 teacher 侧为空）
+        # 逐 case 记录：dice=0 的类进 zero_by_class（累计 case 数）；
+        # 「整类漏检」= 类在 hold-out 存在但**所有** case dice=0，跑完 30 例后判定
         for cls in gt_classes:
             dice_sum_by_class[cls] = dice_sum_by_class.get(cls, 0.0) + per_class.get(cls, 0.0)
             case_count_by_class[cls] = case_count_by_class.get(cls, 0) + 1
             if per_class.get(cls, 0.0) == 0.0:
-                missed_classes.add(cls)
+                zero_by_class[cls] = zero_by_class.get(cls, 0) + 1
 
         results.append({
             "case_id": case_id,
@@ -194,8 +198,13 @@ def main() -> int:
 
     elapsed = time.monotonic() - t0
     n = len(results)
+    # 整类漏检（§8）：类在 hold-out 存在但所有 case dice=0
+    whole_missed = sorted(
+        cls for cls, cnt in zero_by_class.items()
+        if cnt > 0 and cnt == case_count_by_class.get(cls, 0)
+    )
     gate = evaluate_gate(dice_sum_by_class, case_count_by_class, n_cases=n,
-                         whole_class_missed=sorted(missed_classes))
+                         whole_class_missed=whole_missed)
 
     summary = {
         "n_cases": n,
