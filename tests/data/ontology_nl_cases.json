@@ -1,0 +1,180 @@
+{
+  "note": "M2-align 3.4：本体 NL 解析离线测试集（20 条，中英各 10）。覆盖：精确命中、模糊命中、左右修饰、多标签、ambiguous、unresolved 各至少 1 条。断网可跑（单测断言离线通过，不依赖网络/LLM）。",
+  "cases": [
+    {
+      "id": "exact_cn_liver",
+      "input": "肝",
+      "expect_state": "resolved",
+      "expect_class": "liver",
+      "layer": "exact"
+    },
+    {
+      "id": "exact_en_spleen",
+      "input": "spleen",
+      "expect_state": "resolved",
+      "expect_class": "spleen",
+      "layer": "exact"
+    },
+    {
+      "id": "exact_cn_synonym",
+      "input": "肝脏",
+      "expect_state": "resolved",
+      "expect_class": "liver",
+      "layer": "exact_synonym"
+    },
+    {
+      "id": "exact_en_synonym",
+      "input": "large intestine",
+      "expect_state": "resolved",
+      "expect_class": "colon",
+      "layer": "exact_synonym"
+    },
+    {
+      "id": "exact_cn_pancreas",
+      "input": "胰腺",
+      "expect_state": "resolved",
+      "expect_class": "pancreas",
+      "layer": "exact"
+    },
+    {
+      "id": "exact_en_bladder",
+      "input": "urinary bladder",
+      "expect_state": "resolved",
+      "expect_class": "urinary_bladder",
+      "layer": "exact"
+    },
+    {
+      "id": "exact_en_gallbladder",
+      "input": "gallbladder",
+      "expect_state": "resolved",
+      "expect_class": "gallbladder",
+      "layer": "exact"
+    },
+    {
+      "id": "left_cn_kidney",
+      "input": "左肾",
+      "expect_state": "resolved",
+      "expect_class": "kidney_left",
+      "layer": "left_right"
+    },
+    {
+      "id": "right_en_kidney",
+      "input": "right kidney",
+      "expect_state": "resolved",
+      "expect_class": "kidney_right",
+      "layer": "left_right"
+    },
+    {
+      "id": "left_cn_femur",
+      "input": "左股骨",
+      "expect_state": "resolved",
+      "expect_class": "femur_left",
+      "layer": "left_right"
+    },
+    {
+      "id": "right_cn_adrenal",
+      "input": "右肾上腺",
+      "expect_state": "resolved",
+      "expect_class": "adrenal_gland_right",
+      "layer": "left_right"
+    },
+    {
+      "id": "left_en_femur",
+      "input": "left femur",
+      "expect_state": "resolved",
+      "expect_class": "femur_left",
+      "layer": "left_right"
+    },
+    {
+      "id": "multi_cn_he_spleen",
+      "input": "肝和脾",
+      "expect_state": "resolved",
+      "expect_classes": [
+        "liver",
+        "spleen"
+      ],
+      "layer": "multi_label"
+    },
+    {
+      "id": "multi_cn_dunhao",
+      "input": "肝、脾",
+      "expect_state": "resolved",
+      "expect_classes": [
+        "liver",
+        "spleen"
+      ],
+      "layer": "multi_label"
+    },
+    {
+      "id": "multi_en_and",
+      "input": "liver and spleen",
+      "expect_state": "resolved",
+      "expect_classes": [
+        "liver",
+        "spleen"
+      ],
+      "layer": "multi_label"
+    },
+    {
+      "id": "multi_three",
+      "input": "肝、脾、胰腺",
+      "expect_state": "resolved",
+      "expect_classes": [
+        "liver",
+        "spleen",
+        "pancreas"
+      ],
+      "layer": "multi_label"
+    },
+    {
+      "id": "abbr_cn_dan",
+      "input": "胆",
+      "expect_state": "ambiguous",
+      "expect_candidates": [
+        "gallbladder",
+        "liver"
+      ],
+      "layer": "abbreviation"
+    },
+    {
+      "id": "abbr_cn_shen",
+      "input": "肾",
+      "expect_state": "ambiguous",
+      "expect_candidates": [
+        "kidney_left",
+        "kidney_right"
+      ],
+      "layer": "abbreviation"
+    },
+    {
+      "id": "abbr_en_femur",
+      "input": "femur",
+      "expect_state": "ambiguous",
+      "expect_candidates": [
+        "femur_left",
+        "femur_right"
+      ],
+      "layer": "abbreviation"
+    },
+    {
+      "id": "fuzzy_en_livr",
+      "input": "livr",
+      "expect_state": "resolved",
+      "expect_class": "liver",
+      "layer": "fuzzy"
+    },
+    {
+      "id": "unresolved_xyz",
+      "input": "不存在的器官xyz",
+      "expect_state": "unresolved",
+      "layer": "unresolved"
+    },
+    {
+      "id": "fuzzy_en_stomac",
+      "input": "stomac",
+      "expect_state": "resolved",
+      "expect_class": "stomach",
+      "layer": "fuzzy"
+    }
+  ]
+}

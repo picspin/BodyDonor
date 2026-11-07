@@ -1,273 +1,1054 @@
-# BodyDonor 本体映射表 v1（M2，proposal §3）
-# 自然语言标签 -> TotalSegmentator `total` 任务类别。
-# 字段：nl_label / synonyms（中英双语同义词，Q1）/ snomed_ct / uberon / totalseg_class / status
-# status: active | deprecated（deprecated 不参与查询，保留供 diff/回溯）
-#
-# 本文件是产品资产（不是补丁）：用户消歧写回走 overrides.yaml（同目录，与本表分离），
-# git diff 本表 = 领域变更评审，git diff overrides = 用户决策记录。
-#
-# SNOMED CT 编码取常用临床概念 ID；Uberon 取解剖学本体 ID。编码人工核对，
-# M5 引全量 SNOMED/Uberon 图谱后再机校。
 version: v1
+note: BodyDonor 本体映射表 v1（M2-align 3.4 扩表：TotalSegmentator total 任务 117 类全覆盖）。自然语言标签 -> totalseg_class。字段：nl_label
+  / synonyms（中英双语同义词，每类至少 1 中文名 + 1 英文别名）/ snomed_ct / uberon / totalseg_class / status。SNOMED/Uberon
+  编码人工核对（沿用 v1 口径）；拿不准的填空串（不编造），待核对编码清单见 M2-ALIGN-REPORT §编码。本文件是产品资产：用户消歧写回走 overrides.yaml（同目录，与本表分离）。
 entries:
-  # --- 腹盆腔主要器官 ---
-  - nl_label: 肝
-    synonyms: [liver, 肝脏]
-    snomed_ct: "10200004"
-    uberon: "UBERON:0002107"
-    totalseg_class: liver
-    status: active
-  - nl_label: 胆囊
-    synonyms: [gallbladder]
-    snomed_ct: "28231008"
-    uberon: "UBERON:0002110"
-    totalseg_class: gallbladder
-    status: active
-  - nl_label: 食管
-    synonyms: [esophagus, oesophagus]
-    snomed_ct: "89202004"
-    uberon: "UBERON:0001043"
-    totalseg_class: esophagus
-    status: active
-  - nl_label: 胃
-    synonyms: [stomach]
-    snomed_ct: "69695003"
-    uberon: "UBERON:0000945"
-    totalseg_class: stomach
-    status: active
-  - nl_label: 十二指肠
-    synonyms: [duodenum]
-    snomed_ct: "72050000"
-    uberon: "UBERON:0002114"
-    totalseg_class: duodenum
-    status: active
-  - nl_label: 小肠
-    synonyms: [small bowel, small intestine]
-    snomed_ct: "30315005"
-    uberon: "UBERON:0002108"
-    totalseg_class: small_bowel
-    status: active
-  - nl_label: 结肠
-    synonyms: [colon, large intestine, 大肠]
-    snomed_ct: "71854001"
-    uberon: "UBERON:0000059"
-    totalseg_class: colon
-    status: active
-  - nl_label: 直肠
-    synonyms: [rectum]
-    snomed_ct: "34402009"
-    uberon: "UBERON:0001052"
-    totalseg_class: rectum
-    status: active
-  - nl_label: 脾
-    synonyms: [spleen, 脾脏]
-    snomed_ct: "78961009"
-    uberon: "UBERON:0002106"
-    totalseg_class: spleen
-    status: active
-  - nl_label: 胰腺
-    synonyms: [pancreas]
-    snomed_ct: "15776009"
-    uberon: "UBERON:0001264"
-    totalseg_class: pancreas
-    status: active
-  - nl_label: 肾上腺
-    synonyms: [adrenal gland, suprarenal gland]
-    snomed_ct: "23495003"
-    uberon: "UBERON:0002369"
-    totalseg_class: adrenal_gland_left
-    status: active
-  - nl_label: 左肾上腺
-    synonyms: [left adrenal gland, 左侧肾上腺]
-    snomed_ct: "23495003"
-    uberon: "UBERON:0001836"
-    totalseg_class: adrenal_gland_left
-    status: active
-  - nl_label: 右肾上腺
-    synonyms: [right adrenal gland, 右侧肾上腺]
-    snomed_ct: "23495003"
-    uberon: "UBERON:0001835"
-    totalseg_class: adrenal_gland_right
-    status: active
-  - nl_label: 左肾
-    synonyms: [left kidney, 左侧肾]
-    snomed_ct: "98460003"
-    uberon: "UBERON:0004538"
-    totalseg_class: kidney_left
-    status: active
-  - nl_label: 右肾
-    synonyms: [right kidney, 右侧肾]
-    snomed_ct: "98460003"
-    uberon: "UBERON:0004539"
-    totalseg_class: kidney_right
-    status: active
-  - nl_label: 膀胱
-    synonyms: [urinary bladder]
-    snomed_ct: "89837001"
-    uberon: "UBERON:0001255"
-    totalseg_class: urinary_bladder
-    status: active
-  - nl_label: 前列腺
-    synonyms: [prostate]
-    snomed_ct: "41216001"
-    uberon: "UBERON:0002367"
-    totalseg_class: prostate
-    status: active
-  - nl_label: 子宫
-    synonyms: [uterus]
-    snomed_ct: "35039007"
-    uberon: "UBERON:0000995"
-    totalseg_class: uterus
-    status: active
-
-  # --- 血管结构（"肝血管"多候选歧义的来源） ---
-  - nl_label: 肝血管
-    synonyms: [hepatic vessel, liver vessel, 肝脏血管]
-    snomed_ct: "55441007"
-    uberon: "UBERON:0004948"
-    totalseg_class: hepaticvessel
-    status: active
-  - nl_label: 主动脉
-    synonyms: [aorta]
-    snomed_ct: "15825003"
-    uberon: "UBERON:0000947"
-    totalseg_class: aorta
-    status: active
-  - nl_label: 下腔静脉
-    synonyms: [inferior vena cava, IVC]
-    snomed_ct: "48333005"
-    uberon: "UBERON:0001072"
-    totalseg_class: inferiorvenacava
-    status: active
-  - nl_label: 门静脉
-    synonyms: [portal vein, 门脉]
-    snomed_ct: "128572003"
-    uberon: "UBERON:0001585"
-    totalseg_class: portalveinandsplenicvein
-    status: active
-  - nl_label: 肺血管
-    synonyms: [pulmonary vessel, lung vessel]
-    snomed_ct: "40086000"
-    uberon: "UBERON:0002012"
-    totalseg_class: lung_lobe_upper_left
-    status: deprecated
-
-  # --- 胸部 ---
-  - nl_label: 肺
-    synonyms: [lung]
-    snomed_ct: "39607008"
-    uberon: "UBERON:0002048"
-    totalseg_class: lung_upper_lobe_left
-    status: active
-  - nl_label: 左肺上叶
-    synonyms: [left lung upper lobe, 左肺上叶]
-    snomed_ct: "39607008"
-    uberon: "UBERON:0002168"
-    totalseg_class: lung_upper_lobe_left
-    status: active
-  - nl_label: 左肺下叶
-    synonyms: [left lung lower lobe]
-    snomed_ct: "39607008"
-    uberon: "UBERON:0002170"
-    totalseg_class: lung_lower_lobe_left
-    status: active
-  - nl_label: 右肺上叶
-    synonyms: [right lung upper lobe]
-    snomed_ct: "39607008"
-    uberon: "UBERON:0002171"
-    totalseg_class: lung_upper_lobe_right
-    status: active
-  - nl_label: 右肺中叶
-    synonyms: [right lung middle lobe]
-    snomed_ct: "39607008"
-    uberon: "UBERON:0002172"
-    totalseg_class: lung_middle_lobe_right
-    status: active
-  - nl_label: 右肺下叶
-    synonyms: [right lung lower lobe]
-    snomed_ct: "39607008"
-    uberon: "UBERON:0002169"
-    totalseg_class: lung_lower_lobe_right
-    status: active
-  - nl_label: 气管
-    synonyms: [trachea]
-    snomed_ct: "44567001"
-    uberon: "UBERON:0003126"
-    totalseg_class: trachea
-    status: active
-  - nl_label: 支气管
-    synonyms: [bronchus]
-    snomed_ct: "44198006"
-    uberon: "UBERON:0002185"
-    totalseg_class: lung_trachea_bronchia
-    status: active
-  - nl_label: 心脏
-    synonyms: [heart, myocardium]
-    snomed_ct: "80248007"
-    uberon: "UBERON:0000948"
-    totalseg_class: heart
-    status: active
-  - nl_label: 心肌
-    synonyms: [myocardium]
-    snomed_ct: "74262004"
-    uberon: "UBERON:0002084"
-    totalseg_class: myocardium
-    status: active
-
-  # --- 骨骼 ---
-  - nl_label: 股骨
-    synonyms: [femur, thigh bone]
-    snomed_ct: "71341001"
-    uberon: "UBERON:0000981"
-    totalseg_class: femur_left
-    status: active
-  - nl_label: 左股骨
-    synonyms: [left femur, 左侧股骨]
-    snomed_ct: "71341001"
-    uberon: "UBERON:0006291"
-    totalseg_class: femur_left
-    status: active
-  - nl_label: 右股骨
-    synonyms: [right femur, 右侧股骨]
-    snomed_ct: "71341001"
-    uberon: "UBERON:0006292"
-    totalseg_class: femur_right
-    status: active
-  - nl_label: 髋骨
-    synonyms: [hip bone, innominate bone]
-    snomed_ct: "85544002"
-    uberon: "UBERON:0001270"
-    totalseg_class: hip_left
-    status: active
-  - nl_label: 脊柱
-    synonyms: [spine, vertebral column]
-    snomed_ct: "119255005"
-    uberon: "UBERON:0001130"
-    totalseg_class: vertebrae_L1
-    status: active
-  - nl_label: 腰椎
-    synonyms: [lumbar vertebrae]
-    snomed_ct: "1076521000122104"
-    uberon: "UBERON:0006072"
-    totalseg_class: vertebrae_L1
-    status: active
-  - nl_label: 肋骨
-    synonyms: [rib, ribs]
-    snomed_ct: "77692002"
-    uberon: "UBERON:0002228"
-    totalseg_class: rib_left_1
-    status: active
-  - nl_label: 胸骨
-    synonyms: [sternum, breastbone]
-    snomed_ct: "13365006"
-    uberon: "UBERON:0000975"
-    totalseg_class: sternum
-    status: active
-
-  # --- 腺体与其他 ---
-  - nl_label: 甲状腺
-    synonyms: [thyroid gland]
-    snomed_ct: "304789004"
-    uberon: "UBERON:0002046"
-    totalseg_class: thyroid_gland
-    status: active
+- nl_label: 脾
+  synonyms:
+  - spleen
+  - splen
+  - 脾脏
+  snomed_ct: '78961009'
+  uberon: UBERON:0002106
+  totalseg_class: spleen
+  status: active
+- nl_label: 右肾
+  synonyms:
+  - kidney right
+  - kidney_right
+  - right kidney
+  - 右侧肾
+  snomed_ct: '98460003'
+  uberon: UBERON:0004539
+  totalseg_class: kidney_right
+  status: active
+- nl_label: 左肾
+  synonyms:
+  - kidney left
+  - kidney_left
+  - left kidney
+  - 左侧肾
+  snomed_ct: '98460003'
+  uberon: UBERON:0004538
+  totalseg_class: kidney_left
+  status: active
+- nl_label: 胆囊
+  synonyms:
+  - gallbladder
+  - gall bladder
+  snomed_ct: '28231008'
+  uberon: UBERON:0002110
+  totalseg_class: gallbladder
+  status: active
+- nl_label: 肝
+  synonyms:
+  - liver
+  - hepatic organ
+  - 肝脏
+  snomed_ct: '10200004'
+  uberon: UBERON:0002107
+  totalseg_class: liver
+  status: active
+- nl_label: 胃
+  synonyms:
+  - stomach
+  - gaster
+  snomed_ct: '69695003'
+  uberon: UBERON:0000945
+  totalseg_class: stomach
+  status: active
+- nl_label: 胰腺
+  synonyms:
+  - pancreas
+  - pancreatic gland
+  snomed_ct: '15776009'
+  uberon: UBERON:0001264
+  totalseg_class: pancreas
+  status: active
+- nl_label: 右肾上腺
+  synonyms:
+  - adrenal gland right
+  - adrenal_gland_right
+  - right adrenal gland
+  - 右侧肾上腺
+  snomed_ct: '23495003'
+  uberon: UBERON:0001835
+  totalseg_class: adrenal_gland_right
+  status: active
+- nl_label: 左肾上腺
+  synonyms:
+  - adrenal gland left
+  - adrenal_gland_left
+  - left adrenal gland
+  - 左侧肾上腺
+  snomed_ct: '23495003'
+  uberon: UBERON:0001836
+  totalseg_class: adrenal_gland_left
+  status: active
+- nl_label: 左肺上叶
+  synonyms:
+  - lung upper lobe left
+  - lung_upper_lobe_left
+  - left upper lobe of lung
+  snomed_ct: '39607008'
+  uberon: UBERON:0002168
+  totalseg_class: lung_upper_lobe_left
+  status: active
+- nl_label: 左肺下叶
+  synonyms:
+  - lung lower lobe left
+  - lung_lower_lobe_left
+  - left lower lobe of lung
+  snomed_ct: '39607008'
+  uberon: UBERON:0002170
+  totalseg_class: lung_lower_lobe_left
+  status: active
+- nl_label: 右肺上叶
+  synonyms:
+  - lung upper lobe right
+  - lung_upper_lobe_right
+  - right upper lobe of lung
+  snomed_ct: '39607008'
+  uberon: UBERON:0002171
+  totalseg_class: lung_upper_lobe_right
+  status: active
+- nl_label: 右肺中叶
+  synonyms:
+  - lung middle lobe right
+  - lung_middle_lobe_right
+  - right middle lobe of lung
+  snomed_ct: '39607008'
+  uberon: UBERON:0002172
+  totalseg_class: lung_middle_lobe_right
+  status: active
+- nl_label: 右肺下叶
+  synonyms:
+  - lung lower lobe right
+  - lung_lower_lobe_right
+  - right lower lobe of lung
+  snomed_ct: '39607008'
+  uberon: UBERON:0002169
+  totalseg_class: lung_lower_lobe_right
+  status: active
+- nl_label: 食管
+  synonyms:
+  - esophagus
+  - oesophagus
+  snomed_ct: '89202004'
+  uberon: UBERON:0001043
+  totalseg_class: esophagus
+  status: active
+- nl_label: 气管
+  synonyms:
+  - trachea
+  - windpipe
+  - windpipe
+  snomed_ct: '44567001'
+  uberon: UBERON:0003126
+  totalseg_class: trachea
+  status: active
+- nl_label: 甲状腺
+  synonyms:
+  - thyroid gland
+  - thyroid_gland
+  - glandula thyroidea
+  snomed_ct: '304789004'
+  uberon: UBERON:0002046
+  totalseg_class: thyroid_gland
+  status: active
+- nl_label: 小肠
+  synonyms:
+  - small_bowel
+  - small intestine
+  - small bowel
+  snomed_ct: '30315005'
+  uberon: UBERON:0002108
+  totalseg_class: small_bowel
+  status: active
+- nl_label: 十二指肠
+  synonyms:
+  - duodenum
+  - duodenal structure
+  snomed_ct: '72050000'
+  uberon: UBERON:0002114
+  totalseg_class: duodenum
+  status: active
+- nl_label: 结肠
+  synonyms:
+  - colon
+  - large intestine
+  - 大肠
+  snomed_ct: '71854001'
+  uberon: UBERON:0000059
+  totalseg_class: colon
+  status: active
+- nl_label: 膀胱
+  synonyms:
+  - urinary bladder
+  - urinary_bladder
+  - vesica urinaria
+  snomed_ct: '89837001'
+  uberon: UBERON:0001255
+  totalseg_class: urinary_bladder
+  status: active
+- nl_label: 前列腺
+  synonyms:
+  - prostate
+  - prostate gland
+  snomed_ct: '41216001'
+  uberon: UBERON:0002367
+  totalseg_class: prostate
+  status: active
+- nl_label: 左肾囊肿
+  synonyms:
+  - kidney cyst left
+  - kidney_cyst_left
+  - left kidney cyst
+  snomed_ct: '367643001'
+  uberon: ''
+  totalseg_class: kidney_cyst_left
+  status: active
+- nl_label: 右肾囊肿
+  synonyms:
+  - kidney cyst right
+  - kidney_cyst_right
+  - right kidney cyst
+  snomed_ct: '367643001'
+  uberon: ''
+  totalseg_class: kidney_cyst_right
+  status: active
+- nl_label: 骶骨
+  synonyms:
+  - sacrum
+  - sacral bone
+  snomed_ct: '15221000'
+  uberon: UBERON:0001270
+  totalseg_class: sacrum
+  status: active
+- nl_label: 骶椎1
+  synonyms:
+  - vertebrae S1
+  - vertebrae_S1
+  - sacral vertebra S1
+  snomed_ct: '107651000119105'
+  uberon: ''
+  totalseg_class: vertebrae_S1
+  status: active
+- nl_label: 第5腰椎
+  synonyms:
+  - vertebrae L5
+  - vertebrae_L5
+  - fifth lumbar vertebra
+  snomed_ct: '1076521000122104'
+  uberon: ''
+  totalseg_class: vertebrae_L5
+  status: active
+- nl_label: 第4腰椎
+  synonyms:
+  - vertebrae L4
+  - vertebrae_L4
+  - fourth lumbar vertebra
+  snomed_ct: '1076531000122102'
+  uberon: ''
+  totalseg_class: vertebrae_L4
+  status: active
+- nl_label: 第3腰椎
+  synonyms:
+  - vertebrae L3
+  - vertebrae_L3
+  - third lumbar vertebra
+  snomed_ct: '1076541000122100'
+  uberon: ''
+  totalseg_class: vertebrae_L3
+  status: active
+- nl_label: 第2腰椎
+  synonyms:
+  - vertebrae L2
+  - vertebrae_L2
+  - second lumbar vertebra
+  snomed_ct: '1076551000122107'
+  uberon: ''
+  totalseg_class: vertebrae_L2
+  status: active
+- nl_label: 第1腰椎
+  synonyms:
+  - vertebrae L1
+  - vertebrae_L1
+  - first lumbar vertebra
+  snomed_ct: '1076561000122109'
+  uberon: ''
+  totalseg_class: vertebrae_L1
+  status: active
+- nl_label: 第12胸椎
+  synonyms:
+  - vertebrae T12
+  - vertebrae_T12
+  - twelfth thoracic vertebra
+  snomed_ct: '23215003'
+  uberon: ''
+  totalseg_class: vertebrae_T12
+  status: active
+- nl_label: 第11胸椎
+  synonyms:
+  - vertebrae T11
+  - vertebrae_T11
+  - eleventh thoracic vertebra
+  snomed_ct: '12989004'
+  uberon: ''
+  totalseg_class: vertebrae_T11
+  status: active
+- nl_label: 第10胸椎
+  synonyms:
+  - vertebrae T10
+  - vertebrae_T10
+  - tenth thoracic vertebra
+  snomed_ct: '7610001'
+  uberon: ''
+  totalseg_class: vertebrae_T10
+  status: active
+- nl_label: 第9胸椎
+  synonyms:
+  - vertebrae T9
+  - vertebrae_T9
+  - ninth thoracic vertebra
+  snomed_ct: '82687006'
+  uberon: ''
+  totalseg_class: vertebrae_T9
+  status: active
+- nl_label: 第8胸椎
+  synonyms:
+  - vertebrae T8
+  - vertebrae_T8
+  - eighth thoracic vertebra
+  snomed_ct: '11068009'
+  uberon: ''
+  totalseg_class: vertebrae_T8
+  status: active
+- nl_label: 第7胸椎
+  synonyms:
+  - vertebrae T7
+  - vertebrae_T7
+  - seventh thoracic vertebra
+  snomed_ct: '62487009'
+  uberon: ''
+  totalseg_class: vertebrae_T7
+  status: active
+- nl_label: 第6胸椎
+  synonyms:
+  - vertebrae T6
+  - vertebrae_T6
+  - sixth thoracic vertebra
+  snomed_ct: '45296009'
+  uberon: ''
+  totalseg_class: vertebrae_T6
+  status: active
+- nl_label: 第5胸椎
+  synonyms:
+  - vertebrae T5
+  - vertebrae_T5
+  - fifth thoracic vertebra
+  snomed_ct: '56401006'
+  uberon: ''
+  totalseg_class: vertebrae_T5
+  status: active
+- nl_label: 第4胸椎
+  synonyms:
+  - vertebrae T4
+  - vertebrae_T4
+  - fourth thoracic vertebra
+  snomed_ct: '73071006'
+  uberon: ''
+  totalseg_class: vertebrae_T4
+  status: active
+- nl_label: 第3胸椎
+  synonyms:
+  - vertebrae T3
+  - vertebrae_T3
+  - third thoracic vertebra
+  snomed_ct: '1626008'
+  uberon: ''
+  totalseg_class: vertebrae_T3
+  status: active
+- nl_label: 第2胸椎
+  synonyms:
+  - vertebrae T2
+  - vertebrae_T2
+  - second thoracic vertebra
+  snomed_ct: '53733008'
+  uberon: ''
+  totalseg_class: vertebrae_T2
+  status: active
+- nl_label: 第1胸椎
+  synonyms:
+  - vertebrae T1
+  - vertebrae_T1
+  - first thoracic vertebra
+  snomed_ct: '64864005'
+  uberon: ''
+  totalseg_class: vertebrae_T1
+  status: active
+- nl_label: 第7颈椎
+  synonyms:
+  - vertebrae C7
+  - vertebrae_C7
+  - seventh cervical vertebra
+  snomed_ct: '87391001'
+  uberon: ''
+  totalseg_class: vertebrae_C7
+  status: active
+- nl_label: 第6颈椎
+  synonyms:
+  - vertebrae C6
+  - vertebrae_C6
+  - sixth cervical vertebra
+  snomed_ct: '36054005'
+  uberon: ''
+  totalseg_class: vertebrae_C6
+  status: active
+- nl_label: 第5颈椎
+  synonyms:
+  - vertebrae C5
+  - vertebrae_C5
+  - fifth cervical vertebra
+  snomed_ct: '36978003'
+  uberon: ''
+  totalseg_class: vertebrae_C5
+  status: active
+- nl_label: 第4颈椎
+  synonyms:
+  - vertebrae C4
+  - vertebrae_C4
+  - fourth cervical vertebra
+  snomed_ct: '5329002'
+  uberon: ''
+  totalseg_class: vertebrae_C4
+  status: active
+- nl_label: 第3颈椎
+  synonyms:
+  - vertebrae C3
+  - vertebrae_C3
+  - third cervical vertebra
+  snomed_ct: '113205007'
+  uberon: ''
+  totalseg_class: vertebrae_C3
+  status: active
+- nl_label: 第2颈椎
+  synonyms:
+  - vertebrae C2
+  - vertebrae_C2
+  - second cervical vertebra
+  snomed_ct: '39976000'
+  uberon: ''
+  totalseg_class: vertebrae_C2
+  status: active
+- nl_label: 第1颈椎
+  synonyms:
+  - vertebrae C1
+  - vertebrae_C1
+  - first cervical vertebra
+  snomed_ct: '14806007'
+  uberon: ''
+  totalseg_class: vertebrae_C1
+  status: active
+- nl_label: 心脏
+  synonyms:
+  - heart
+  - cor
+  - 心肌
+  snomed_ct: '80248007'
+  uberon: UBERON:0000948
+  totalseg_class: heart
+  status: active
+- nl_label: 主动脉
+  synonyms:
+  - aorta
+  - arterial trunk
+  - 大动脉
+  snomed_ct: '15825003'
+  uberon: UBERON:0000947
+  totalseg_class: aorta
+  status: active
+- nl_label: 肺静脉
+  synonyms:
+  - pulmonary vein
+  - pulmonary_vein
+  - pulmonary vein structure
+  snomed_ct: '1141977002'
+  uberon: UBERON:0002012
+  totalseg_class: pulmonary_vein
+  status: active
+- nl_label: 头臂干
+  synonyms:
+  - brachiocephalic trunk
+  - brachiocephalic_trunk
+  - innominate artery
+  snomed_ct: '12835002'
+  uberon: ''
+  totalseg_class: brachiocephalic_trunk
+  status: active
+- nl_label: 右锁骨下动脉
+  synonyms:
+  - subclavian artery right
+  - subclavian_artery_right
+  - right subclavian artery
+  snomed_ct: '13179004'
+  uberon: ''
+  totalseg_class: subclavian_artery_right
+  status: active
+- nl_label: 左锁骨下动脉
+  synonyms:
+  - subclavian artery left
+  - subclavian_artery_left
+  - left subclavian artery
+  snomed_ct: '13179004'
+  uberon: ''
+  totalseg_class: subclavian_artery_left
+  status: active
+- nl_label: 右颈总动脉
+  synonyms:
+  - common carotid artery right
+  - common_carotid_artery_right
+  - right common carotid artery
+  snomed_ct: '13179004'
+  uberon: ''
+  totalseg_class: common_carotid_artery_right
+  status: active
+- nl_label: 左颈总动脉
+  synonyms:
+  - common carotid artery left
+  - common_carotid_artery_left
+  - left common carotid artery
+  snomed_ct: '13179004'
+  uberon: ''
+  totalseg_class: common_carotid_artery_left
+  status: active
+- nl_label: 左头臂静脉
+  synonyms:
+  - brachiocephalic vein left
+  - brachiocephalic_vein_left
+  - left innominate vein
+  snomed_ct: '8887007'
+  uberon: ''
+  totalseg_class: brachiocephalic_vein_left
+  status: active
+- nl_label: 右头臂静脉
+  synonyms:
+  - brachiocephalic vein right
+  - brachiocephalic_vein_right
+  - right innominate vein
+  snomed_ct: '8887007'
+  uberon: ''
+  totalseg_class: brachiocephalic_vein_right
+  status: active
+- nl_label: 左心耳
+  synonyms:
+  - atrial appendage left
+  - atrial_appendage_left
+  - left atrial appendage
+  snomed_ct: '46250003'
+  uberon: ''
+  totalseg_class: atrial_appendage_left
+  status: active
+- nl_label: 上腔静脉
+  synonyms:
+  - superior vena cava
+  - superior_vena_cava
+  - SVC
+  snomed_ct: '48333005'
+  uberon: UBERON:0002012
+  totalseg_class: superior_vena_cava
+  status: active
+- nl_label: 下腔静脉
+  synonyms:
+  - inferior vena cava
+  - inferior_vena_cava
+  - IVC
+  - IVC
+  snomed_ct: '48333005'
+  uberon: UBERON:0001072
+  totalseg_class: inferior_vena_cava
+  status: active
+- nl_label: 门静脉与脾静脉
+  synonyms:
+  - portal_vein_and_splenic_vein
+  - portal vein and splenic vein
+  - 门脉
+  - 门静脉
+  snomed_ct: '128572003'
+  uberon: UBERON:0001585
+  totalseg_class: portal_vein_and_splenic_vein
+  status: active
+- nl_label: 左髂动脉
+  synonyms:
+  - iliac artery left
+  - iliac_artery_left
+  - left iliac artery
+  snomed_ct: '13179004'
+  uberon: ''
+  totalseg_class: iliac_artery_left
+  status: active
+- nl_label: 右髂动脉
+  synonyms:
+  - iliac artery right
+  - iliac_artery_right
+  - right iliac artery
+  snomed_ct: '13179004'
+  uberon: ''
+  totalseg_class: iliac_artery_right
+  status: active
+- nl_label: 左髂静脉
+  synonyms:
+  - iliac vena left
+  - iliac_vena_left
+  - left iliac vein
+  snomed_ct: '46027005'
+  uberon: ''
+  totalseg_class: iliac_vena_left
+  status: active
+- nl_label: 右髂静脉
+  synonyms:
+  - iliac vena right
+  - iliac_vena_right
+  - right iliac vein
+  snomed_ct: '46027005'
+  uberon: ''
+  totalseg_class: iliac_vena_right
+  status: active
+- nl_label: 左肱骨
+  synonyms:
+  - humerus left
+  - humerus_left
+  - left upper arm bone
+  snomed_ct: '71341001'
+  uberon: ''
+  totalseg_class: humerus_left
+  status: active
+- nl_label: 右肱骨
+  synonyms:
+  - humerus right
+  - humerus_right
+  - right upper arm bone
+  snomed_ct: '71341001'
+  uberon: ''
+  totalseg_class: humerus_right
+  status: active
+- nl_label: 左肩胛骨
+  synonyms:
+  - scapula left
+  - scapula_left
+  - left shoulder blade
+  snomed_ct: '71341001'
+  uberon: ''
+  totalseg_class: scapula_left
+  status: active
+- nl_label: 右肩胛骨
+  synonyms:
+  - scapula right
+  - scapula_right
+  - right shoulder blade
+  snomed_ct: '71341001'
+  uberon: ''
+  totalseg_class: scapula_right
+  status: active
+- nl_label: 左锁骨
+  synonyms:
+  - clavicula left
+  - clavicula_left
+  - left collar bone
+  snomed_ct: '71341001'
+  uberon: ''
+  totalseg_class: clavicula_left
+  status: active
+- nl_label: 右锁骨
+  synonyms:
+  - clavicula right
+  - clavicula_right
+  - right collar bone
+  snomed_ct: '71341001'
+  uberon: ''
+  totalseg_class: clavicula_right
+  status: active
+- nl_label: 左股骨
+  synonyms:
+  - femur left
+  - femur_left
+  - left thigh bone
+  snomed_ct: '71341001'
+  uberon: UBERON:0006291
+  totalseg_class: femur_left
+  status: active
+- nl_label: 右股骨
+  synonyms:
+  - femur right
+  - femur_right
+  - right thigh bone
+  snomed_ct: '71341001'
+  uberon: UBERON:0006292
+  totalseg_class: femur_right
+  status: active
+- nl_label: 左髋骨
+  synonyms:
+  - hip left
+  - hip_left
+  - left hip bone
+  snomed_ct: '85544002'
+  uberon: UBERON:0001270
+  totalseg_class: hip_left
+  status: active
+- nl_label: 右髋骨
+  synonyms:
+  - hip right
+  - hip_right
+  - right hip bone
+  snomed_ct: '85544002'
+  uberon: UBERON:0001270
+  totalseg_class: hip_right
+  status: active
+- nl_label: 脊髓
+  synonyms:
+  - spinal cord
+  - spinal_cord
+  - medulla spinalis
+  snomed_ct: '272700005'
+  uberon: UBERON:0002240
+  totalseg_class: spinal_cord
+  status: active
+- nl_label: 左臀大肌
+  synonyms:
+  - gluteus maximus left
+  - gluteus_maximus_left
+  - left gluteus maximus
+  snomed_ct: '181674001'
+  uberon: ''
+  totalseg_class: gluteus_maximus_left
+  status: active
+- nl_label: 右臀大肌
+  synonyms:
+  - gluteus maximus right
+  - gluteus_maximus_right
+  - right gluteus maximus
+  snomed_ct: '181674001'
+  uberon: ''
+  totalseg_class: gluteus_maximus_right
+  status: active
+- nl_label: 左臀中肌
+  synonyms:
+  - gluteus medius left
+  - gluteus_medius_left
+  - left gluteus medius
+  snomed_ct: '78333006'
+  uberon: ''
+  totalseg_class: gluteus_medius_left
+  status: active
+- nl_label: 右臀中肌
+  synonyms:
+  - gluteus medius right
+  - gluteus_medius_right
+  - right gluteus medius
+  snomed_ct: '78333006'
+  uberon: ''
+  totalseg_class: gluteus_medius_right
+  status: active
+- nl_label: 左臀小肌
+  synonyms:
+  - gluteus minimus left
+  - gluteus_minimus_left
+  - left gluteus minimus
+  snomed_ct: '75297007'
+  uberon: ''
+  totalseg_class: gluteus_minimus_left
+  status: active
+- nl_label: 右臀小肌
+  synonyms:
+  - gluteus minimus right
+  - gluteus_minimus_right
+  - right gluteus minimus
+  snomed_ct: '75297007'
+  uberon: ''
+  totalseg_class: gluteus_minimus_right
+  status: active
+- nl_label: 左椎旁肌群
+  synonyms:
+  - autochthon left
+  - autochthon_left
+  - left autochthonous back muscles
+  snomed_ct: '244849004'
+  uberon: ''
+  totalseg_class: autochthon_left
+  status: active
+- nl_label: 右椎旁肌群
+  synonyms:
+  - autochthon right
+  - autochthon_right
+  - right autochthonous back muscles
+  snomed_ct: '244849004'
+  uberon: ''
+  totalseg_class: autochthon_right
+  status: active
+- nl_label: 左髂腰肌
+  synonyms:
+  - iliopsoas left
+  - iliopsoas_left
+  - left iliopsoas
+  snomed_ct: '68455001'
+  uberon: ''
+  totalseg_class: iliopsoas_left
+  status: active
+- nl_label: 右髂腰肌
+  synonyms:
+  - iliopsoas right
+  - iliopsoas_right
+  - right iliopsoas
+  snomed_ct: '68455001'
+  uberon: ''
+  totalseg_class: iliopsoas_right
+  status: active
+- nl_label: 脑
+  synonyms:
+  - brain
+  - encephalon
+  snomed_ct: '12738006'
+  uberon: UBERON:0000955
+  totalseg_class: brain
+  status: active
+- nl_label: 颅骨
+  synonyms:
+  - skull
+  - cranium
+  snomed_ct: '89546000'
+  uberon: UBERON:0003128
+  totalseg_class: skull
+  status: active
+- nl_label: 左第1肋骨
+  synonyms:
+  - rib left 1
+  - rib_left_1
+  - left rib 1
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_1
+  status: active
+- nl_label: 左第2肋骨
+  synonyms:
+  - rib left 2
+  - rib_left_2
+  - left rib 2
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_2
+  status: active
+- nl_label: 左第3肋骨
+  synonyms:
+  - rib left 3
+  - rib_left_3
+  - left rib 3
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_3
+  status: active
+- nl_label: 左第4肋骨
+  synonyms:
+  - rib left 4
+  - rib_left_4
+  - left rib 4
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_4
+  status: active
+- nl_label: 左第5肋骨
+  synonyms:
+  - rib left 5
+  - rib_left_5
+  - left rib 5
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_5
+  status: active
+- nl_label: 左第6肋骨
+  synonyms:
+  - rib left 6
+  - rib_left_6
+  - left rib 6
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_6
+  status: active
+- nl_label: 左第7肋骨
+  synonyms:
+  - rib left 7
+  - rib_left_7
+  - left rib 7
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_7
+  status: active
+- nl_label: 左第8肋骨
+  synonyms:
+  - rib left 8
+  - rib_left_8
+  - left rib 8
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_8
+  status: active
+- nl_label: 左第9肋骨
+  synonyms:
+  - rib left 9
+  - rib_left_9
+  - left rib 9
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_9
+  status: active
+- nl_label: 左第10肋骨
+  synonyms:
+  - rib left 10
+  - rib_left_10
+  - left rib 10
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_10
+  status: active
+- nl_label: 左第11肋骨
+  synonyms:
+  - rib left 11
+  - rib_left_11
+  - left rib 11
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_11
+  status: active
+- nl_label: 左第12肋骨
+  synonyms:
+  - rib left 12
+  - rib_left_12
+  - left rib 12
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_left_12
+  status: active
+- nl_label: 右第1肋骨
+  synonyms:
+  - rib right 1
+  - rib_right_1
+  - right rib 1
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_1
+  status: active
+- nl_label: 右第2肋骨
+  synonyms:
+  - rib right 2
+  - rib_right_2
+  - right rib 2
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_2
+  status: active
+- nl_label: 右第3肋骨
+  synonyms:
+  - rib right 3
+  - rib_right_3
+  - right rib 3
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_3
+  status: active
+- nl_label: 右第4肋骨
+  synonyms:
+  - rib right 4
+  - rib_right_4
+  - right rib 4
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_4
+  status: active
+- nl_label: 右第5肋骨
+  synonyms:
+  - rib right 5
+  - rib_right_5
+  - right rib 5
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_5
+  status: active
+- nl_label: 右第6肋骨
+  synonyms:
+  - rib right 6
+  - rib_right_6
+  - right rib 6
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_6
+  status: active
+- nl_label: 右第7肋骨
+  synonyms:
+  - rib right 7
+  - rib_right_7
+  - right rib 7
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_7
+  status: active
+- nl_label: 右第8肋骨
+  synonyms:
+  - rib right 8
+  - rib_right_8
+  - right rib 8
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_8
+  status: active
+- nl_label: 右第9肋骨
+  synonyms:
+  - rib right 9
+  - rib_right_9
+  - right rib 9
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_9
+  status: active
+- nl_label: 右第10肋骨
+  synonyms:
+  - rib right 10
+  - rib_right_10
+  - right rib 10
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_10
+  status: active
+- nl_label: 右第11肋骨
+  synonyms:
+  - rib right 11
+  - rib_right_11
+  - right rib 11
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_11
+  status: active
+- nl_label: 右第12肋骨
+  synonyms:
+  - rib right 12
+  - rib_right_12
+  - right rib 12
+  snomed_ct: '77692002'
+  uberon: UBERON:0002228
+  totalseg_class: rib_right_12
+  status: active
+- nl_label: 胸骨
+  synonyms:
+  - sternum
+  - breast bone
+  snomed_ct: '13365006'
+  uberon: UBERON:0000975
+  totalseg_class: sternum
+  status: active
+- nl_label: 肋软骨
+  synonyms:
+  - costal cartilages
+  - costal_cartilages
+  - costal cartilage structure
+  snomed_ct: '50016007'
+  uberon: ''
+  totalseg_class: costal_cartilages
+  status: active

@@ -29,14 +29,28 @@ def service(settings: Settings) -> OntologyService:  # noqa: ANN001
 
 class TestLoadMap:
     def test_load_real_map(self) -> None:
-        """真实 map.yaml 可加载，条目字段齐全。"""
+        """真实 map.yaml 可加载（M2-align 3.4：117 类全覆盖，snomed 全非空）。
+
+        uberon 允许空（拿不准的填空不编造，待核对编码清单见 M2-ALIGN-REPORT）。
+        """
         entries = load_map()
-        assert len(entries) > 20
+        assert len(entries) == 117
+        cn_labels = [e.nl_label for e in entries]
+        assert len(cn_labels) == len(set(cn_labels))  # 中文标签唯一
+        classes = {e.totalseg_class for e in entries}
+        # 抽样：主要器官/椎体/肋骨/血管
+        for cls in ["liver", "spleen", "kidney_left", "vertebrae_L1",
+                    "rib_left_1", "aorta", "hip_left", "lung_upper_lobe_left"]:
+            assert cls in classes, cls
         for e in entries:
             assert e.nl_label
             assert e.totalseg_class
-            assert e.snomed_ct
-            assert e.uberon
+            assert e.snomed_ct, f"{e.totalseg_class} snomed 空"
+            assert e.synonyms, f"{e.totalseg_class} 无同义词"
+            # 每类至少 1 个中文名（nl_label 即中文）+ 1 个英文别名
+            assert any(s.isascii() for s in e.synonyms), (
+                f"{e.totalseg_class} 缺英文别名"
+            )
 
     def test_bilingual_synonyms(self, service: OntologyService) -> None:
         """中英双语同义词进同一张表：'liver' 与 '肝' 命中同一类别。"""

@@ -1,31 +1,37 @@
-"""本体映射（M2，proposal §3）：自然语言标签 -> TotalSegmentator 类别的静态查表。
+"""本体映射（M2 + M2-align 3.4）：自然语言标签 -> TotalSegmentator 类别。
 
 机制：
 
-- **版本化静态 YAML 查表**：`ontology/{version}/map.yaml`，git 管、评审可 diff。
-  不引重型本体服务（全量 SNOMED/Uberon 图谱是 M5 之后的事）。
+- **版本化静态 YAML 查表**：`ontology/{version}/map.yaml`（v1：117 条目，
+  TS total 全类覆盖），git 管、评审可 diff。不引重型本体服务。
 - 条目字段：`nl_label / synonyms / snomed_ct / uberon / totalseg_class / status`。
   **中英双语同义词进同一张表**（synonyms 字段，Q1 已定）。
-- **三态回退**：对每个 NL 标签返回
+- **解析分层（M2-align 3.4，先离线后可插拔）**：
+  1. 离线精确查表：label/synonym 精确命中。
+  2. 离线模糊查表：子串/编辑距离（difflib，阈值 `FUZZY_CUTOFF`，多候选 ambiguous）。
+  3. 简单规则解析：分隔符多标签（"肝和脾"、"肝、脾"）、左右修饰（"左肾"/"right
+     kidney"）、常见缩写口语（"胆"→ambiguous，不静默单解）。
+  4. 可插拔 LLM 意图解析：`IntentParser` 接口（NL 串 -> 候选 totalseg_class +
+     置信度），`RuleIntentParser`（1–3 层）为默认；LLM 实现只留注册点，
+     本轮不调任何 LLM、不联网。
+- **三态回退**：
   - `resolved`：唯一命中 totalseg_class
-  - `ambiguous`：多个候选（如"肝"命中 liver 与 hepatic vessel），附同义词与
-    SNOMED 概念 ID，交回用户点选；**用户选择写回映射表**，下次直接 resolved
-    （这是产品资产，不是补丁）
+  - `ambiguous`：多个候选，交回用户点选；**选择写回 overrides.yaml**，下次 resolved
   - `unresolved`：零命中
-- **逃生通道（SegVol/SAT 类真文本提示模型）**：默认关闭，须显式开启
-  （--experimental-text-prompt 或 config）；结果打 `experimental` 标记，
-  **绝不进蒸馏训练集**。M2 只落地开关/标记/隔离逻辑，不真正接 SegVol
-  （其权重许可待核实，LICENSES-THIRD-PARTY.md §6）。
+- **逃生通道（SegVol/SAT 类真文本提示模型）**：默认关闭，须显式开启；结果打
+  `experimental` 标记，**绝不进蒸馏训练集**。
 
-写回策略（最小合理选择）：用户消歧结果写回 `ontology/{version}/overrides.yaml`
-（同一版本目录，与主表分离，git diff 只见用户决策）。查询时 overrides 优先于主表。
+写回策略：用户消歧结果写回 `ontology/{version}/overrides.yaml`（同一版本目录，
+与主表分离，git diff 只见用户决策）。查询时 overrides 优先于主表。
 """
 
 from __future__ import annotations
 
+import difflib
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import yaml
 
@@ -39,6 +45,45 @@ OVERRIDES_FILENAME = "overrides.yaml"
 RESOLVED = "resolved"
 AMBIGUOUS = "ambiguous"
 UNRESOLVED = "unresolved"
+
+# M2-align 3.4：离线模糊查表阈值（difflib SequenceMatcher ratio 下限；config 化后置，
+# 阈值改动 = config/代码常量 diff，测试锁定）
+FUZZY_CUTOFF = 0.6
+
+# 常见缩写/口语 -> 候选（M2-align 3.4 第 3 层：缩写不静默单解，进 ambiguous）
+ABBREVIATIONS: dict[str, list[str]] = {
+    "胆": ["gallbladder", "liver"],  # "胆"口语可指胆囊或胆道，不静默单解
+    "胆道": ["gallbladder"],
+    "kidney": ["kidney_left", "kidney_right"],  # 无左右修饰的 kidney 双候选
+    "肾": ["kidney_left", "kidney_right"],
+    "adrenal gland": ["adrenal_gland_left", "adrenal_gland_right"],
+    "肾上腺": ["adrenal_gland_left", "adrenal_gland_right"],
+    "femur": ["femur_left", "femur_right"],
+    "股骨": ["femur_left", "femur_right"],
+    "lung": ["lung_upper_lobe_left", "lung_upper_lobe_right",
+             "lung_lower_lobe_left", "lung_lower_lobe_right",
+             "lung_middle_lobe_right"],
+    "肺": ["lung_upper_lobe_left", "lung_upper_lobe_right",
+           "lung_lower_lobe_left", "lung_lower_lobe_right",
+           "lung_middle_lobe_right"],
+}
+
+# 左右修饰（M2-align 3.4 第 3 层）：前缀/后缀 -> (侧, 剥离后标签)
+LEFT_RIGHT_PATTERNS = [
+    # 中文前缀
+    (re.compile(r"^左(?:侧)?(.+)$"), "left"),
+    (re.compile(r"^右(?:侧)?(.+)$"), "right"),
+    # 英文前缀
+    (re.compile(r"^left\s+(.+)$", re.IGNORECASE), "left"),
+    (re.compile(r"^right\s+(.+)$", re.IGNORECASE), "right"),
+    # 中文后缀
+    (re.compile(r"^(.+?)左侧$"), "left"),
+    (re.compile(r"^(.+?)右侧$"), "right"),
+]
+
+# 多标签分隔符（M2-align 3.4 第 3 层）：、，,；; 和 与 跟 + & / 以及英文 and
+# （\band\b 词边界已够；"and" 出现在类别名内部的场景走精确命中优先，不受影响）
+MULTI_LABEL_SPLIT = re.compile(r"[、,，;；和与跟\+&/]|和(?![a-zA-Z])|\band\b", re.IGNORECASE)
 
 MapStatus = Literal["active", "deprecated"]
 
@@ -164,6 +209,112 @@ def normalize_label(label: str) -> str:
     return label.strip().lower()
 
 
+# ---------------------------------------------------------------------------
+# M2-align 3.4 第 4 层：可插拔 LLM 意图解析接口（本轮只留注册点，不调 LLM）
+# ---------------------------------------------------------------------------
+
+@dataclass
+class IntentCandidate:
+    """意图解析候选（totalseg_class + 置信度）。"""
+
+    totalseg_class: str
+    confidence: float  # 0..1
+
+
+class IntentParser(Protocol):
+    """可插拔意图解析接口（M2-align 3.4 第 4 层）。
+
+    输入自然语言串，输出候选 totalseg_class 列表 + 置信度。默认实现
+    `RuleIntentParser`（离线 1–3 层）；LLM 实现（联网/本地推理）只留注册点，
+    本轮不调任何 LLM、不联网——实现方自行注册（见 register_intent_parser）。
+    """
+
+    def parse(self, text: str) -> list[IntentCandidate]:
+        """解析 NL 串 -> 候选列表（按置信度降序；空串/无法解析返回 []）。"""
+        ...
+
+
+class RuleIntentParser:
+    """默认实现：离线规则解析（分层 1–3：多标签 -> 精确/模糊查表 -> 左右修饰）。"""
+
+    def __init__(self, service: OntologyService):
+        self.service = service
+
+    def parse(self, text: str) -> list[IntentCandidate]:
+        """解析 NL 串 -> 候选列表（多标签切分后逐个 resolve，resolved 优先）。
+
+        - resolved：confidence 1.0（唯一命中）
+        - ambiguous：取全部候选，confidence 0.5（需用户点选）
+        - unresolved：丢弃（fuzzy 无命中）
+        """
+        out: list[IntentCandidate] = []
+        seen: set[str] = set()
+        for sub in split_multi_label(text):
+            result = self.service.resolve(sub)
+            if result.state == RESOLVED and result.entry is not None:
+                if result.entry.totalseg_class not in seen:
+                    out.append(
+                        IntentCandidate(result.entry.totalseg_class, 1.0)
+                    )
+                    seen.add(result.entry.totalseg_class)
+            elif result.state == AMBIGUOUS:
+                for c in result.candidates:
+                    if c.entry.totalseg_class not in seen:
+                        out.append(
+                            IntentCandidate(c.entry.totalseg_class, 0.5)
+                        )
+                        seen.add(c.entry.totalseg_class)
+        return out
+
+
+# LLM 意图解析注册点（M2-align 3.4 第 4 层）：LLM 实现方调用此函数注册；
+# 本轮无人注册（不联网、不调 LLM），get_intent_parser 返回 RuleIntentParser。
+_intent_parser_factory: Any = None
+
+
+def register_intent_parser(factory: Any) -> None:
+    """注册 LLM 意图解析工厂（`factory() -> IntentParser`）。本轮不调用。
+
+    注册后 get_intent_parser 返回工厂产物（LLM 实现）；未注册则用默认
+    RuleIntentParser（离线规则，断网可跑）。
+    """
+    global _intent_parser_factory
+    _intent_parser_factory = factory
+
+
+def get_intent_parser(service: OntologyService) -> IntentParser:
+    """取当前意图解析器：注册的 LLM 工厂优先，否则默认 RuleIntentParser。"""
+    if _intent_parser_factory is not None:
+        return _intent_parser_factory(service)
+    return RuleIntentParser(service)
+
+
+def split_multi_label(text: str) -> list[str]:
+    """分隔符多标签切分（M2-align 3.4 第 3 层）："肝和脾" -> ["肝", "脾"]。
+
+    分隔符：、，,；; 与 跟 + & /；无分隔符返回 [原文]。
+    """
+    text = text.strip()
+    if not text:
+        return []
+    parts = [p.strip() for p in MULTI_LABEL_SPLIT.split(text) if p.strip()]
+    return parts or [text]
+
+
+def _apply_left_right(label: str) -> tuple[str, str | None]:
+    """左右修饰剥离（M2-align 3.4 第 3 层）："左肾" -> ("肾", "left")。
+
+    返回 (剥离后标签, side | None)。无修饰返回 (原标签, None)。
+    """
+    for pattern, side in LEFT_RIGHT_PATTERNS:
+        m = pattern.match(label)
+        if m:
+            stripped = m.group(1).strip()
+            if stripped:  # 纯 "左"/"right" 不剥离
+                return stripped, side
+    return label, None
+
+
 class OntologyService:
     """映射服务：查询三态 + 用户消歧写回。CLI 与 API 共用。"""
 
@@ -190,7 +341,10 @@ class OntologyService:
     # -- 查询 ---------------------------------------------------------------
 
     def resolve(self, label: str) -> MapResult:
-        """对单个 NL 标签返回三态结果（overrides 优先于主表）。"""
+        """对单个 NL 标签返回三态结果（M2-align 3.4 分层解析）。
+
+        顺序：overrides -> 精确查表 -> 缩写表 -> 左右修饰 + 精确 -> 模糊查表。
+        """
         key = normalize_label(label)
         if not key:
             return MapResult(state=UNRESOLVED, label=label, reason="空标签")
@@ -202,18 +356,116 @@ class OntologyService:
                 state=RESOLVED, label=label, entry=entry, reason="用户消歧写回（override）"
             )
 
+        # 2. 离线精确查表（label/synonym 精确命中）
         hits = self._index.get(key, [])
-        if not hits:
-            return MapResult(state=UNRESOLVED, label=label, reason="无候选（可开启实验逃生通道）")
         if len(hits) == 1:
             return MapResult(state=RESOLVED, label=label, entry=hits[0], reason="唯一命中")
+
+        # 3. 简单规则解析：常见缩写/口语（不静默单解，进 ambiguous）
+        if not hits and key in ABBREVIATIONS:
+            abbr_hits = [
+                e
+                for cls in ABBREVIATIONS[key]
+                for e in self._entries
+                if e.totalseg_class == cls
+            ]
+            if len(abbr_hits) > 1:
+                return MapResult(
+                    state=AMBIGUOUS,
+                    label=label,
+                    candidates=[MapCandidate(entry=e, matched_term=key) for e in abbr_hits],
+                    reason=f"缩写/口语 '{label}' 有 {len(abbr_hits)} 个候选，需用户点选"
+                    "（不许静默单解）",
+                )
+            if abbr_hits:
+                return MapResult(
+                    state=RESOLVED, label=label, entry=abbr_hits[0], reason="缩写表唯一命中"
+                )
+
+        # 4. 左右修饰剥离 + 精确查表（"左肾" -> "肾" + left -> kidney_left；
+        #    "left femur" -> "femur" + left -> femur_left）
+        stripped, side = _apply_left_right(key)
+        if side and stripped != key:
+            # 被修饰词在缩写表（如"肾"/"femur"）-> side 拼类别
+            base_classes = ABBREVIATIONS.get(stripped, [])
+            if base_classes:
+                matched = [
+                    e
+                    for cls in base_classes
+                    for e in self._entries
+                    if e.totalseg_class == cls
+                    and (
+                        (side == "left" and cls.endswith("_left"))
+                        or (side == "right" and cls.endswith("_right"))
+                    )
+                ]
+                if len(matched) == 1:
+                    return MapResult(
+                        state=RESOLVED,
+                        label=label,
+                        entry=matched[0],
+                        reason=f"左右修饰解析（{side}）",
+                    )
+            # 被修饰词是普通表条目（如"侧肾"）-> 剥离后精确命中
+            lr_hits = self._index.get(stripped, [])
+            if lr_hits and len(lr_hits) == 1:
+                return MapResult(
+                    state=RESOLVED, label=label, entry=lr_hits[0], reason="修饰词剥离唯一命中"
+                )
+
+        # 5. 离线模糊查表（子串/编辑距离，difflib；阈值 FUZZY_CUTOFF）
+        if not hits:
+            return self._fuzzy_resolve(label, key)
+
+        # 精确命中多条 -> ambiguous
         return MapResult(
             state=AMBIGUOUS,
             label=label,
-            candidates=[
-                MapCandidate(entry=e, matched_term=key) for e in hits
-            ],
+            candidates=[MapCandidate(entry=e, matched_term=key) for e in hits],
             reason=f"{len(hits)} 个候选，需用户点选（选择写回 overrides）",
+        )
+
+    def _fuzzy_resolve(self, label: str, key: str) -> MapResult:
+        """离线模糊查表（M2-align 3.4 第 2 层）：子串/编辑距离，阈值 FUZZY_CUTOFF。
+
+        多候选（>=2 个并列最高分）走 ambiguous 三态；唯一最高命中 resolved；
+        零命中 unresolved。
+        """
+        candidates: list[tuple[float, MapEntry, str]] = []
+        for e in self._entries:
+            best_ratio = 0.0
+            best_term = ""
+            for term in [e.nl_label, *e.synonyms]:
+                t = normalize_label(term)
+                ratio = difflib.SequenceMatcher(None, key, t).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_term = t
+            if best_ratio >= FUZZY_CUTOFF:
+                candidates.append((best_ratio, e, best_term))
+        if not candidates:
+            return MapResult(
+                state=UNRESOLVED, label=label, reason="无候选（精确/模糊均未命中）"
+            )
+        candidates.sort(key=lambda x: (-x[0], x[2]))
+        top = candidates[0][0]
+        # 并列最高分多候选 -> ambiguous（不许静默单解）
+        top_hits = [c for c in candidates if abs(c[0] - top) < 1e-9]
+        if len(top_hits) > 1:
+            return MapResult(
+                state=AMBIGUOUS,
+                label=label,
+                candidates=[
+                    MapCandidate(entry=e, matched_term=t) for _, e, t in top_hits
+                ],
+                reason=f"模糊匹配 {len(top_hits)} 个并列候选（ratio={top:.2f}），需用户点选",
+            )
+        _, entry, term = top_hits[0]
+        return MapResult(
+            state=RESOLVED,
+            label=label,
+            entry=entry,
+            reason=f"模糊匹配命中（{term}，ratio={top:.2f}，阈值 {FUZZY_CUTOFF}）",
         )
 
     def resolve_batch(self, labels: list[str]) -> list[MapResult]:
@@ -357,18 +609,25 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
 
 __all__ = [
     "AMBIGUOUS",
+    "FUZZY_CUTOFF",
     "ONTOLOGY_DIR",
     "ONTOLOGY_VERSION",
     "OVERRIDES_FILENAME",
     "RESOLVED",
     "UNRESOLVED",
+    "IntentCandidate",
+    "IntentParser",
     "MapCandidate",
     "MapEntry",
     "MapResult",
     "OntologyError",
     "OntologyService",
+    "RuleIntentParser",
+    "get_intent_parser",
     "load_map",
     "load_overrides",
     "mask_allowed_in_distill_training",
     "normalize_label",
+    "register_intent_parser",
+    "split_multi_label",
 ]

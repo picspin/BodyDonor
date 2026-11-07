@@ -13,6 +13,8 @@ logs/
 
 # 数据目录不在仓内（~/data/BodyDonor），但防误放
 data/
+# 例外：tests/data 是测试资产（NL 测试集等），进仓
+!tests/data/
 
 # IDE / 系统
 .idea/
