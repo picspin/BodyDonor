@@ -343,3 +343,60 @@ M1 下载登记时在引用文献里完成署名义务。
 2. TS licensed 任务的非商业 custom license 全文条款（backend.totalsegmentator.com 为 JS 应用，
    M0 以 README 原文为准；申请 license 时会看到全文，届时补录本文件）。
 3. TS 商业授权的价格/条款：联系 jakob.wasserthal@usb.ch（仅商用化时需要）。
+
+---
+
+## 8. M4 蒸馏许可传染书面结论（准入项，2026-11-08）
+
+> 本节为 M4 准入项的正式书面结论：M4 蒸馏训练数据流在结论签发前不得启动。
+> 复核日期 2026-11-08：上游原文重新读取，TotalSegmentator README
+> "Openly available for any usage (Apache-2.0 license)"（`total` 列首位）与
+> M0 核实（2026-11-06）一致，无改动；nnInteractive README License 节
+> "the model checkpoint is `Creative Commons Attribution Non Commercial Share
+> Alike 4.0`!" 原文一致，无改动；nnU-Net v2 Apache-2.0 不变。
+> （来源：https://raw.githubusercontent.com/wasserth/TotalSegmentator/master/README.md；
+> https://github.com/MIC-DKFZ/nnInteractive，访问日期 2026-11-08。）
+
+### 8.1 结论
+
+| 学生权重训练输入 | 许可传染 | 学生权重能否商用 |
+|---|---|---|
+| TotalSegmentator `total` 教师 mask + 纯人工修正 | 无传染 | **可以商用**（M4 商用路径，唯一安全路径） |
+| 上述输入 + nnInteractive 修正产物 | CC BY-NC-SA 4.0 ShareAlike 传染 | **仅科研** |
+| 上述输入 + TS 18 个 licensed 任务教师 mask | 推定传染（custom NC 授权） | **仅科研**，除非取得 USB 书面商业授权 |
+| 上述输入 + SegVol 逃生通道产物 | 权重许可待核实 | 不进训练集（与 M0 一致） |
+
+### 8.2 推理（为什么 `total` 路径无传染）
+
+1. Apache-2.0 许可的是作为作品分发的代码与权重本身（"the Work"）；教师推理
+   输出的 mask 是运行软件产生的数据，不含从权重中复制的表达性内容，不构成
+   Apache-2.0 下的 Derivative Work。
+2. 上游作者以 README 明示 `total` 等任务 "Openly available for any usage
+   (Apache-2.0 license)"——商业用途在明示授权范围内。
+3. 纯人工修正是项目自有原创劳动，不携带第三方许可。
+4. 因此学生权重是 BodyDonor 自有训练产物，**不继承 Apache-2.0 的义务**
+   （Apache-2.0 非 copyleft，无传染条款）；其许可按项目自身分层执行
+   （Q1–Q10：后端 BSL 1.1，开源层 Apache 2.0；蒸馏流水线属专有层）。
+5. nnU-Net v2 代码本身 Apache-2.0，训练框架无传染问题（§3.1）。
+
+### 8.3 商用路径的约束（必须执行）
+
+1. **训练输入来源强制**：蒸馏数据准备必须拒绝 nnInteractive 修正产物与
+   licensed 任务教师 mask，只接受 `total` 教师 mask + 纯人工修正；来源须
+   在训练集登记中逐 case 可审计（ModelVersion + 训练集清单）。
+2. **署名与引用**：沿用 TotalSegmentator 论文引用要求（Radiology AI 论文 +
+   nnU-Net 引用）；AMOS22 / TS 数据集 CC-BY-4.0 署名见 §5（训练数据若用
+   AMOS 图像，署名义务同样适用；hold-out 金标准永不进训练集）。
+3. **混合输入即降级**：一旦训练输入混入 §8.1 表中任一受限产物，该学生权重
+   自动降级为仅科研用途，并在 ModelVersion.gate_metrics 与 M4-REPORT 中明标，
+   不得事后追认为商用。
+4. **nnInteractive 仍可作修正辅助**：其权重 CC BY-NC-SA 4.0 满足科研期非商业
+   使用；修正产物只用于人工审阅环节，不进商用训练集（§2.2 约束不变）。
+
+### 8.4 效力与边界
+
+- 本结论为工程侧保守判定，**不是法律意见**；BodyDonor 商用化前由法务复核
+  （与 BSL LICENSE 定稿同批处理，见 §3.2）。
+- 上游改许可时本结论失效，须重新核实并更新本文件。
+- M4 训练数据流自本节落盘起解锁，仅限商用路径输入；研究用混合输入另立
+  训练集并标注仅科研。
