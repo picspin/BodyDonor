@@ -50,9 +50,12 @@ NNUNET_ENV = {
     "nnUNet_compile": "false",
     # 限制默认进程数（nnU-Net 文档化开关 nnUNet_def_n_proc）：默认 8——短训第
     # 三次实测 validation 导出池 spawn 8 worker 全灭（"Some background workers
-    # are no longer alive"，与预处理 2/3 的 worker OOM 同源：WSL 15GB 内存）。
-    # 2 保证导出池存活（预处理 -np 1/2 实测通过），训练/导出串行不受影响。
-    "nnUNet_def_n_proc": "2",
+    # are no longer alive"）。=2 也不够（第四次实测）：Pool(2) 两 worker 并行
+    # 对最大例（amos_0050/0067）做 16 类概率图全分辨率重采样，dmesg 13:49:39
+    # OOM 击杀 40367（RSS 7.3GB），两 worker 各 ~7GB 同时在跑 + 主进程 >
+    # WSL2 15.8GB。=1 串行导出（单 worker 峰值 ~7GB + 主进程 ~2GB ≈ 10GB），
+    # 7 例 validation 仅慢 1-2 分钟；导出 torch.set_num_threads 同步降为 1。
+    "nnUNet_def_n_proc": "1",
 }
 
 NNUNET_PY = Path.home() / "work" / "BodyDonor" / ".venv-nnunet" / "bin" / "python"
