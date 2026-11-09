@@ -216,10 +216,13 @@ def _settings_with_data_dir(tmp_path: Path):
 # 后端 runner 契约（CPU 小输入真实跑通；GPU 大推理只走真机验证，不进单测）
 # ---------------------------------------------------------------------------
 
-def _make_small_patch(src_nii: Path, dst_nii: Path, center_xyz=(128, 128, 64), size=48) -> Path:
+def _make_small_patch(src_nii: Path, dst_nii: Path, center_xyz=(318, 255, 54), size=48) -> Path:
     """从真实 amos_0004 裁一个 48^3 patch（真实 case 数据，非合成）。
 
     CPU 推理对 patch 尺寸敏感（48^3 在 CPU 上分钟级），用小 patch 保真实输入。
+    中心 (318,255,54)：肝区（storage combined_mask label 44 liver bbox 中心
+    (318,255,66) 的 z 方向 clamp——48³ patch z 半径 24，66+24 超 78 层界），
+    实测中心 HU 100（软组织，非空气——点提示命中有效组织）。
     """
     import nibabel as nib
 
