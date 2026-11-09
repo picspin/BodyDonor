@@ -60,6 +60,23 @@ RULE_FULL_MASK = "full_mask"
 # 低于此说明规则无判别力，只更新注记不改数值）
 MIN_SEPARATION = 0.1
 
+# 数值重算门槛（M4 阶段 4）：抽检决策 < 20 例时不做数值重算（M3-REPORT §3.3/§3.4：
+# 冷启动阈值只是起点；标签量不足时硬算数值等于用噪声定阈值）。注记更新
+# （source / discrimination）同样等够 20 例再写回——不够就记 pending，不动 yaml。
+MIN_LABELS_FOR_RECALIBRATION = 20
+
+
+def recalibration_ready(n_labels: int) -> tuple[bool, str]:
+    """数值重算是否可触发：抽检决策 ≥ 20 例。返回 (ready, 原因)。"""
+    if n_labels >= MIN_LABELS_FOR_RECALIBRATION:
+        return True, (
+            f"抽检决策 {n_labels} 例 ≥ {MIN_LABELS_FOR_RECALIBRATION}，可重算"
+        )
+    return False, (
+        f"抽检决策 {n_labels} 例 < {MIN_LABELS_FOR_RECALIBRATION}——数值重算 "
+        "pending，不写回 qc_thresholds.yaml（标签量不足时硬算数值等于用噪声定阈值）"
+    )
+
 # 骨类关键字（HU 软组织窗不适用，hu_distribution 跳过）
 BONE_CLASS_KEYWORDS = (
     "vertebrae", "rib", "femur", "hip", "skull", "clavicula", "scapula",

@@ -6,10 +6,12 @@ import numpy as np
 import pytest
 
 from bodydonor.qc import (
+    MIN_LABELS_FOR_RECALIBRATION,
     QC_THRESHOLDS_PATH,
     RULE_MULTI_TEACHER,
     SamplingPlan,
     load_qc_thresholds,
+    recalibration_ready,
     rule_boundary_smoothness,
     rule_connected_component,
     rule_holes,
@@ -325,3 +327,122 @@ def test_calibrate_thresholds_updates_overall():
     out = calibrate_thresholds(labels, th)
     assert out["overall"]["calibrated_on"] == 2
     assert out["overall"]["calibrated_at"]
+
+
+# ---------------------------------------------------------------------------
+# M4 阶段 4：数值重算门槛（抽检决策 ≥ 20 例才做，不够记 pending）
+# ---------------------------------------------------------------------------
+
+def test_recalibration_ready_boundaries():
+    """门槛 20 例：19 不足、20 刚好可重算。"""
+    assert MIN_LABELS_FOR_RECALIBRATION == 20
+    ready, reason = recalibration_ready(19)
+    assert ready is False
+    assert "19 例 < 20" in reason
+    assert "pending" in reason
+    ready, _ = recalibration_ready(20)
+    assert ready is True
+    ready, _ = recalibration_ready(21)
+    assert ready is True
+
+
+@pytest.fixture
+def calib_db(tmp_path):
+    """独立 SQLite + Settings（qc-calibrate CLI 测试不碰真实 bodydonor.db）。"""
+    from bodydonor.config import Settings
+    from bodydonor.db import init_db
+
+    url = f"sqlite:///{tmp_path / 'calib.db'}"
+    init_db(url)
+    settings = Settings()
+    settings.database.url = url
+    return settings
+
+
+def _seed_review_decisions(settings, n_decided: int, n_pending: int = 0) -> None:
+    """Case/Series/MaskVersion/QCReport/ReviewTask 最小种子行。"""
+    from sqlalchemy.orm import Session
+
+    from bodydonor import db
+    from bodydonor.models import Case, MaskVersion, QCReport, ReviewTask, Series
+
+    engine = db._engine(settings.database.url)
+    try:
+        with engine.connect() as c:
+            sess = Session(c)
+            sess.add(Case(case_id="case-001"))
+            sess.add(Series(series_id="series-001", case_id="case-001"))
+            sess.add(MaskVersion(
+                mask_version_id="mv-001", series_id="series-001",
+                source="teacher", storage_key="k",
+            ))
+            total = n_decided + n_pending
+            for i in range(total):
+                sess.add(QCReport(
+                    qc_report_id=f"qr-{i}", mask_version_id="mv-001",
+                    flags=["volume_prior"] if i % 2 else [],
+                ))
+            sess.commit()
+            for i in range(n_decided):
+                sess.add(ReviewTask(
+                    review_task_id=f"rt-{i}", qc_report_id=f"qr-{i}",
+                    series_id="series-001", status="accepted",
+                    decision="accepted",
+                ))
+            for i in range(n_decided, total):
+                sess.add(ReviewTask(
+                    review_task_id=f"rt-{i}", qc_report_id=f"qr-{i}",
+                    series_id="series-001", status="pending", decision=None,
+                ))
+            sess.commit()
+            sess.close()
+    finally:
+        engine.dispose()
+
+
+def _run_qc_calibrate(monkeypatch, settings, tmp_path):
+    """CliRunner 跑 bodydonor qc-calibrate；save 被劫持到 tmp 文件（不动真 yaml）。"""
+    from typer.testing import CliRunner
+
+    import bodydonor.cli as cli_mod
+    import bodydonor.qc as qc_mod
+
+    monkeypatch.setattr(cli_mod, "_settings", lambda: settings)
+    saved = {}
+
+    def fake_save(thresholds, path=None):
+        saved["thresholds"] = thresholds
+        saved["path"] = path
+
+    monkeypatch.setattr(qc_mod, "save_calibrated_thresholds", fake_save)
+    runner = CliRunner()
+    result = runner.invoke(cli_mod.app, ["qc-calibrate"])
+    return result, saved
+
+
+def test_qc_calibrate_no_decisions_exits_zero(monkeypatch, calib_db, tmp_path):
+    """0 决策：沿用旧行为，提示后 Exit(0)，不写回。"""
+    _seed_review_decisions(calib_db, n_decided=0, n_pending=1)
+    result, saved = _run_qc_calibrate(monkeypatch, calib_db, tmp_path)
+    assert result.exit_code == 0
+    assert "无已决策" in result.output
+    assert saved == {}
+
+
+def test_qc_calibrate_below_threshold_refuses(monkeypatch, calib_db, tmp_path):
+    """5 决策 < 20：pending 拒绝，Exit(1)，不写回 yaml。"""
+    _seed_review_decisions(calib_db, n_decided=5)
+    result, saved = _run_qc_calibrate(monkeypatch, calib_db, tmp_path)
+    assert result.exit_code == 1
+    assert "5 例 < 20" in result.output
+    assert "pending" in result.output
+    assert saved == {}
+
+
+def test_qc_calibrate_at_threshold_writes(monkeypatch, calib_db, tmp_path):
+    """20 决策：放行，save 被调用一次，输出含 20 条标签。"""
+    _seed_review_decisions(calib_db, n_decided=20)
+    result, saved = _run_qc_calibrate(monkeypatch, calib_db, tmp_path)
+    assert result.exit_code == 0
+    assert "20 条" in result.output
+    assert saved["thresholds"]["overall"]["calibrated_on"] == 20

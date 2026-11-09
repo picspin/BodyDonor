@@ -609,14 +609,20 @@ def qc_calibrate() -> None:
     从 ReviewTask.decision（accepted/corrected/rejected）+ QCReport.flags 取
     校准标签，逐规则算判别力（flag 组 vs clean 组标签均值差），写回
     config/qc_thresholds.yaml（calibrated_on/at + discrimination + source 注记）。
-    阈值数值 M3 不动（标签量不足以重算数值，§7 明示只当起点）。
+    阈值数值重算须抽检决策 ≥ 20 例（M4 阶段 4 门槛）：不够就记 pending，不写回
+    config/qc_thresholds.yaml（§7 明示冷启动阈值只当起点）。
     """
     from sqlalchemy import select
     from sqlalchemy.orm import Session
 
     from . import db
     from .models import QCReport, ReviewTask
-    from .qc import calibrate_thresholds, load_qc_thresholds, save_calibrated_thresholds
+    from .qc import (
+        calibrate_thresholds,
+        load_qc_thresholds,
+        recalibration_ready,
+        save_calibrated_thresholds,
+    )
 
     settings = _settings()
     engine = db._engine(settings.database.url)
@@ -640,6 +646,11 @@ def qc_calibrate() -> None:
             "[yellow]无已决策的抽检任务（ReviewTask.decision 全空）——先在抽检台完成决策[/yellow]"
         )
         raise typer.Exit(0)
+
+    ready, reason = recalibration_ready(len(labels))
+    if not ready:
+        console.print(f"[yellow]{reason}[/yellow]")
+        raise typer.Exit(1)
 
     th = load_qc_thresholds()
     out = calibrate_thresholds(labels, th)
