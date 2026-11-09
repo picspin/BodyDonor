@@ -48,6 +48,11 @@ NNUNET_ENV = {
     # 编译失败实测（"Failed to find C compiler"）。eager 模式等价训练（仅速度
     # 差异），fp16 AMP autocast 不受影响。
     "nnUNet_compile": "false",
+    # 限制默认进程数（nnU-Net 文档化开关 nnUNet_def_n_proc）：默认 8——短训第
+    # 三次实测 validation 导出池 spawn 8 worker 全灭（"Some background workers
+    # are no longer alive"，与预处理 2/3 的 worker OOM 同源：WSL 15GB 内存）。
+    # 2 保证导出池存活（预处理 -np 1/2 实测通过），训练/导出串行不受影响。
+    "nnUNet_def_n_proc": "2",
 }
 
 NNUNET_PY = Path.home() / "work" / "BodyDonor" / ".venv-nnunet" / "bin" / "python"
