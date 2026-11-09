@@ -95,9 +95,13 @@
 
   footer {
     padding: 6px 16px; border-top: 1px solid var(--line); background: var(--panel);
-    color: var(--dim); font-size: 12px; display: flex; gap: 16px;
+    color: var(--dim); font-size: 12px; display: flex; gap: 16px; flex-wrap: wrap;
   }
   footer .slice-pos { color: var(--cyan); font-variant-numeric: tabular-nums; }
+  footer #license-line { min-width: 0; }
+  footer #license-line .ni-warning {
+    color: var(--red); font-weight: 600; margin-left: 6px;
+  }
   @media (prefers-reduced-motion: no-preference) {
     #toast.show { animation: toast-in .18s ease-out; }
     @keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(6px); } }
@@ -162,6 +166,7 @@
   <span class="slice-pos" id="slice-pos">slice —</span>
   <span id="fps-hint">滚轮/拖动滚动 · 右键窗宽窗位 · 逐类开关在右侧</span>
   <span id="frame-stat" style="margin-left:auto"></span>
+  <span id="license-line">license 加载中…</span>
 </footer>
 <div id="toast"></div>
 
@@ -206,9 +211,28 @@ const FALLBACK_PALETTE = [
 const segState = new Map(); // label_value(int) -> {color:[r,g,b], visible:true, name}
 
 let nvAxial, nvCoronal, nvSagittal, nvMip;
-let meta = null;       // {series_id, case_id, num_slices, has_combined_mask}
+let meta = null;       // {series_id, case_id, num_slices, has_combined_mask, license?}
 let segMeta = [];      // [{class, label_value, n_voxels, name_cn?, name_en?, color?}]
 let labelsDoc = null;  // {n_classes, labels: [{index, totalseg_class, name_cn, name_en, color}]}
+
+// M4 阶段 3：license 展示位（页脚一行，静态文案 + meta.license 动态内容；
+// 该 series 有 nnInteractive 修正产物时红色高亮提示）
+function showLicense(m) {
+  const el = $("license-line");
+  if (!el) return;
+  const lic = m && m.license ? m.license : null;
+  let html = "license: teacher=TotalSegmentator total（Apache-2.0）· ";
+  if (lic && lic.nninteractive_weights) {
+    html += `nnInteractive=${lic.nninteractive_weights}`;
+  } else {
+    html += "nnInteractive=CC BY-NC-SA 4.0（仅交互修正辅助）";
+  }
+  html += " · 详见 LICENSES-THIRD-PARTY.md";
+  if (m && m.correction_source) {
+    html += `<span class="ni-warning">⚠ 本序列含 nnInteractive 修正产物（CC BY-NC-SA 4.0）：不进商用蒸馏训练集</span>`;
+  }
+  el.innerHTML = html;
+}
 
 async function loadSeries() {
   if (!SERIES_ID) {
@@ -222,6 +246,9 @@ async function loadSeries() {
     if (!r.ok) throw new Error(`meta HTTP ${r.status}`);
     meta = await r.json();
     $("series-label").textContent = `${meta.case_id} / ${meta.series_id} · ${meta.num_slices} 层`;
+    // M4 阶段 3：license 展示（静态文案 + meta.license 动态；nnInteractive 修正
+    // 产物存在时高亮提示——CC BY-NC-SA 4.0 权重传染标记，不进商用蒸馏训练集）
+    showLicense(meta);
 
     // M2-align 3.5：只加载 1 张原图 + 1 个合并 mask（两个 volume，不多不少）
     const img = { url: `/review/${encodeURIComponent(SERIES_ID)}/image.nii.gz` };

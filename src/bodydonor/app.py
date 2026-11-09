@@ -608,7 +608,13 @@ def _series_row(series_id: str) -> Any:
 
 @app.get("/review/{series_id}/meta")
 def review_meta(series_id: str) -> dict[str, Any]:
-    """序列元数据 + mask 存在性（审阅页首屏；M3 收敛：单一产物 mask.nii.gz）。"""
+    """序列元数据 + mask 存在性 + license 展示（审阅页首屏；M3 收敛：单一产物）。
+
+    M4 阶段 3 加 license 字段：teacher 权重 Apache-2.0 + nnInteractive 权重
+    CC BY-NC-SA 4.0 + 指向 LICENSES-THIRD-PARTY.md；该 series 有 nnInteractive
+    修正产物（correction_source.json sidecar）时加 correction_source 提示
+    （不进商用蒸馏训练集）。
+    """
     row = _series_row(series_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
@@ -622,7 +628,7 @@ def review_meta(series_id: str) -> dict[str, Any]:
         bool(row.storage_key)
         and st.exists(row.storage_key.replace("image.nii.gz", "mask.nii.gz"))
     )
-    return {
+    out: dict[str, Any] = {
         "series_id": row.series_id,
         "case_id": row.case_id,
         "modality": row.modality,
@@ -630,7 +636,34 @@ def review_meta(series_id: str) -> dict[str, Any]:
         "slice_thickness_mm": row.slice_thickness_mm,
         "has_mask": has_mask,
         "has_combined_mask": has_combined,
+        "license": {
+            "teacher_weights": "Apache-2.0（TotalSegmentator total 任务，任意用途）",
+            "nninteractive_weights": (
+                "CC BY-NC-SA 4.0（非商业 + ShareAlike）：仅交互式修正辅助；"
+                "修正产物不进商用蒸馏训练集"
+            ),
+            "reference": "LICENSES-THIRD-PARTY.md §2.2/§7/§8",
+        },
     }
+    # 该 series 有 nnInteractive 修正产物（sidecar 在 series 目录）时提示
+    if row.storage_key:
+        series_dir = "/".join(row.storage_key.split("/")[:2])
+        sidecar_key = f"{series_dir}/nninteractive-correction/correction_source.json"
+        if st.exists(sidecar_key):
+            try:
+                import json as _json
+
+                doc = _json.loads(bytes(st.load(sidecar_key)))
+                out["correction_source"] = doc.get(
+                    "source", "manual-correction-nninteractive"
+                )
+                out["correction_license_notice"] = (
+                    "本序列含 nnInteractive 修正产物（CC BY-NC-SA 4.0）："
+                    "不进商用蒸馏训练集"
+                )
+            except Exception:  # noqa: BLE001 — sidecar 损坏不挡 meta
+                pass
+    return out
 
 
 @app.get("/review/{series_id}/image.nii.gz")
@@ -900,3 +933,84 @@ def review_save(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
     finally:
         engine.dispose()
     return {"version": version, "source": "manual", "key": key}
+
+
+# ---------------------------------------------------------------------------
+# M4 阶段 3：nnInteractive 交互修正端点（与 CLI nninteractive-correct 同一后端）
+# ---------------------------------------------------------------------------
+
+@app.post("/review/{series_id}/nninteractive-correct")
+def review_nninteractive_correct(series_id: str, body: dict[str, Any]) -> JSONResponse:
+    """nnInteractive 交互修正（M4 阶段 3）：点/框提示 → 修正 mask → sidecar 落盘。
+
+    body: {point: {x,y,z}, negative_point?: {x,y,z}, target_label?, device?, job_id?}
+    （与 CLI 同一后端函数 correct_image；prompt 形式先只接 point，bbox 走 CLI。）
+    - GPU 忙（批量推理/训练持锁）→ 409 + 清晰错误，不排队不重试
+    - 修正产物落 series 目录 nninteractive-correction/ + sidecar JSON
+      （source=manual-correction-nninteractive，绝不建 MaskVersion 行——
+      source 列 String(16) 放不下，蒸馏门禁以 sidecar 为事实源）
+    - 同步跑推理的取舍：单次交互修正秒级~分钟级，M4 本阶段 API 只接线、
+      不做异步队列（队列后置；长推理不适合同步时由调用方用 CLI）
+    """
+    from .nninteractive_backend import (
+        GpuBusyError,
+        NnInteractiveError,
+        correct_image,
+    )
+
+    row = _series_row(series_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
+    if not row.storage_key:
+        raise HTTPException(status_code=422, detail="series 无像素（commit 未落盘）")
+    st = _get_storage()
+    image_path = st.root / row.storage_key
+    if not image_path.exists():
+        raise HTTPException(status_code=422, detail=f"原图文件缺失：{row.storage_key}")
+
+    point = body.get("point")
+    if not isinstance(point, dict):
+        raise HTTPException(status_code=422, detail="body.point 必须是 {x,y,z} 对象")
+    try:
+        prompts = [{
+            "type": "point",
+            "x": float(point["x"]),
+            "y": float(point["y"]),
+            "z": float(point["z"]),
+            "include": True,
+        }]
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="point 须含数值 x/y/z") from None
+    neg = body.get("negative_point")
+    if neg is not None:
+        if not isinstance(neg, dict):
+            raise HTTPException(status_code=422, detail="negative_point 须为 {x,y,z} 对象")
+        try:
+            prompts.append({
+                "type": "point",
+                "x": float(neg["x"]),
+                "y": float(neg["y"]),
+                "z": float(neg["z"]),
+                "include": False,
+            })
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="negative_point 须含数值 x/y/z") from None
+
+    series_dir = "/".join(row.storage_key.split("/")[:2])
+    out_dir = st.root / series_dir / "nninteractive-correction"
+    try:
+        result = correct_image(
+            image_path,
+            out_dir,
+            prompts,
+            device=str(body.get("device", "auto")),
+            target_label=int(body.get("target_label", 1)),
+            settings=settings,
+            job_id=str(body.get("job_id", "")),
+        )
+    except GpuBusyError as e:
+        # GPU 忙：409 + 清晰错误（不排队不重试）
+        raise HTTPException(status_code=409, detail=str(e)) from None
+    except NnInteractiveError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    return JSONResponse(result.to_dict())
