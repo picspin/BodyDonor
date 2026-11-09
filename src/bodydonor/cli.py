@@ -424,6 +424,126 @@ def segment(
 
 
 # ---------------------------------------------------------------------------
+# bodydonor nninteractive-correct（M4 阶段 3，交互修正后端入口）
+# ---------------------------------------------------------------------------
+
+@app.command("nninteractive-correct")
+def nninteractive_correct(
+    image: Path = typer.Argument(  # noqa: B008 — Typer 要求默认值为调用表达式
+        ..., exists=True, readable=True, help="原图 NIfTI 路径（不预处理，原样推理）"
+    ),
+    point: list[str] = typer.Option(  # noqa: B008 — Typer 要求默认值为调用表达式
+        [], "--point", help="正点提示 x,y,z（体素坐标，可多次）"
+    ),
+    negative_point: list[str] = typer.Option(  # noqa: B008
+        [], "--negative-point", help="负点提示 x,y,z（可多次）"
+    ),
+    bbox: list[str] = typer.Option(  # noqa: B008
+        [], "--bbox", help="2D bbox 提示 x0,x1,y0,y1,z0,z1（单切片维用 [d,d+1]）"
+    ),
+    target_label: int = typer.Option(1, "--target-label", help="目标标签值（体素统计用）"),
+    output_dir: Path = typer.Option(  # noqa: B008
+        None, "--output-dir", help="修正产物目录（缺省 = 原图旁 nninteractive-correction/）"
+    ),
+    device: str = typer.Option(
+        "auto", "--device", "-d", help="auto | cpu | cuda（auto = CUDA 可用则 cuda）"
+    ),
+    job_id: str = typer.Option("", "--job-id", help="任务 ID（锁文件/sidecar 审计用）"),
+    as_json: bool = typer.Option(False, "--json", help="JSON 输出（API 同构）"),
+) -> None:
+    """nnInteractive 交互修正：点/框提示 → 修正 mask + sidecar JSON 落盘。
+
+    - GPU 锁（interactive fast-fail）：批量推理/训练持卡时立即报错，不排队
+    - 修正产物 sidecar 带 source=manual-correction-nninteractive（CC BY-NC-SA
+      4.0 权重传染标记），**绝不进商用蒸馏训练集**（蒸馏门禁强制）
+    - 短会话模式：acquire → 推理 → 保存 → release（保存后立即释放）
+    """
+    from .nninteractive_backend import (
+        GpuBusyError,
+        NnInteractiveError,
+        correct_image,
+    )
+
+    def _parse_xyz(spec: str, flag: str) -> dict[str, float]:
+        parts = [p.strip() for p in spec.split(",")]
+        if len(parts) != 3:
+            raise typer.BadParameter(f"{flag} 须为 x,y,z 三个数值，收到 {spec!r}")
+        try:
+            x, y, z = (float(p) for p in parts)
+        except ValueError:
+            raise typer.BadParameter(f"{flag} 数值非法：{spec!r}") from None
+        return {"x": x, "y": y, "z": z}
+
+    prompts: list[dict] = []
+    for spec in point:
+        p = _parse_xyz(spec, "--point")
+        prompts.append({"type": "point", **p, "include": True})
+    for spec in negative_point:
+        p = _parse_xyz(spec, "--negative-point")
+        prompts.append({"type": "point", **p, "include": False})
+    for spec in bbox:
+        parts = [p.strip() for p in spec.split(",")]
+        if len(parts) != 6:
+            raise typer.BadParameter(
+                f"--bbox 须为 x0,x1,y0,y1,z0,z1 六个数值，收到 {spec!r}"
+            )
+        try:
+            vals = [float(p) for p in parts]
+        except ValueError:
+            raise typer.BadParameter(f"--bbox 数值非法：{spec!r}") from None
+        prompts.append({
+            "type": "bbox",
+            "bbox": [vals[0:2], vals[2:4], vals[4:6]],
+        })
+    if not prompts:
+        err_console.print("[red]✘ 至少一个 --point / --negative-point / --bbox 提示[/red]")
+        raise typer.Exit(1)
+
+    out_dir = output_dir or image.parent / "nninteractive-correction"
+    try:
+        result = correct_image(
+            image,
+            out_dir,
+            prompts,
+            device=device,
+            target_label=target_label,
+            job_id=job_id,
+        )
+    except GpuBusyError as e:
+        err_console.print(f"[red]✘ GPU 忙：{e}[/red]")
+        raise typer.Exit(2) from None
+    except NnInteractiveError as e:
+        err_console.print(f"[red]✘ 交互修正失败：{e}[/red]")
+        raise typer.Exit(1) from None
+
+    if as_json:
+        console.print_json(json.dumps(result.to_dict(), ensure_ascii=False))
+        return
+    table = Table(title=f"nnInteractive 修正 — {image.name}")
+    table.add_column("项", style="cyan")
+    table.add_column("值")
+    table.add_row("job", result.job_id)
+    table.add_row("mask", result.mask_path)
+    table.add_row("sidecar", result.sidecar_path)
+    table.add_row("source", "manual-correction-nninteractive（CC BY-NC-SA 4.0，不进蒸馏训练集）")
+    vram_s = (
+        f"{result.peak_vram_mb:.0f} MiB"
+        + (
+            f"（nvidia-smi 交叉核对 {result.peak_vram_nvidia_smi_mb:.0f}）"
+            if result.peak_vram_nvidia_smi_mb is not None
+            else "（nvidia-smi 不可用，无交叉核对值）"
+        )
+        if result.peak_vram_mb is not None
+        else "null（不可用，不猜数字）"
+    )
+    table.add_row("显存峰值（主值）", vram_s)
+    table.add_row("加载耗时", f"{result.load_seconds:.1f}s")
+    table.add_row("推理耗时", f"{result.inference_seconds:.1f}s")
+    table.add_row("目标体素数", str(result.n_target_voxels))
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
 # bodydonor tui（M2，Textual 监控面）
 # ---------------------------------------------------------------------------
 
