@@ -207,11 +207,15 @@ GPU 路径实测出入待 GPU 真机验证（顺延，§8.3）补记。
   初选 (128,128,64) 实测 HU -959 是肺/空气区，已修 commit 9d3a0c3）。
 - 流程：加载模型（nnInteractive_v1.0，CPU）→ 点提示（patch 中心 24,24,24）→
   出 mask → 保存。20 分钟上限，超时即停如实记录。
-- 实测结果（2026-11-09 18:02:21，exit 0，两次运行数字一致量级）：
-  - load 7.96 s / inference 48.85 s / wall 总计 67.7 s（第一次运行
-    8.37 / 45.25 / 65.3）
-  - n_target_voxels = 4055（target_label=1，两次运行相同）
-  - CPU 内存峰值 54 MiB（resource.ru_maxrss 实测）
+- 实测结果（exit 0，三次运行数字一致量级）：
+  - load 7.61–8.37 s / inference 41.72–48.85 s / wall 总计 60.3–67.7 s
+    （第 1 次 8.37 / 45.25 / 65.3；第 2 次 7.96 / 48.85 / 67.7；
+    第 3 次 7.61 / 41.72 / 60.3，2026-11-09 18:22:58）
+  - n_target_voxels = 4055（target_label=1，三次运行相同）
+  - CPU 内存峰值 **7129 MiB**（第 3 次实测，`resource.getrusage(RUSAGE_CHILDREN).ru_maxrss`，
+    即加载 torch + 400MB 模型的 runner 子进程峰值；第 1/2 次报告的 54 MiB 是错的——
+    当时取的是 `RUSAGE_SELF`（父进程，未加载 torch/模型），已在母代理复核时发现并修正，
+    修正脚本 scripts/cpu_smoke_verify.sh，见 §13 补记）
   - 产物：`/tmp/nni-cpu-verify/amos_0004/correction_mask.nii.gz`（1.9K）+
     `correction_source.json`（1.5K）
   - source = nninteractive_guided；license = CC BY-NC-SA 4.0
@@ -274,9 +278,9 @@ z=66 在 78 层范围内。）
 7. **release_on_idle(600) 语义**：兜底而非主路径——闲置时长从锁文件
    acquired_at 起算，不是"最后一次操作"；本后端选择短会话模式（每次修正
    acquire→跑→存→release），不做长会话 + 刷新 acquired_at。
-8. **scripts 未提交**：scripts/install_torch251.sh、scripts/download_nni_model.sh、
-   scripts/cpu_smoke_verify.sh 是本轮运维脚本（torch 装回 + 权重下载 + CPU
-   验证），按需提交或删除（一次性操作，产物已落盘）。
+8. **scripts 已提交**（母代理复核时补交）：scripts/install_torch251.sh、
+   scripts/download_nni_model.sh、scripts/cpu_smoke_verify.sh 是本轮运维脚本
+   （torch 装回 + 权重下载 + CPU 验证），随 RSS 修正一并提交，复现路径有据可查。
 9. **_resolve_model_folder 触发网络**：get_default_model_id 拉 remote manifest
    （无本地缓存时）；已下好模型走 is_model_downloaded 短路（离线可用），
    但 root 解析路径首次触发 HF 请求——离线环境下依赖 models.json 本地缓存
@@ -290,7 +294,7 @@ z=66 在 78 层范围内。）
 | runner JSON 契约干跑 | ✅ nni venv python 执行 nni_runner.py，stdin→stdout 纯 JSON，坏输入 exit 2 |
 | 模型下载 | ✅ nnInteractive_v1.0 / 393 MB / 713.6s / `~/data/BodyDonor/nninteractive-models/models/nnInteractive_v1.0/` / LICENSE=CC BY-NC-SA 4.0 |
 | torch 装回 2.5.1 | ✅ pip exit 0（17:53:19）；`import torch: 2.5.1+cu124 cuda_built True`（17:53:27）；`import nnInteractive ok`；`from nnInteractive.model_management import list_models` ok——三连校验全过 |
-| CPU patch 推理 | ✅ load 7.96s / inference 48.85s / wall 67.7s / n_target_voxels=4055 / cpu_peak_rss 54 MiB（两次运行一致量级；exit 0） |
+| CPU patch 推理 | ✅ load 7.61–8.37s / inference 41.72–48.85s / wall 60.3–67.7s / n_target_voxels=4055 / cpu_peak_rss **7129 MiB**（runner 子进程峰值，RUSAGE_CHILDREN；三次运行 exit 0） |
 | CPU 修正产物 | ✅ `/tmp/nni-cpu-verify/amos_0004/correction_mask.nii.gz` + sidecar；source=nninteractive_guided；license=CC BY-NC-SA 4.0；provenance={sessionId(uuid4 每次新), baselineTeacherVersion=null+原因, prompts 全量, acceptedClasses=[1]}；model_id=nnInteractive_v1.0 |
 | GPU 真机验证 | 顺延（§8.3） |
 
@@ -327,13 +331,15 @@ z=66 在 78 层范围内。）
 | torch 实际版本 | 2.5.1+cu124 | 首装后 2.15.0+cu132（resolver 取最新）→ 装回 2.5.1（PyPI fallback） |
 | torch 装回路径 | — | cu124 index 依赖 pypi.nvidia.com 仍 DNS 失败 → 普通 PyPI（同 +cu124 build） |
 | 来源命名 | manual-correction-nninteractive | **nninteractive_guided**（规范名 v2）+ 两个 legacy 别名保留拒绝 |
+| CPU 内存峰值 | 54 MiB（`RUSAGE_SELF` 父进程，未加载 torch/模型——错） | **7129 MiB**（`RUSAGE_CHILDREN` runner 子进程峰值，第 3 次 CPU 验证 2026-11-09 18:22:58 实测；修正脚本 cpu_smoke_verify.sh） |
 | provenance | 无 | sidecar 必含 {sessionId, baselineTeacherVersion, prompts, acceptedClasses} |
 | 安装耗时表述 | "torch wheel 908.2 MB 下载约 25 分钟"（未完成表述） | 以日志时间戳为准：install start 14:48:34、torch wheel 下载 0:26:18（779.0 kB/s）、error 后 15:24:22 "torch done" 回显（不可信）、nnInteractive 全栈 16:45:57 |
 
 ## 14. 自查（headless 下 /code-review 斜杠命令不可用，逐项自查）
 
 - 无 mock 数字：本报告所有数字来自实测命令输出（nvidia-smi、du、stat、pip list、
-  pytest、lock_status、日志时间戳、resource.ru_maxrss）；CPU 推理数字为
+  pytest、lock_status、日志时间戳、resource.getrusage(RUSAGE_CHILDREN)（runner 子进程峰值；
+  注意：第 1/2 次 CPU 验证的 54 MiB 取的是 RUSAGE_SELF（父进程），已修正为 7129 MiB，见 §8.2）；CPU 推理数字为
   logs/m4s3-cpu-verify.log 实测（exit 0，两次运行），不预填。
 - 无 GPU 违规调用：训练占卡期间未加载模型到 CUDA（`_detect_device` 只查
   `torch.cuda.is_available()`；live 锁验证只读锁文件；模型下载纯网络 + CPU；
