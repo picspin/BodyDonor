@@ -21,6 +21,7 @@ from bodydonor.distill_data import (
     check_teacher_task_commercial,
     mask_allowed_in_distill_training_strict,
     read_teacher_provenance,
+    write_teacher_source_json,
 )
 
 # ---------------------------------------------------------------------------
@@ -409,3 +410,32 @@ def test_prepare_dataset_manifest_records_n_classes_found(tmp_path, monkeypatch)
     assert by_id["amos_9102"]["n_classes_found"] == 15
     # dropped = 117 全量类里不在 keep 的（pad 占位文件 102 个，逐 case 实测）
     assert by_id["amos_9101"]["dropped_classes"] == [f"ts_extra_{i:03d}" for i in range(102)]
+
+# ---------------------------------------------------------------------------
+# 推理成功后写 source.json（write_teacher_source_json，位置与读回约定一致）
+# ---------------------------------------------------------------------------
+
+def test_write_teacher_source_json_roundtrip(tmp_path):
+    """写出的 source.json 内容正确，read_teacher_provenance 能读回（实测来源）。"""
+    case_dir = tmp_path / "amos_9301"
+    ts_out = case_dir / "ts_out"
+    ts_out.mkdir(parents=True)
+
+    write_teacher_source_json(ts_out, "amos_9301")
+
+    written = case_dir / "source.json"
+    assert written.exists()  # 写在 teacher_out.parent，与 read_teacher_provenance 一致
+    import json
+
+    doc = json.loads(written.read_text(encoding="utf-8"))
+    assert doc == {
+        "source": "total",
+        "task": "total",
+        "created_by": "run_distill_teacher_inference.py",
+        "case_id": "amos_9301",
+    }
+    prov = read_teacher_provenance(ts_out)
+    assert prov["provenance_file"] is True
+    assert prov["source"] == "total"
+    assert prov["task"] == "total"
+    assert prov["case_id"] == "amos_9301"

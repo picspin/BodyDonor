@@ -227,6 +227,26 @@ def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
     return doc
 
 
+def write_teacher_source_json(teacher_out: Path, case_id: str) -> None:
+    """写 ts_out 目录的来源清单（source.json，位置与 read_teacher_provenance 一致）。
+
+    推理脚本在 run_total 成功后调用：新跑出的 ts_out 不再靠"缺文件默认 total"，
+    来源清单是实测写下的。失败 case 不写（目录里无 source.json = 该 case 未
+    成功产出，预检按默认 total 读回是历史路径的如实语义）。
+
+    内容与 read_teacher_provenance 的实测读回约定对齐：
+    {"source": "total", "task": "total", "created_by": ..., "case_id": ...}
+    """
+    doc = {
+        "source": "total",
+        "task": "total",
+        "created_by": "run_distill_teacher_inference.py",
+        "case_id": case_id,
+    }
+    path = teacher_out.parent / "source.json"
+    path.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
 def build_train_pool(
     holdout_path: Path | None = None,
 ) -> list[DistillCase]:
@@ -539,4 +559,5 @@ __all__ = [
     "nnunet_label_values",
     "prepare_dataset",
     "read_teacher_provenance",
+    "write_teacher_source_json",
 ]

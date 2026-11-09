@@ -28,7 +28,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from bodydonor.config import load_settings  # noqa: E402
-from bodydonor.distill_data import build_train_pool  # noqa: E402
+from bodydonor.distill_data import (  # noqa: E402
+    build_train_pool,
+    write_teacher_source_json,
+)
 
 
 def main() -> int:
@@ -74,6 +77,9 @@ def main() -> int:
                 settings=settings, job_id=job_id,
             )
             elapsed = time.monotonic() - t_case
+            # 成功后写来源清单（位置与 read_teacher_provenance 一致：
+            # teacher_out.parent / source.json）；失败 case 不写
+            write_teacher_source_json(c.teacher_out, c.case_id)
             results.append({
                 "case_id": c.case_id,
                 "source": c.source,
