@@ -654,9 +654,7 @@ def review_meta(series_id: str) -> dict[str, Any]:
                 import json as _json
 
                 doc = _json.loads(bytes(st.load(sidecar_key)))
-                out["correction_source"] = doc.get(
-                    "source", "manual-correction-nninteractive"
-                )
+                out["correction_source"] = doc.get("source", "nninteractive_guided")
                 out["correction_license_notice"] = (
                     "本序列含 nnInteractive 修正产物（CC BY-NC-SA 4.0）："
                     "不进商用蒸馏训练集"
@@ -947,8 +945,9 @@ def review_nninteractive_correct(series_id: str, body: dict[str, Any]) -> JSONRe
     （与 CLI 同一后端函数 correct_image；prompt 形式先只接 point，bbox 走 CLI。）
     - GPU 忙（批量推理/训练持锁）→ 409 + 清晰错误，不排队不重试
     - 修正产物落 series 目录 nninteractive-correction/ + sidecar JSON
-      （source=manual-correction-nninteractive，绝不建 MaskVersion 行——
-      source 列 String(16) 放不下，蒸馏门禁以 sidecar 为事实源）
+      （source=nninteractive_guided 规范名 v2，绝不建 MaskVersion 行——
+      source 列 String(16) 放不下 20 字符，蒸馏门禁以 sidecar 为事实源；
+      provenance={sessionId, baselineTeacherVersion, prompts, acceptedClasses}）
     - 同步跑推理的取舍：单次交互修正秒级~分钟级，M4 本阶段 API 只接线、
       不做异步队列（队列后置；长推理不适合同步时由调用方用 CLI）
     """

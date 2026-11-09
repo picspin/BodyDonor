@@ -16,12 +16,20 @@
   口径）；nvidia-smi 全局轮询是交叉核对值（两口径都记录，任一不可用填 None
   不猜数字）。CPU 模式 peak_vram_mb=null（不猜数字）。
 - **许可约束（LICENSES-THIRD-PARTY.md §2.2 / §8.3）**：修正产物 sidecar JSON
-  必须带 source="manual-correction-nninteractive" + license="CC BY-NC-SA 4.0"
+  必须带 source="nninteractive_guided" + license="CC BY-NC-SA 4.0"
   （权重传染标记）；蒸馏训练集门禁（distill_data.REJECTED_SOURCES / ontology.
   mask_allowed_in_distill_training）拒绝该来源。MaskVersion.source 列是
-  String(16)，29 字符的来源标签塞不进去——修正产物**不建 MaskVersion 行**，
-  来源事实以 sidecar JSON 为准（distill_data.read_teacher_provenance 同一
-  约定：旁挂 source.json 是来源事实源）。
+  String(16)，20 字符的 nninteractive_guided 塞不进去——修正产物**不建
+  MaskVersion 行**，来源事实以 sidecar JSON 为准（distill_data.
+  read_teacher_provenance 同一约定：旁挂 source.json 是来源事实源）。
+  历史字符串 manual-correction-nninteractive（29 字符，阶段 2a sidecar 用过）
+  与 nninteractive 是 legacy 别名：永不再由新代码写出，但门禁拒绝清单保留
+  （删拒绝是安全倒退）。
+- **provenance（可追溯，用户 2026-11-09 三态决定）**：每个修正产物的 sidecar
+  JSON 必须含 provenance={sessionId, baselineTeacherVersion, prompts[],
+  acceptedClasses[]}——sessionId 每次修正运行新生成 uuid；baselineTeacherVersion
+  是该 series 基线 teacher mask 的 MaskVersion 版本号（查不到写 null + 注明
+  原因）；prompts 全量提示序列（可重放）；acceptedClasses=[target_label]。
 - **affine 守卫**：修正 mask 与原图 affine 一致性走 nifti_geom.assert_affine_match
   （runner 内一次 + 落盘读回一次，与 review_save 同语义）。
 
@@ -50,8 +58,14 @@ NNI_RUNNER_TIMEOUT_SECONDS = 1800  # 单次交互修正上限 30 分钟（短会
 # 模型权重落盘目录（与项目数据目录一致；默认 ~/.nninteractive 不用）
 NNINTERACTIVE_MODEL_DIR = Path.home() / "data" / "BodyDonor" / "nninteractive-models"
 # 修正产物来源标签（sidecar JSON 的 source 字段；不进 MaskVersion.source 列
-# ——String(16) 放不下 29 字符，蒸馏门禁以 sidecar 为事实源）
-CORRECTION_SOURCE = "manual-correction-nninteractive"
+# ——String(16) 放不下 20 字符的 nninteractive_guided，蒸馏门禁以 sidecar 为
+# 事实源）。规范名 nninteractive_guided（用户 2026-11-09 三态：teacher /
+# nninteractive_guided / human）；manual-correction-nninteractive 与
+# nninteractive 是 legacy 别名（阶段 2a sidecar 用过旧名），永不再写出，
+# 但蒸馏门禁保留拒绝（删拒绝是安全倒退）。
+CORRECTION_SOURCE = "nninteractive_guided"
+# legacy 别名（仅门禁拒绝清单引用，新代码绝不写出）
+CORRECTION_SOURCE_LEGACY_ALIASES = ("manual-correction-nninteractive", "nninteractive")
 CORRECTION_LICENSE = "CC BY-NC-SA 4.0"
 
 
@@ -182,7 +196,15 @@ def correct_image(
 
     lock_path = settings.resolved_data_dir / ".gpu.lock"
     job_id = job_id or f"nni-{uuid.uuid4().hex[:8]}"
+    # provenance sessionId：每次修正运行新生成 uuid（与 job_id 不同——job_id
+    # 可由调用方指定复用，sessionId 每次运行唯一、可重放审计）
+    session_id = str(uuid.uuid4())
     model_dir = model_dir or NNINTERACTIVE_MODEL_DIR
+    # provenance baselineTeacherVersion：该 series 基线 teacher mask 的
+    # MaskVersion 版本号（查不到写 None 并注明原因，不猜数字）
+    baseline_teacher_version, baseline_reason = _lookup_baseline_teacher_version(
+        image_path, settings
+    )
 
     # GPU 锁：只对 CUDA 推理生效（CPU 推理不占显存，不与 GPU 批量任务互斥——
     # 训练占卡期间 CPU 冒烟/小 patch 验证正是靠这条路径跑的）。交互模式
@@ -219,6 +241,9 @@ def correct_image(
             image_path, output_dir, prompts, device=device, target_label=target_label,
             job_id=job_id, model_dir=model_dir, lock=lock,
             idle_seconds=DEFAULT_IDLE_SECONDS if lock is not None else 0,
+            session_id=session_id,
+            baseline_teacher_version=baseline_teacher_version,
+            baseline_teacher_reason=baseline_reason,
         )
     finally:
         # 短会话模式：无论成功失败，退出即放锁（release 幂等；CPU 模式无锁）
@@ -237,6 +262,9 @@ def _run_locked(
     model_dir: Path,
     lock: Any,
     idle_seconds: int,
+    session_id: str,
+    baseline_teacher_version: int | None,
+    baseline_teacher_reason: str,
 ) -> CorrectionResult:
     """持锁执行：组装 runner 命令 → 子进程推理 → nvidia-smi 交叉核对 → 落盘 sidecar。
 
@@ -321,6 +349,20 @@ def _run_locked(
             peak_smi = None
 
     # sidecar JSON：来源事实源（distill_data provenance 同一约定：旁挂 json）
+    # provenance（用户 2026-11-09 三态决定）：sessionId 每次运行新生成 uuid；
+    # baselineTeacherVersion 查不到时写 null 并注明原因（不猜数字）；
+    # prompts 全量提示序列（可重放）；acceptedClasses=[target_label]
+    provenance: dict[str, Any] = {
+        "sessionId": session_id,
+        "baselineTeacherVersion": baseline_teacher_version,
+        "prompts": list(prompts),
+        "acceptedClasses": [target_label],
+    }
+    if baseline_teacher_version is None:
+        provenance["baselineTeacherVersionReason"] = (
+            baseline_teacher_reason
+            or "无 MaskVersion 记录且无 fallback mask.nii.gz（查不到基线版本，不猜数字）"
+        )
     sidecar_path = output_dir / "correction_source.json"
     sidecar = {
         "source": CORRECTION_SOURCE,
@@ -329,6 +371,7 @@ def _run_locked(
         "model_id": _model_id(model_dir),
         "model_dir": str(model_dir),
         "job_id": job_id,
+        "provenance": provenance,
         "image_path": str(image_path),
         "mask_path": str(mask_path),
         "target_label": target_label,
@@ -368,6 +411,58 @@ def _run_locked(
         n_target_voxels=int(result.get("n_target_voxels") or 0),
         prompts=prompts,
     )
+
+
+def _lookup_baseline_teacher_version(
+    image_path: Path, settings: Settings | None = None
+) -> tuple[int | None, str]:
+    """查该 series 基线 teacher mask 的 MaskVersion 版本号（provenance 用）。
+
+    series_id 从原图路径推出（storage_key 形如 <case>/<series>/image.nii.gz，
+    series_id 截断到 60 字符与 MaskVersion.series_id 列一致——app.py 同约定）。
+    返回 (版本号 | None, 原因说明)。查不到（无 DB / 无行 / DB 异常）返回
+    (None, 原因)，**不猜数字**；DB 只读（SELECT），不写不锁。
+    """
+    from .db import _engine
+    from .models import MaskVersion
+
+    try:
+        parts = Path(image_path).resolve().parts
+        # <root>/<case_id>/<series_id>/image.nii.gz → series_id 倒数第二段
+        series_id = parts[-2]
+    except (IndexError, ValueError):
+        return None, f"series_id 无法从路径推出：{image_path}"
+    if not series_id:
+        return None, f"series_id 无法从路径推出：{image_path}"
+    try:
+        settings = settings or _default_settings()
+        engine = _engine(settings.database.url)
+    except Exception as e:  # noqa: BLE001 — DB 不可达不挡修正，版本号填 null
+        return None, f"DB 不可达（{type(e).__name__}: {e}），基线版本查不到"
+    try:
+        from sqlalchemy import select
+        from sqlalchemy.orm import Session
+
+        with engine.connect() as conn:
+            s = Session(conn)
+            mv = (
+                s.execute(
+                    select(MaskVersion)
+                    .where(MaskVersion.series_id == series_id[:60])
+                    .order_by(MaskVersion.version.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            s.close()
+    except Exception as e:  # noqa: BLE001 — 查询失败不挡修正
+        return None, f"MaskVersion 查询失败（{type(e).__name__}: {e}）"
+    finally:
+        engine.dispose()
+    if mv is None:
+        return None, f"series {series_id[:60]} 无 MaskVersion 记录（基线版本查不到）"
+    return int(mv.version), ""
 
 
 def _lock_holder_desc(lock_path: Path) -> str:
@@ -432,6 +527,7 @@ def _default_settings() -> Settings:
 __all__ = [
     "CORRECTION_LICENSE",
     "CORRECTION_SOURCE",
+    "CORRECTION_SOURCE_LEGACY_ALIASES",
     "CorrectionResult",
     "DEFAULT_NNI_VENV",
     "GpuBusyError",

@@ -243,25 +243,31 @@ class TestDistillIsolation:
         )
         assert ok is True
 
-    def test_nninteractive_correction_blocked_from_training(self) -> None:
+    def test_nninteractive_guided_blocked_from_training(self) -> None:
         """(M4 阶段 3 强制点) nnInteractive 修正产物绝不进蒸馏训练集。
 
         权重 CC BY-NC-SA 4.0 ShareAlike 传染（LICENSES-THIRD-PARTY.md
-        §2.2/§8.1）；ontology 版门禁拒绝 manual-correction-nninteractive。
+        §2.2/§8.1）；ontology 版门禁拒绝规范名 nninteractive_guided
+        （命名 v1→v2 用户 2026-11-09 决定）。
         """
         ok, reason = mask_allowed_in_distill_training(
-            {"experimental": False, "source": "manual-correction-nninteractive"}
+            {"experimental": False, "source": "nninteractive_guided"}
         )
         assert ok is False
         assert "nnInteractive" in reason
 
-    def test_nninteractive_source_blocked_from_training(self) -> None:
-        """(M4 阶段 3 强制点) source=nninteractive 同样拒绝。"""
-        ok, reason = mask_allowed_in_distill_training(
-            {"experimental": False, "source": "nninteractive"}
-        )
-        assert ok is False
-        assert "CC BY-NC-SA" in reason
+    def test_nninteractive_legacy_names_blocked_from_training(self) -> None:
+        """(M4 阶段 3 强制点) 两个 legacy 别名仍拒绝（安全倒退防线）。
+
+        manual-correction-nninteractive（v1，阶段 2a sidecar 用过）与
+        nninteractive 永不再由新代码写出，但门禁拒绝保留。
+        """
+        for legacy in ("manual-correction-nninteractive", "nninteractive"):
+            ok, reason = mask_allowed_in_distill_training(
+                {"experimental": False, "source": legacy}
+            )
+            assert ok is False, legacy
+            assert "nnInteractive" in reason, legacy
 
 
 class TestEntrySerialization:

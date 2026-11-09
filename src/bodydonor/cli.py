@@ -454,7 +454,7 @@ def nninteractive_correct(
     """nnInteractive 交互修正：点/框提示 → 修正 mask + sidecar JSON 落盘。
 
     - GPU 锁（interactive fast-fail）：批量推理/训练持卡时立即报错，不排队
-    - 修正产物 sidecar 带 source=manual-correction-nninteractive（CC BY-NC-SA
+    - 修正产物 sidecar 带 source=nninteractive_guided（规范名 v2，CC BY-NC-SA
       4.0 权重传染标记），**绝不进商用蒸馏训练集**（蒸馏门禁强制）
     - 短会话模式：acquire → 推理 → 保存 → release（保存后立即释放）
     """
@@ -525,7 +525,7 @@ def nninteractive_correct(
     table.add_row("job", result.job_id)
     table.add_row("mask", result.mask_path)
     table.add_row("sidecar", result.sidecar_path)
-    table.add_row("source", "manual-correction-nninteractive（CC BY-NC-SA 4.0，不进蒸馏训练集）")
+    table.add_row("source", "nninteractive_guided（CC BY-NC-SA 4.0，不进蒸馏训练集）")
     vram_s = (
         f"{result.peak_vram_mb:.0f} MiB"
         + (

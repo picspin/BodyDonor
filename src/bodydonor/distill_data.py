@@ -55,10 +55,21 @@ ALLOWED_TRAIN_SOURCES = frozenset({"total", "manual-correction"})
 
 # 拒绝清单（逐项对应 §8.1 表）：不在 ALLOWED_TRAIN_SOURCES 即拒绝，
 # 显式列出以给出精确错误信息（来源字段打错也不得静默进训练集）
+# 命名 v1→v2（用户 2026-11-09 三态决定）：规范名 nninteractive_guided；
+# manual-correction-nninteractive（v1，阶段 2a sidecar 用过）与 nninteractive
+# 是 legacy 别名——永不再由新代码写出，但拒绝保留（删拒绝是安全倒退）。
 REJECTED_SOURCES: dict[str, str] = {
+    "nninteractive_guided": (
+        "nnInteractive 修正产物（规范名，v2）：权重 CC BY-NC-SA 4.0 ShareAlike "
+        "传染，不进商用蒸馏训练集（LICENSES §8.1/§2.2）"
+    ),
     "manual-correction-nninteractive": (
-        "nnInteractive 修正产物：权重 CC BY-NC-SA 4.0 ShareAlike 传染，"
-        "不进商用蒸馏训练集（LICENSES §8.1/§2.2）"
+        "nnInteractive 修正产物（legacy 别名 v1，永不再写出）：权重 "
+        "CC BY-NC-SA 4.0 ShareAlike 传染，不进商用蒸馏训练集（LICENSES §8.1/§2.2）"
+    ),
+    "nninteractive": (
+        "nnInteractive 修正产物（legacy 别名，永不再写出）：权重 CC BY-NC-SA 4.0 "
+        "ShareAlike 传染，不进商用蒸馏训练集（LICENSES §8.1/§2.2）"
     ),
     "segvol": (
         "SegVol 逃生通道产物：BAAI/SegVol 权重许可待核实，"
@@ -111,7 +122,8 @@ def mask_allowed_in_distill_training_strict(
     """扩展 ontology.mask_allowed_in_distill_training：M4 商用蒸馏的严格版。
 
     ontology 版只挡 experimental + teacher 任务；本版还挡：
-    - nnInteractive 修正产物（source=manual-correction-nninteractive）
+    - nnInteractive 修正产物（source=nninteractive_guided 规范名 v2 +
+      legacy 别名 manual-correction-nninteractive / nninteractive）
     - SegVol 逃生通道产物（source=segvol / segvol-escape）
     - 未知来源（不在 ALLOWED_TRAIN_SOURCES 也不在 REJECTED_SOURCES）
     """

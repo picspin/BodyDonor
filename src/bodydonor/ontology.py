@@ -595,15 +595,22 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
     返回 (allowed, reason)。worker/训练路径在入集前必须调用此函数
     （与任务白名单 check_task 同级的硬约束）。
 
-    nnInteractive 来源（M4 阶段 3 补缺口）：权重 CC BY-NC-SA 4.0 ShareAlike
-    传染（LICENSES-THIRD-PARTY.md §2.2/§8.1），修正产物
-    source=manual-correction-nninteractive 与 source=nninteractive 一律拒绝
-    （与 distill_data.check_distill_source / REJECTED_SOURCES 同语义）。
+    nnInteractive 来源（M4 阶段 3 补缺口；命名 v1→v2 用户 2026-11-09 决定）：
+    权重 CC BY-NC-SA 4.0 ShareAlike 传染（LICENSES-THIRD-PARTY.md §2.2/§8.1），
+    修正产物 source=nninteractive_guided（规范名，v2；nnInteractive 产物绝不用
+    source=human）与 legacy 别名 manual-correction-nninteractive（v1，阶段 2a
+    sidecar 用过）、nninteractive 一律拒绝（与 distill_data.check_distill_source /
+    REJECTED_SOURCES 同语义）。legacy 别名永不再由新代码写出，但拒绝清单保留
+    （删拒绝是安全倒退）。
     """
     if mask_meta.get("experimental"):
         return False, "experimental 标记的 mask 不进蒸馏训练集（逃生通道产物隔离）"
     source = mask_meta.get("source", "")
-    if source in ("manual-correction-nninteractive", "nninteractive"):
+    if source in (
+        "nninteractive_guided",
+        "manual-correction-nninteractive",
+        "nninteractive",
+    ):
         return False, (
             f"nnInteractive 来源（source={source}）不进蒸馏训练集：权重 "
             "CC BY-NC-SA 4.0 ShareAlike 传染，不进商用蒸馏训练集"
