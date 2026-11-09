@@ -57,6 +57,38 @@ RESULT_FIELDS = (
     "error",
 )
 
+# affine 一致性守卫容差（与 nifti_geom.AFFINE_MATCH_TOLERANCE 同值——runner 由
+# nni venv 执行，不能 import bodydonor 包，逻辑内联；主 .venv 的
+# nifti_geom.assert_affine_match 语义与此一致：4x4 元素级 |diff| <= 1e-4，
+# 超差硬报错禁止静默重采样）
+AFFINE_MATCH_TOLERANCE = 1e-4
+
+
+def _assert_affine_match(img_affine: Any, mask_affine: Any, label: str = "") -> None:
+    """mask 与原图 affine 一致性守卫（内联版，语义同 nifti_geom.assert_affine_match）。
+
+    本 runner 由 `.venv-nninteractive/bin/python` 执行（该 venv 无 bodydonor
+    包——Q7 隔离），不能 `from bodydonor.nifti_geom import assert_affine_match`，
+    故按同一语义内联：4x4 affine 元素级 |diff| <= 1e-4，超差 raise 禁止静默重采样。
+    主 .venv 侧的落盘读回复核走 nifti_geom.assert_affine_match（两道守卫语义不变）。
+    """
+    import numpy as np
+
+    img_aff = np.asarray(img_affine, dtype=float)
+    mask_aff = np.asarray(mask_affine, dtype=float)
+    if img_aff.shape != (4, 4) or mask_aff.shape != (4, 4):
+        raise ValueError(
+            f"affine 形状异常：img {img_aff.shape} / mask {mask_aff.shape}"
+            + (f"（{label}）" if label else "")
+        )
+    max_diff = float(np.abs(img_aff - mask_aff).max())
+    if max_diff > AFFINE_MATCH_TOLERANCE:
+        raise ValueError(
+            f"mask 与原图 affine 不一致（max |diff| = {max_diff:.2e} > "
+            f"{AFFINE_MATCH_TOLERANCE:.0e}），禁止静默重采样"
+            + (f"（{label}）" if label else "")
+        )
+
 
 def _log(msg: str) -> None:
     """日志只走 stderr（stdout 是纯 JSON 契约通道）。"""
@@ -133,6 +165,42 @@ def _validate_prompts(prompts: Any) -> tuple[list[dict[str, Any]], str]:
     return out, ""
 
 
+def _resolve_model_folder(model_dir: Any) -> tuple[str, str]:
+    """解析模型文件夹（nnInteractive.model_management，nni venv 内调用）。
+
+    model_dir 两种语义：
+    - model root（含 models.json manifest，如 NNINTERACTIVE_MODEL_DIR）：解析
+      default model id → `<root>/models/<id>/`（ensure_model_available 落盘布局）
+    - 模型文件夹本身（含 fold_0/checkpoint_final.pth）：原样使用
+    返回 (模型文件夹路径, model_id)。
+    """
+    from nnInteractive.model_management import (
+        get_default_model_id,
+        get_local_model_dir,
+    )
+
+    root = Path(str(model_dir))
+    if (root / "models.json").exists():
+        mid = get_default_model_id(root)
+        return str(get_local_model_dir(mid, root)), mid
+    return str(root), root.name
+
+
+@contextlib.contextmanager
+def _stdout_to_stderr() -> Any:
+    """把 stdout 重定向到 stderr（nnInteractive 库会往 stdout 打日志，如
+    "session initialized"，污染 stdout 纯 JSON 契约通道——实测 2026-11-09）。
+
+    结果 JSON 在重定向恢复后写（run_task 返回值），库内日志全部走 stderr。
+    """
+    real_stdout = sys.stdout
+    sys.stdout = sys.stderr
+    try:
+        yield
+    finally:
+        sys.stdout = real_stdout
+
+
 def run_task(task_json: dict[str, Any]) -> dict[str, Any]:
     """执行单个 nnInteractive 修正任务，返回结果 JSON（dict）。"""
     job_id = str(task_json.get("job_id", ""))
@@ -152,11 +220,10 @@ def run_task(task_json: dict[str, Any]) -> dict[str, Any]:
     import torch
     from nnInteractive.inference.inference_session import nnInteractiveInferenceSession
 
-    from bodydonor.nifti_geom import assert_affine_match
-
     model_dir = task_json.get("model_dir")
+    model_folder, model_id = _resolve_model_folder(model_dir)
     _log(f"[nni_runner] job={job_id} device={device} input={image_nii.name} "
-         f"prompts={len(prompts)} model_dir={model_dir}")
+         f"prompts={len(prompts)} model_folder={model_folder} model_id={model_id}")
 
     # ---- 加载原图（不预处理）----
     t_load0 = time.monotonic()
@@ -176,7 +243,7 @@ def run_task(task_json: dict[str, Any]) -> dict[str, Any]:
             use_torch_compile=False,  # 短会话不编译（每次修正 acquire→跑→存→放）
             do_autozoom=True,
         )
-        session.initialize_from_trained_model_folder(str(model_dir))
+        session.initialize_from_trained_model_folder(model_folder)
         license_id = str(getattr(session, "license", "") or "")
     except Exception as e:  # noqa: BLE001
         _log(traceback.format_exc())
@@ -242,7 +309,8 @@ def run_task(task_json: dict[str, Any]) -> dict[str, Any]:
             with contextlib.suppress(Exception):
                 mask_arr = buf.numpy().astype(np.uint8)
         mask_img = nib.Nifti1Image(mask_arr, img_nib.affine)
-        assert_affine_match(img_nib, mask_img, label=f"nni_runner {job_id}")
+        # affine 守卫（内联版；语义同主 .venv nifti_geom.assert_affine_match）
+        _assert_affine_match(img_nib.affine, mask_img.affine, label=f"nni_runner {job_id}")
         output_dir.mkdir(parents=True, exist_ok=True)
         mask_path = output_dir / "correction_mask.nii.gz"
         nib.save(mask_img, str(mask_path))
@@ -275,11 +343,17 @@ def run_task(task_json: dict[str, Any]) -> dict[str, Any]:
         "error": vram_note or peak_reason,  # ok 但峰值不可用时写 reason
         "license": license_id,
         "n_target_voxels": n_target_voxels,
+        "model_id": model_id,  # _resolve_model_folder 实测（manifest 或目录名）
     }
 
 
 def main() -> int:
-    """stdin 读任务 JSON（单行或整段），stdout 写结果 JSON（纯 JSON）。"""
+    """stdin 读任务 JSON（单行或整段），stdout 写结果 JSON（纯 JSON）。
+
+    nnInteractive 库的 stdout 日志（"session initialized" 等）经
+    _stdout_to_stderr 重定向走 stderr（实测污染通道，2026-11-09）；
+    结果 JSON 在恢复后的 stdout 写。
+    """
     try:
         raw = sys.stdin.read()
         task_json = json.loads(raw)
@@ -288,7 +362,8 @@ def main() -> int:
         json.dump(result, sys.stdout, ensure_ascii=False)
         sys.stdout.write("\n")
         return 2
-    result = run_task(task_json)
+    with _stdout_to_stderr():
+        result = run_task(task_json)
     json.dump(result, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0 if result["status"] == "ok" else (result.get("exit_code") or 1)

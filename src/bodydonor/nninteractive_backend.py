@@ -368,7 +368,9 @@ def _run_locked(
         "source": CORRECTION_SOURCE,
         "license": CORRECTION_LICENSE,
         "license_from_session": result.get("license", ""),
-        "model_id": _model_id(model_dir),
+        # 真实 model_id 优先（runner _resolve_model_folder 实测：manifest 或
+        # 目录名）；runner 未返回时退回目录名推导（_model_id，不猜）
+        "model_id": result.get("model_id") or _model_id(model_dir),
         "model_dir": str(model_dir),
         "job_id": job_id,
         "provenance": provenance,
