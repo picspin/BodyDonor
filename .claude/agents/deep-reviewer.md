@@ -4,7 +4,11 @@ description: 对 BodyDonor 项目每一轮修改做深度审查，只读，不�
 tools: Read, Grep, Glob
 hooks:
   PreToolUse:
-    - matcher: ["Write", "Edit"]
+    - matcher: "Write"
+      hooks:
+        - type: command
+          command: "echo 'deep-reviewer is read-only. Use findings output instead.' >&2; exit 2"
+    - matcher: "Edit"
       hooks:
         - type: command
           command: "echo 'deep-reviewer is read-only. Use findings output instead.' >&2; exit 2"
