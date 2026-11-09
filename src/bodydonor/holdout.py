@@ -58,6 +58,10 @@ class GateResult:
     whole_class_missed: list[str] = field(default_factory=list)
     passed: bool = False
     failures: list[str] = field(default_factory=list)
+    # 低频类（出现 case 数 < MIN_PER_CLASS）：[{class, cases}]，不让低频类 Dice
+    # 静默进均值（M4 阶段 4 关 M3 §3.2 偏差）；coverage_warning 为显式告警文本。
+    low_frequency_classes: list[dict[str, Any]] = field(default_factory=list)
+    coverage_warning: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +72,10 @@ class GateResult:
             "whole_class_missed": list(self.whole_class_missed),
             "passed": self.passed,
             "failures": list(self.failures),
+            "low_frequency_classes": [
+                dict(d) for d in self.low_frequency_classes
+            ],
+            "coverage_warning": self.coverage_warning,
         }
 
 
@@ -200,12 +208,20 @@ def evaluate_gate(
     per_class_case_count: dict[str, int],
     n_cases: int,
     whole_class_missed: list[str] | None = None,
+    fail_on_low_coverage: bool = False,
 ) -> GateResult:
     """门禁判定（proposal §8 成对判据；累计多 case 的 Dice 均值后调用）。
 
     - mean Dice ≥ 0.75
     - 每类 Dice 下限 ≥ 0.5（仅当该类在 ≥ MIN_PER_CLASS cases 中出现，方差才有意义）
     - 整类漏检：任一类在 hold-out 存在但学生整类漏掉 → fail
+    - 低频类（出现 < MIN_PER_CLASS cases）：**默认只显式告警 + 列清单，不改
+      pass/fail**——硬 fail 会使门禁在结构上不可通过：冻结的 30 例 hold-out
+      （ts_public 15 + amos 15）中 39/117 类天然 <10 cases（头颈/四肢类只在
+      覆盖该解剖部位的扫描里出现），这是 hold-out 规模/解剖覆盖面的局限，
+      不是模型质量信号，根治靠扩大 hold-out；§8「每类 ≥10」的本意是方差理
+      由下的每类下限适用条件（已实现：下限只约束 ≥10 cases 的类）。将来
+      hold-out 扩容后可用 fail_on_low_coverage=True 收紧为 fail-fast。
     """
     whole_class_missed = whole_class_missed or []
     per_class = {
@@ -225,6 +241,20 @@ def evaluate_gate(
             failures.append(f"每类 Dice 下限：{name} {d:.4f} < {PER_CLASS_DICE_FLOOR}（{n} cases）")
     if whole_class_missed:
         failures.append(f"整类漏检：{whole_class_missed[:10]}（存在但学生整类漏掉，§8）")
+    low_freq = low_frequency_classes(per_class_case_count)
+    coverage_warning = ""
+    if low_freq:
+        coverage_warning = (
+            f"低频类 {len(low_freq)} 个出现在 < {MIN_PER_CLASS} cases，"
+            "其 Dice 不受每类下限约束（方差无意义），均值含低频类贡献——见 "
+            "low_frequency_classes（M3-REPORT §3.2 偏差已显式列出，不静默）"
+        )
+        if fail_on_low_coverage:
+            failures.append(
+                f"覆盖不足：{len(low_freq)} 个低频类 < {MIN_PER_CLASS} cases"
+                f"（{', '.join(d['class'] for d in low_freq[:10])}"
+                f"{'…' if len(low_freq) > 10 else ''}）"
+            )
     return GateResult(
         mean_dice=mean,
         per_class_dice=per_class,
@@ -233,32 +263,60 @@ def evaluate_gate(
         whole_class_missed=whole_class_missed,
         passed=not failures,
         failures=failures,
+        low_frequency_classes=low_freq,
+        coverage_warning=coverage_warning,
     )
 
 
 def class_case_counts(
-    gt_labels_per_case: dict[str, set[int]],
+    gt_labels_per_case: dict[str, set[int] | set[str]],
     class_labels: dict[int, str] | None = None,
 ) -> dict[str, int]:
-    """每类在 hold-out 中出现的 case 数（规模校验：每类 ≥ 10 cases，§8）。"""
+    """每类在 hold-out 中出现的 case 数（规模校验：每类 ≥ 10 cases，§8）。
+
+    labels 可为编码值（int，走 class_labels 反查）或已命名的类名（str，
+    评估脚本按类名对齐后直接传类名集合时用）。
+    """
     counts: dict[str, int] = {}
     for _cid, labels in gt_labels_per_case.items():
         for lb in labels:
-            name = (class_labels or {}).get(lb, f"label-{lb}")
+            name = lb if isinstance(lb, str) else (class_labels or {}).get(lb, f"label-{lb}")
             counts[name] = counts.get(name, 0) + 1
     return counts
 
 
+def low_frequency_classes(
+    per_class_case_count: dict[str, int],
+    min_cases: int = MIN_PER_CLASS,
+) -> list[dict[str, Any]]:
+    """出现 case 数 < min_cases 的类：[{class, cases}]，按 (case 数, 类名) 排序。
+
+    门禁报告的低频类清单来源（M4 阶段 4：低频类 Dice 不静默进均值）。
+    """
+    return [
+        {"class": name, "cases": n}
+        for name, n in sorted(
+            per_class_case_count.items(), key=lambda kv: (kv[1], kv[0])
+        )
+        if n < min_cases
+    ]
+
+
 def check_per_class_coverage(
-    gt_labels_per_case: dict[str, set[int]],
+    gt_labels_per_case: dict[str, set[int] | set[str]],
     class_labels: dict[int, str] | None = None,
 ) -> list[str]:
-    """每类至少出现在 10 cases 中（低于此 Dice 均值方差大到没有门禁意义）。"""
-    problems = []
-    for name, n in sorted(class_case_counts(gt_labels_per_case, class_labels).items()):
-        if n < MIN_PER_CLASS:
-            problems.append(f"{name} 仅出现在 {n} cases < {MIN_PER_CLASS}")
-    return problems
+    """每类至少出现在 10 cases 中（低于此 Dice 均值方差大到没有门禁意义）。
+
+    返回问题列表（不 raise）；调用方（eval/evaluate_holdout.py）把清单写进
+    门禁报告，是否 fail 由 evaluate_gate 的 fail_on_low_coverage 决定。
+    """
+    return [
+        f"{d['class']} 仅出现在 {d['cases']} cases < {MIN_PER_CLASS}"
+        for d in low_frequency_classes(
+            class_case_counts(gt_labels_per_case, class_labels)
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +390,7 @@ __all__ = [
     "PER_CLASS_DICE_FLOOR",
     "ModelVersionError",
     "check_leak",
+    "low_frequency_classes",
     "check_per_class_coverage",
     "check_holdout_composition",
     "class_case_counts",

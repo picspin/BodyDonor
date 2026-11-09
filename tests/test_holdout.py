@@ -13,9 +13,11 @@ from bodydonor.holdout import (
     check_holdout_composition,
     check_leak,
     check_per_class_coverage,
+    class_case_counts,
     dice_per_class,
     evaluate_gate,
     load_holdout,
+    low_frequency_classes,
     persist_gate_result,
     write_holdout,
 )
@@ -247,3 +249,69 @@ def test_persist_gate_result_unknown_model_version(settings_db):
     gate = evaluate_gate({"liver": 30.0}, {"liver": 30}, n_cases=30)
     with pytest.raises(ModelVersionError, match="unknown model version"):
         persist_gate_result(settings_db, "mv-nonexistent", gate)
+
+
+# ---------------------------------------------------------------------------
+# M4 阶段 4：低频类显式清单（关 M3-REPORT §3.2 偏差）
+# ---------------------------------------------------------------------------
+
+def test_low_frequency_classes_lists_name_and_count():
+    """低频类清单：类名 + case 数，按 (case 数, 类名) 排序。"""
+    counts = {"brain": 1, "liver": 30, "skull": 5, "prostate": 18}
+    low = low_frequency_classes(counts)
+    assert low == [
+        {"class": "brain", "cases": 1},
+        {"class": "skull", "cases": 5},
+    ]
+
+
+def test_class_case_counts_accepts_name_sets():
+    """评估脚本按类名对齐后可直接传类名集合（str labels 不走编码反查）。"""
+    gt = {"c1": {"liver", "prostate"}, "c2": {"liver"}}
+    assert class_case_counts(gt) == {"liver": 2, "prostate": 1}
+
+
+def test_check_per_class_coverage_name_sets():
+    """check_per_class_coverage 接受类名集合（评估路径接线用）。"""
+    gt = {f"case{i}": {"liver"} for i in range(10)}
+    gt["case10"] = {"liver", "spleen"}
+    problems = check_per_class_coverage(gt)
+    assert not any("liver" in p for p in problems)
+    assert any("spleen" in p for p in problems)
+
+
+def test_evaluate_gate_reports_low_frequency_without_failing():
+    """默认语义：低频类只显式告警 + 列清单，不改 pass/fail（M4 阶段 4 决定）。
+
+    冻结 30 例 hold-out 中 39/117 类天然 <10 cases——硬 fail 会使门禁在结构上
+    不可通过（hold-out 规模/解剖覆盖局限，非模型质量信号）。
+    """
+    dice_sum = {"liver": 27.0, "brain": 0.98, "prostate": 10.6452}
+    counts = {"liver": 30, "brain": 1, "prostate": 18}
+    gate = evaluate_gate(dice_sum, counts, n_cases=30)
+    assert gate.passed
+    assert gate.low_frequency_classes == [{"class": "brain", "cases": 1}]
+    assert "低频类 1 个" in gate.coverage_warning
+    d = gate.to_dict()
+    assert d["low_frequency_classes"] == [{"class": "brain", "cases": 1}]
+    assert d["coverage_warning"] == gate.coverage_warning
+
+
+def test_evaluate_gate_strict_coverage_fails():
+    """fail_on_low_coverage=True 时覆盖不足即门禁失败（供 hold-out 扩容后收紧）。"""
+    dice_sum = {"liver": 27.0, "brain": 0.98}
+    counts = {"liver": 30, "brain": 1}
+    gate = evaluate_gate(dice_sum, counts, n_cases=30, fail_on_low_coverage=True)
+    assert not gate.passed
+    assert any("覆盖不足" in f for f in gate.failures)
+    assert any("brain" in f for f in gate.failures)
+
+
+def test_gate_result_locks_prostate_entry():
+    """prostate 逐类明细锁定：M3 最弱类 0.5914 / 18 cases 必须在门禁结果里。"""
+    dice_sum = {"liver": 27.0, "prostate": 0.5914 * 18}
+    counts = {"liver": 30, "prostate": 18}
+    gate = evaluate_gate(dice_sum, counts, n_cases=30)
+    assert gate.per_class_dice["prostate"] == pytest.approx(0.5914)
+    assert gate.per_class_cases["prostate"] == 18
+    assert gate.to_dict()["per_class_dice"]["prostate"] == 0.5914
