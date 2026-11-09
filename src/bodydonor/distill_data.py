@@ -286,7 +286,7 @@ def merge_teacher_mask(
     keep_classes: set[str],
     case_id: str = "",
     img: Any | None = None,
-) -> tuple[Any, list[str]]:
+) -> tuple[Any, list[str], list[str]]:
     """TS total 输出（每类一个 NIfTI）合并为单标签图，只保留 keep_classes。
 
     - 合并前每类 mask 与原图 affine 一致性校验（nifti_geom.assert_affine_match；
@@ -295,7 +295,9 @@ def merge_teacher_mask(
       编码同源）
     - 多类同名 mask 重叠时先到先得（TS 类间本就互斥；重叠按序覆盖不报错）
     - keep_classes 之外的 TS 类**不静默丢弃**： dropped 类名由调用方记 manifest
-      （本函数返回 dropped_classes）
+    - 返回 (merged, dropped, found)：dropped = keep_classes 之外的类名，
+      found = 实际找到的 keep_classes 类名（调用方据此记 manifest 的
+      n_classes_found——真实找到的蒸馏类别数，非默认 0）
     - img 可传已加载的 nibabel 图（prepare_dataset 复用，省一次读盘解压）
     """
     import nibabel as nib
@@ -323,7 +325,7 @@ def merge_teacher_mask(
         assert_affine_match(img, mask_img, label=f"distill-merge {cls_name}（{case_id}）")
         arr = np.asarray(mask_img.dataobj) > 0
         merged[arr] = label_value[cls_name]
-    return merged, dropped
+    return merged, dropped, found
 
 
 def _safe_image_filename(case_id: str) -> str:
@@ -402,11 +404,14 @@ def prepare_dataset(
     for c in pool:
         # 原图只加载一次：merge 复用 + imagesTr 落盘复用（省一次读盘解压）
         img = nib.load(str(c.image_path))
-        merged, dropped = merge_teacher_mask(
+        merged, dropped, found = merge_teacher_mask(
             c.teacher_out, c.image_path, keep_classes, c.case_id, img=img
         )
         for cls in dropped:
             total_dropped[cls] = total_dropped.get(cls, 0) + 1
+        # manifest 逐 case 记真实找到的蒸馏类别数（非默认 0；found 由
+        # merge_teacher_mask 实测，缺失的类静默缺位即 manifest 失真）
+        c.n_classes_found = len(found)
 
         if not dry_run:
             base = _safe_image_filename(c.case_id)

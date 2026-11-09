@@ -297,3 +297,115 @@ def test_provenance_accepts_declared_total(tmp_path):
         experimental=bool(prov.get("experimental", False)),
     )
     assert ok, reason
+
+
+# ---------------------------------------------------------------------------
+# merge_teacher_mask / prepare_dataset（found 实测进 manifest，n_classes_found）
+# ---------------------------------------------------------------------------
+
+def _make_case_fixture(tmp_path, case_id: str, classes: list[str], pad_to: int = 117):
+    """最小合成 case：一致 affine 的原图 + 指定蒸馏类的空 mask + 占位补齐到 117。
+
+    蒸馏类文件为真实小 NIfTI（merge 会 nib.load）；占位补齐文件只被 glob 计数
+    （keep_classes 之外不加载），空字节即可。pad_to=0 不补齐（配合
+    _touch_ts_out 自造部分目录）。
+    """
+    import nibabel as nib
+    import numpy as np
+
+    case_dir = tmp_path / case_id
+    (case_dir / "imagesTr").mkdir(parents=True)
+    img_path = case_dir / "imagesTr" / f"{case_id}.nii.gz"
+    nib.save(nib.Nifti1Image(np.zeros((8, 8, 4), dtype=np.int16), np.eye(4)), str(img_path))
+    ts_out = case_dir / "ts_out"
+    ts_out.mkdir()
+    for cls in classes:
+        nib.save(nib.Nifti1Image(np.zeros((8, 8, 4), dtype=np.uint8), np.eye(4)),
+                 str(ts_out / f"{cls}.nii.gz"))
+    for i in range(max(0, pad_to - len(classes))):
+        (ts_out / f"ts_extra_{i:03d}.nii.gz").write_bytes(b"")
+    return img_path, ts_out
+
+
+def test_merge_teacher_mask_returns_found(tmp_path):
+    """merge 返回 (merged, dropped, found)：found = 实际找到的 keep_classes 类。"""
+    import nibabel as nib
+
+    from bodydonor.distill_data import merge_teacher_mask
+
+    img_path, ts_out = _make_case_fixture(
+        tmp_path, "amos_9001", ["spleen", "liver", "prostate"]
+    )
+    img = nib.load(str(img_path))
+    keep = set(DISTILL_CLASSES.values())
+    merged, dropped, found = merge_teacher_mask(ts_out, img_path, keep, "amos_9001", img=img)
+    assert found == ["liver", "prostate", "spleen"]  # sorted 目录序
+    # pad 占位文件（keep 之外）进 dropped，蒸馏类一个不落
+    assert sorted(dropped) == sorted(f"ts_extra_{i:03d}" for i in range(114))
+    assert merged.shape == (8, 8, 4)
+
+
+def test_merge_teacher_mask_drops_non_keep_classes(tmp_path):
+    """keep_classes 之外的 TS 类进 dropped，不进 found。"""
+    import nibabel as nib
+
+    from bodydonor.distill_data import merge_teacher_mask
+
+    img_path, ts_out = _make_case_fixture(tmp_path, "amos_9002", ["spleen", "heart"])
+    img = nib.load(str(img_path))
+    merged, dropped, found = merge_teacher_mask(
+        ts_out, img_path, {"spleen"}, "amos_9002", img=img
+    )
+    assert found == ["spleen"]
+    assert "heart" in dropped
+    assert "heart" not in found
+    assert merged.shape == (8, 8, 4)
+
+
+def test_prepare_dataset_manifest_records_n_classes_found(tmp_path, monkeypatch):
+    """manifest 逐 case 记真实找到的蒸馏类别数（实测 found，非默认 0）。
+
+    完整 case（15 蒸馏类齐全 + 117 文件）过预检后 n_classes_found == 15——
+    修复前该字段恒为默认 0。"缺类记小数"的语义在 merge 层覆盖
+    （test_merge_teacher_mask_returns_found：found = 实际存在的类数）；预检
+    加严（问题 3）后部分 ts_out 在 prepare_dataset 即拒绝，manifest 层只见
+    完整 case。全程合成 fixture（tmp_path），不跑 GPU 推理、不读真实数据目录。
+    """
+    import json
+
+    from bodydonor import distill_data as dd
+
+    full_classes = sorted(DISTILL_CLASSES.values())
+    _, ts_full = _make_case_fixture(tmp_path, "amos_9101", full_classes)
+    _, ts_full2 = _make_case_fixture(tmp_path, "amos_9102", full_classes)
+    img_full = tmp_path / "amos_9101" / "imagesTr" / "amos_9101.nii.gz"
+    img_full2 = tmp_path / "amos_9102" / "imagesTr" / "amos_9102.nii.gz"
+
+    amos_train = tmp_path / "amos22_subset" / "train"
+    (amos_train / "imagesTr").mkdir(parents=True)
+    ct_root = tmp_path / "ct_lite"
+    (ct_root / "images").mkdir(parents=True)
+    monkeypatch.setattr(dd, "AMOS", amos_train)
+    monkeypatch.setattr(dd, "CT_LITE", ct_root)
+
+    # 直接构造 DistillCase（绕过 build_train_pool 的真实目录扫描）
+    cases = [
+        dd.DistillCase(case_id="amos_9101", source="amos", image_path=img_full,
+                       teacher_out=ts_full),
+        dd.DistillCase(case_id="amos_9102", source="amos", image_path=img_full2,
+                       teacher_out=ts_full2),
+    ]
+    monkeypatch.setattr(dd, "build_train_pool", lambda holdout_path=None: cases)
+
+    out_root = tmp_path / "nnUNet_raw"
+    result = dd.prepare_dataset(out_root=out_root, dry_run=False)
+    assert result["n_cases"] == 2
+
+    manifest = json.loads((out_root / dd.DISTILL_DATASET_NAME / "manifest.json").read_text(
+        encoding="utf-8"))
+    by_id = {c["case_id"]: c for c in manifest["cases"]}
+    # 实测 found（15），不是修复前的默认 0
+    assert by_id["amos_9101"]["n_classes_found"] == 15
+    assert by_id["amos_9102"]["n_classes_found"] == 15
+    # dropped = 117 全量类里不在 keep 的（pad 占位文件 102 个，逐 case 实测）
+    assert by_id["amos_9101"]["dropped_classes"] == [f"ts_extra_{i:03d}" for i in range(102)]
