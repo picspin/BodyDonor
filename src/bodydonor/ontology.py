@@ -589,15 +589,26 @@ class OntologyService:
 # ---------------------------------------------------------------------------
 
 def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, str]:
-    """蒸馏训练集准入检查：experimental 标记的 mask 绝不进训练集。
+    """蒸馏训练集准入检查：experimental / nnInteractive 来源的 mask 绝不进训练集。
 
     mask_meta 需含 'experimental'（bool）与 'source'（teacher/student/manual/...）。
     返回 (allowed, reason)。worker/训练路径在入集前必须调用此函数
     （与任务白名单 check_task 同级的硬约束）。
+
+    nnInteractive 来源（M4 阶段 3 补缺口）：权重 CC BY-NC-SA 4.0 ShareAlike
+    传染（LICENSES-THIRD-PARTY.md §2.2/§8.1），修正产物
+    source=manual-correction-nninteractive 与 source=nninteractive 一律拒绝
+    （与 distill_data.check_distill_source / REJECTED_SOURCES 同语义）。
     """
     if mask_meta.get("experimental"):
         return False, "experimental 标记的 mask 不进蒸馏训练集（逃生通道产物隔离）"
     source = mask_meta.get("source", "")
+    if source in ("manual-correction-nninteractive", "nninteractive"):
+        return False, (
+            f"nnInteractive 来源（source={source}）不进蒸馏训练集：权重 "
+            "CC BY-NC-SA 4.0 ShareAlike 传染，不进商用蒸馏训练集"
+            "（LICENSES-THIRD-PARTY.md §2.2/§8.1）"
+        )
     if source == "teacher":
         # teacher mask 还要看任务是否在商用蒸馏白名单（调用方传 task）
         task = mask_meta.get("task", "")

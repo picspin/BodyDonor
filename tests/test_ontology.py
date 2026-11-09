@@ -243,6 +243,26 @@ class TestDistillIsolation:
         )
         assert ok is True
 
+    def test_nninteractive_correction_blocked_from_training(self) -> None:
+        """(M4 阶段 3 强制点) nnInteractive 修正产物绝不进蒸馏训练集。
+
+        权重 CC BY-NC-SA 4.0 ShareAlike 传染（LICENSES-THIRD-PARTY.md
+        §2.2/§8.1）；ontology 版门禁拒绝 manual-correction-nninteractive。
+        """
+        ok, reason = mask_allowed_in_distill_training(
+            {"experimental": False, "source": "manual-correction-nninteractive"}
+        )
+        assert ok is False
+        assert "nnInteractive" in reason
+
+    def test_nninteractive_source_blocked_from_training(self) -> None:
+        """(M4 阶段 3 强制点) source=nninteractive 同样拒绝。"""
+        ok, reason = mask_allowed_in_distill_training(
+            {"experimental": False, "source": "nninteractive"}
+        )
+        assert ok is False
+        assert "CC BY-NC-SA" in reason
+
 
 class TestEntrySerialization:
     def test_entry_roundtrip(self) -> None:
