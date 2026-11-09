@@ -225,9 +225,18 @@ def cmd_short_train(args: argparse.Namespace) -> int:
 def cmd_train(args: argparse.Namespace) -> int:
     require_lock()
     epochs = args.epochs
+    # 标准 1000-epoch trainer 的类名就是 nnUNetTrainer（num_epochs=1000 默认）；
+    # nnUNetTrainer_Nepochs 变体只有 5epochs 等短训版（1000epochs 类不存在，
+    # recursive_find_trainer_class_by_name 实测 RuntimeError）。--epochs 只用于
+    # 文档/推算，实际 epoch 数由 trainer 类决定（nnUNetTrainer = 1000）。
+    if epochs != 1000:
+        raise SystemExit(
+            f"--epochs {epochs} 不受支持：标准 trainer 类名 nnUNetTrainer 固定 "
+            "1000 epochs（短训用 short-train 子命令的 nnUNetTrainer_5epochs）"
+        )
     cmd = [str(NNUNET_PY), "-m", "nnunetv2.run.run_training",
            "Dataset501_BodyDonorDistill", "3d_lowres", "0",
-           "-tr", f"nnUNetTrainer_{epochs}epochs"]
+           "-tr", "nnUNetTrainer"]
     print(f"[stage2b] 正式训练命令：{' '.join(cmd)}", flush=True)
     print(f"[stage2b] 启动时间：{time.strftime('%Y-%m-%d %H:%M:%S %z')}", flush=True)
     rec = subprocess_run(cmd, "train")
@@ -244,7 +253,7 @@ def main() -> int:
     p_prep.add_argument("--np", type=int, default=0,
                         help="预处理进程数（默认 nnU-Net 自定；OOM 时降为 1-2）")
     sub.add_parser("short-train", help="nnUNetTrainer_5epochs 端到端验证")
-    p_train = sub.add_parser("train", help="正式训练（-tr nnUNetTrainer_Nepochs）")
+    p_train = sub.add_parser("train", help="正式训练（-tr nnUNetTrainer，标准 1000 epochs）")
     p_train.add_argument("--epochs", type=int, default=1000)
     args = ap.parse_args()
 
