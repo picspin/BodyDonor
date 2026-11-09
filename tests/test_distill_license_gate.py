@@ -20,7 +20,9 @@ from bodydonor.distill_data import (
     check_distill_source,
     check_teacher_task_commercial,
     mask_allowed_in_distill_training_strict,
+    missing_distill_classes,
     read_teacher_provenance,
+    teacher_out_complete,
     write_teacher_source_json,
 )
 
@@ -439,3 +441,86 @@ def test_write_teacher_source_json_roundtrip(tmp_path):
     assert prov["source"] == "total"
     assert prov["task"] == "total"
     assert prov["case_id"] == "amos_9301"
+
+# ---------------------------------------------------------------------------
+# ts_out 完整性判定（teacher_out_complete，prepare_dataset 预检 + 推理脚本共用）
+# ---------------------------------------------------------------------------
+
+def _touch_ts_out(teacher_out, names: list[str]) -> None:
+    """空 .nii.gz 占位文件（完整性判定只看文件名，不需真实 NIfTI）。"""
+    teacher_out.mkdir(parents=True, exist_ok=True)
+    for n in names:
+        (teacher_out / f"{n}.nii.gz").write_bytes(b"")
+
+
+def test_teacher_out_complete_one_file_false(tmp_path):
+    """只有 1 个文件：<117 -> 不完整。"""
+    ts_out = tmp_path / "ts_out"
+    _touch_ts_out(ts_out, ["spleen"])
+    assert teacher_out_complete(ts_out) is False
+
+
+def test_teacher_out_complete_117_files_missing_distill_class_false(tmp_path):
+    """117 个文件但缺一个蒸馏类（heart 占位替代 stomach）-> 不完整。"""
+    ts_out = tmp_path / "ts_out"
+    names = [f"cls_{i:03d}" for i in range(116)] + ["heart"]
+    assert len(names) == 117
+    _touch_ts_out(ts_out, names)
+    assert teacher_out_complete(ts_out) is False
+    assert "stomach" in missing_distill_classes(ts_out)
+
+
+def test_teacher_out_complete_full_true(tmp_path):
+    """完整 117 文件（116 占位 + 15 蒸馏类）-> 完整。"""
+    ts_out = tmp_path / "ts_out"
+    names = [f"cls_{i:03d}" for i in range(102)] + sorted(DISTILL_CLASSES.values())
+    assert len(names) == 117
+    _touch_ts_out(ts_out, names)
+    assert teacher_out_complete(ts_out) is True
+    assert missing_distill_classes(ts_out) == []
+
+
+def test_teacher_out_complete_missing_dir_false(tmp_path):
+    """目录不存在 -> 不完整（不 raise）。"""
+    assert teacher_out_complete(tmp_path / "nonexistent") is False
+
+
+def test_prepare_dataset_rejects_partial_ts_out(tmp_path, monkeypatch):
+    """预检加严：缺一个蒸馏类的 ts_out 直接拒绝（报错列缺的类名），不留半成品。"""
+    from bodydonor import distill_data as dd
+
+    full_classes = sorted(DISTILL_CLASSES.values())
+    partial_classes = [c for c in full_classes if c != "prostate"]  # 缺 prostate
+    _, ts_ok = _make_case_fixture(tmp_path, "amos_9201", full_classes)
+    ts_bad = tmp_path / "amos_9202" / "ts_out"
+    # 117 个文件（14 蒸馏类 + 占位补齐）但缺 prostate：被预检拒绝（缺蒸馏类）
+    _touch_ts_out(ts_bad, partial_classes + [f"ts_extra_{i:03d}" for i in range(103)])
+    assert len(list(ts_bad.glob("*.nii.gz"))) == 117
+    img_ok = tmp_path / "amos_9201" / "imagesTr" / "amos_9201.nii.gz"
+    img_bad = tmp_path / "amos_9202" / "imagesTr" / "amos_9202.nii.gz"
+
+    amos_train = tmp_path / "amos22_subset" / "train"
+    (amos_train / "imagesTr").mkdir(parents=True)
+    ct_root = tmp_path / "ct_lite"
+    (ct_root / "images").mkdir(parents=True)
+    monkeypatch.setattr(dd, "AMOS", amos_train)
+    monkeypatch.setattr(dd, "CT_LITE", ct_root)
+
+    cases = [
+        dd.DistillCase(case_id="amos_9201", source="amos", image_path=img_ok,
+                       teacher_out=ts_ok),
+        dd.DistillCase(case_id="amos_9202", source="amos", image_path=img_bad,
+                       teacher_out=ts_bad),
+    ]
+    monkeypatch.setattr(dd, "build_train_pool", lambda holdout_path=None: cases)
+
+    with pytest.raises(DistillDataError, match="不完整") as exc:
+        dd.prepare_dataset(out_root=tmp_path / "nnUNet_raw", dry_run=False)
+    assert "amos_9202" in str(exc.value)
+    assert "prostate" in str(exc.value)  # 报错里列出缺的类名
+    # 预检先行：第一个文件都没写（空目录可存在——mkdir 在预检之前是现有行为）
+    out_dir = tmp_path / "nnUNet_raw" / dd.DISTILL_DATASET_NAME
+    assert not any((out_dir / "imagesTr").glob("*")) if (out_dir / "imagesTr").exists() else True
+    assert not any((out_dir / "labelsTr").glob("*")) if (out_dir / "labelsTr").exists() else True
+    assert not (out_dir / "dataset.json").exists()
+    assert not (out_dir / "manifest.json").exists()

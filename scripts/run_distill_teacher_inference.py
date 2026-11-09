@@ -30,6 +30,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from bodydonor.config import load_settings  # noqa: E402
 from bodydonor.distill_data import (  # noqa: E402
     build_train_pool,
+    teacher_out_complete,
     write_teacher_source_json,
 )
 
@@ -42,8 +43,11 @@ def main() -> int:
 
     settings = load_settings()
     pool = build_train_pool()
-    missing = [c for c in pool if not any(c.teacher_out.glob("*.nii.gz"))]
-    print(f"[teacher-infer] 训练池 {len(pool)} cases，缺教师 mask {len(missing)} 个")
+    # missing 判定与 prepare_dataset 预检共用 teacher_out_complete（117 类全量
+    # + 15 蒸馏类齐全）——只要求"任意 *.nii.gz"会让缺 15 个蒸馏类的部分目录
+    # 静默通过，后续合并缺类静默缺位
+    missing = [c for c in pool if not teacher_out_complete(c.teacher_out)]
+    print(f"[teacher-infer] 训练池 {len(pool)} cases，教师 mask 不完整 {len(missing)} 个")
     if args.limit:
         missing = missing[: args.limit]
     if not missing:

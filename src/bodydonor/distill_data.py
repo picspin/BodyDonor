@@ -247,6 +247,32 @@ def write_teacher_source_json(teacher_out: Path, case_id: str) -> None:
     path.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+def missing_distill_classes(teacher_out: Path) -> list[str]:
+    """ts_out 目录里缺失的蒸馏类名（DISTILL_CLASSES 值），齐全返回空列表。"""
+    if not teacher_out.exists():
+        return sorted(DISTILL_CLASSES.values())
+    names = {f.name.removesuffix(".nii.gz") for f in teacher_out.glob("*.nii.gz")}
+    return sorted(set(DISTILL_CLASSES.values()) - names)
+
+
+def teacher_out_complete(teacher_out: Path) -> bool:
+    """ts_out 目录完整性判定：117 类全量（每类一个 NIfTI）+ 15 蒸馏类齐全。
+
+    两处共用（prepare_dataset 预检 + 推理脚本 missing 判定）：
+
+    - 文件数 < 117（TS total 全量类数）-> False（部分输出：中断 / 部分类失败）
+    - 缺任一蒸馏类文件（DISTILL_CLASSES 的 <类名>.nii.gz）-> False（蒸馏必需
+      类缺失，合并后该类静默缺位）
+    - 两项都满足 -> True
+    """
+    if not teacher_out.exists():
+        return False
+    files = sorted(teacher_out.glob("*.nii.gz"))
+    if len(files) < 117:
+        return False
+    return not missing_distill_classes(teacher_out)
+
+
 def build_train_pool(
     holdout_path: Path | None = None,
 ) -> list[DistillCase]:
@@ -394,6 +420,7 @@ def prepare_dataset(
 
     manifest_cases: list[dict[str, Any]] = []
     missing_teacher: list[str] = []
+    missing_detail: list[tuple[str, list[str]]] = []
     total_dropped: dict[str, int] = {}
 
     # 预检：先扫全部 case 的来源与教师 mask 存在性（不落盘）——任何许可门禁
@@ -412,13 +439,25 @@ def prepare_dataset(
             raise DistillDataError(f"许可门禁拒绝 {c.case_id}：{reason}")
         c.label_source = str(prov.get("source", ""))
         c.teacher_task = str(prov.get("task", ""))
-        if not c.teacher_out.exists() or not any(c.teacher_out.glob("*.nii.gz")):
+        # 完整性预检（teacher_out_complete 共用判定）：117 类全量 + 15 蒸馏类
+        # 齐全才放行——缺 15 个蒸馏类的部分目录不静默通过（缺类合并后静默缺位，
+        # manifest n_classes_found 失真）
+        if not teacher_out_complete(c.teacher_out):
             missing_teacher.append(c.case_id)
+            missing_detail.append((c.case_id, missing_distill_classes(c.teacher_out)))
     if missing_teacher:
+        detail = "；".join(
+            (
+                f"{cid} 缺蒸馏类 {cls[:5]}{'…' if len(cls) > 5 else ''}"
+                if cls else f"{cid} 无/不全量 mask"
+            )
+            for cid, cls in missing_detail[:5]
+        )
         raise DistillDataError(
-            f"{len(missing_teacher)} 个训练 case 缺 TS total 教师 mask（先跑教师推理，"
-            "不静默跳过）："
+            f"{len(missing_teacher)} 个训练 case 的 TS total 教师 mask 不完整（先跑教师"
+            "推理补齐，不静默跳过）："
             f"{missing_teacher[:10]}{'…' if len(missing_teacher) > 10 else ''}"
+            f"（{detail}）"
         )
 
     for c in pool:
@@ -556,8 +595,10 @@ __all__ = [
     "check_teacher_task_commercial",
     "mask_allowed_in_distill_training_strict",
     "merge_teacher_mask",
+    "missing_distill_classes",
     "nnunet_label_values",
     "prepare_dataset",
     "read_teacher_provenance",
+    "teacher_out_complete",
     "write_teacher_source_json",
 ]
