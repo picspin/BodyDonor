@@ -1,6 +1,6 @@
 # M4 阶段 3 报告 — nnInteractive 接线为交互修正后端（v2，命名纠正后）
 
-> 日期：2026-11-09。分支 main，起点 HEAD 12595b4（领先远端 22 提交）。
+> 日期：2026-11-09。分支 main，起点 HEAD 12595b4（本阶段共 11 个提交，领先远端 25）。
 > 铁律全程遵守：未 push、未建 PR、未动 eval/holdout.txt；训练占卡期间（PID 45196
 > 持有 `~/data/BodyDonor/.gpu.lock`，job=nnunet-stage2b-45196）未跑任何 GPU
 > 推理/未加载模型到 CUDA。
@@ -309,7 +309,9 @@ z=66 在 78 层范围内。）
 | 9dfb112 | test(m4): nnInteractive 后端单测——门禁三值/锁互斥/CPU runner 契约/API 端点 |
 | 9d3a0c3 | fix(m4): CPU runner 契约测试 patch 中心改肝区——(128,128,64) 是空气区实测 HU -959 |
 | fd81522 | fix(m4): nni_runner 三处修复——bodydonor import 解耦 + stdout 污染 + model folder 解析 |
-| 本报告 | docs(m4): 本报告（M4-STAGE3-REPORT.md v2；amend 后 hash 以 git log 实测为准——amend 自引用循环，不回填） |
+| f55208f | chore(m4): 提交阶段 3 运维脚本——torch 装回/权重下载/CPU 验证（复现路径有据可查；含 cpu_smoke_verify.sh 的 RSS 计量修正） |
+| d400414 | fix(m4): CPU 内存峰值计量修正——RUSAGE_SELF 54 MiB → RUSAGE_CHILDREN 7129 MiB + 报告 §8.2/§10/§13/§14 同步 |
+| 本报告 | docs(m4): 本报告（M4-STAGE3-REPORT.md v2 + §11/§12 收尾；hash 以 git log 实测为准） |
 
 ## 12. pytest 点数与 ruff
 
@@ -322,6 +324,10 @@ z=66 在 78 层范围内。）
   torch 装回前为 14 passed, 3 deselected。
 - **全量 pytest：366 passed, 0 failed**（295.34s，fd81522 后实测，含 CPU runner
   契约；torch 装回前为 363 passed, 3 deselected）。
+- 母代理独立复核（2026-11-09 18:35 前后）：全量 pytest **366 passed, 51 warnings
+  in 259.14s, exit 0**（与报告数字一致）。注：仓库默认 `-q` 在本次管道执行中两次
+  均未显示汇总行（只显示 exit 0），改用 `-o addopts=""` 后汇总行正常出现——
+  已核实是显示问题，不是失败。
 
 ## 13. v1→v2 报告差异一览
 
