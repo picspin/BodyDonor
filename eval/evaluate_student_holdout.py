@@ -17,6 +17,9 @@
   peak_vram_mb 写 None（无 runner 口径，不编造）。
 - 教师-学生一致性（阶段 5 校准输入）：逐类逐 case 体素 Dice（教师 vs 学生，
   对称，只算两边任一非空的类）。
+- 门禁分口径（M4 收尾第二轮）：in-scope 门禁只评学生 15 类（Dataset501 范围），
+  naive 117 类数字保留为 scope_naive 对照（超范围类天然 dice=0，是学生设计
+  范围外，不是模型漏检；与 M3 教师门禁对比必须用同 15 类口径）。
 - 失败 case 如实记录进 summary.failed_cases（不静默跳过），门禁按实际结果判。
 
 用法：
@@ -289,9 +292,30 @@ def teacher_student_consistency(
         "below_080_classes": below_080,
         "note": (
             "教师 mask vs 学生 mask 逐类体素 Dice（对称，只算两边任一非空的类）；"
-            "阶段 5 校准输入（distill_data 温度缩放用）。"
+            "阶段 5 多教师一致性规则的校准输入（聚合方式校准依据：case 级均值 "
+            "vs 最差类判别力对比），与 distill_data 温度缩放无关。"
         ),
     }
+
+
+def in_scope_gate_inputs(
+    dice_sum: dict[str, float],
+    case_count: dict[str, int],
+    whole_missed: list[str],
+    student_classes: set[str],
+) -> tuple[dict[str, float], dict[str, int], list[str]]:
+    """口径切分（M4 收尾第二轮）：把 naive 累计过滤到学生类范围内的三元组。
+
+    学生只训了 Dataset501 的 15 类；GT 里的其余类（教师 117 类范围）学生
+    天然整类 dice=0，是口径错误不是模型失败——完美 15 类学生在 naive 口径
+    下也永远 FAIL。返回过滤后的 (dice_sum, case_count, whole_missed)，直接
+    进 evaluate_gate（同判据：mean ≥ 0.75、每类 ≥ 0.5 仅 ≥10 cases、整类漏检）。
+    naive 三元组原样保留（调用方另算 scope_naive 对照）。
+    """
+    ds = {k: v for k, v in dice_sum.items() if k in student_classes}
+    cc = {k: v for k, v in case_count.items() if k in student_classes}
+    wm = [c for c in whole_missed if c in student_classes]
+    return ds, cc, wm
 
 
 def main() -> int:
@@ -410,13 +434,33 @@ def main() -> int:
         cls for cls, cnt in zero_by_class.items()
         if cnt > 0 and cnt == case_count_by_class.get(cls, 0)
     )
-    gate = evaluate_gate(dice_sum_by_class, case_count_by_class, n_cases=n,
-                         whole_class_missed=whole_missed)
+    # 分口径门禁（M4 收尾第二轮）：in-scope 门禁只评学生 15 类（Dataset501
+    # 范围）；naive 117 类口径结构性 FAIL——102 个超范围类天然 dice=0（学生
+    # 设计范围外，不是模型漏检），完美 15 类学生也永远过不了，不是质量信号。
+    student_classes = set(dataset_labels.values())
+    in_dice, in_cc, in_wm = in_scope_gate_inputs(
+        dice_sum_by_class, case_count_by_class, whole_missed, student_classes
+    )
+    gate = evaluate_gate(
+        in_dice, in_cc, n_cases=n, whole_class_missed=in_wm,
+    )
+    scope_naive = evaluate_gate(
+        dice_sum_by_class, case_count_by_class, n_cases=n,
+        whole_class_missed=whole_missed,
+    )
     coverage_problems = check_per_class_coverage(gt_names_per_case)
 
     tsc = teacher_student_consistency(results, {})
     summary = {
         "n_cases": n,
+        "gate_scope": "student-15-classes",
+        "gate_note": (
+            "门禁口径 = 学生 15 类（Dataset501 训练范围）in-scope：GT 超范围类"
+            "（教师 117 类范围）学生天然整类 dice=0，是学生设计范围外，不是模型"
+            "漏检；naive 117 类口径结构性 FAIL（完美 15 类学生也永远过不了），"
+            "保留为 scope_naive 对照。与 M3 教师门禁对比必须用同 15 类口径"
+            "（教师 0.8548 vs 学生均值），不是教师 117 类 0.9335 vs 学生 0.1027。"
+        ),
         "gate_passed": gate.passed,
         "failures": gate.failures,
         "mean_dice": round(gate.mean_dice, 4),
@@ -424,6 +468,21 @@ def main() -> int:
         "per_class_cases": dict(gate.per_class_cases),
         "whole_class_missed": gate.whole_class_missed,
         "low_frequency_classes": gate.low_frequency_classes,
+        "scope_naive": {
+            "scope": "all-117-classes",
+            "passed": scope_naive.passed,
+            "failures": scope_naive.failures,
+            "mean_dice": round(scope_naive.mean_dice, 4),
+            "n_classes": len(scope_naive.per_class_dice),
+            "n_per_class_failures": sum(
+                1 for f in scope_naive.failures if f.startswith("每类 Dice 下限")
+            ),
+            "note": (
+                "naive 对照口径：学生当 117 类模型评，102 个超范围类天然 "
+                "dice=0 拉垮均值（M4 收尾第二轮前 DB 里的 gate_status=failed/"
+                "mean 0.1027 即此口径，属口径错误非模型失败，本次纠正）。"
+            ),
+        },
         "coverage_problems": coverage_problems,
         "coverage_warning": gate.coverage_warning,
         "zero_dice_cases_by_class": {
@@ -490,7 +549,7 @@ def main() -> int:
               f"（{ov['n_pairs']} 对；<0.80 类 {len(tsc['below_080_classes'])} 个）")
     print(f"[student-holdout] results -> {out_path}")
     print(f"[student-holdout] consistency -> {tsc_path}")
-    return 0 if gate.passed else 1
+    return 0 if gate.passed else 1  # exit 码以 in-scope 门禁为准（scope_naive 只对照）
 
 
 if __name__ == "__main__":
