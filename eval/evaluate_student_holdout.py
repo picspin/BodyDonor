@@ -92,7 +92,9 @@ def student_predict(image_path: Path, case_id: str) -> Path:
     """单 case 学生推理（nnUNetv2_predict，GPU 锁全程持锁）。
 
     输入以 <case>_0000.nii.gz **symlink** 进 INPUT_DIR（nnUNet 按后缀
-    _0000 识别通道，symlink 省拷贝）；输出到 PRED_DIR/<case>.nii.gz。
+    _0000 识别通道，symlink 省拷贝）；每次调用前清空 INPUT_DIR（只留本
+    case——nnUNetv2_predict -i 目录是批量预测，残留 symlink 会重复预测
+    全部 case，首轮实测 s0045 被重写为证）；输出到 PRED_DIR/<case>.nii.gz。
     已有预测文件时跳过（重跑便宜）。-npp 1 -nps 1（WSL2 15.8GB 多 worker
     OOM 已实测），默认 TTA（与 validation 可比），device cuda。
     """
@@ -103,9 +105,42 @@ def student_predict(image_path: Path, case_id: str) -> Path:
         return out_path
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
     PRED_DIR.mkdir(parents=True, exist_ok=True)
+    for stale in INPUT_DIR.glob("*"):
+        stale.unlink()
     link = INPUT_DIR / f"{case_id}_0000.nii.gz"
-    if not link.exists():
+    # ITK（nnUNet 读图）只接受严格正交方向余弦；个别 CT-Lite 原图方向矩阵
+    # 非严格正交（s0209 列间 max|cos|=1.2e-4，sitk 全 30 例实测仅此 1 例不可
+    # 读，教师评估走 nibabel 不受影响）。对不可读的 case 落一个 header 正交
+    # 化副本（方向矩阵 Gram-Schmidt 正交化，zooms/origin/体素网格不变，预测
+    # 输出与原图体素一一对应，affine 写回原图值由 split_pred 的守卫兜住）。
+    import nibabel as nib
+
+    try:
+        import SimpleITK  # noqa: F401 — nnUNet 同款读取路径可读性探测
+
+        SimpleITK.ReadImage(str(image_path))
         link.symlink_to(image_path.resolve())
+    except RuntimeError:
+        fixed_path = STUDENT_DIR / "_orthofix" / f"{case_id}.nii.gz"
+        fixed_path.parent.mkdir(parents=True, exist_ok=True)
+        if not fixed_path.exists():
+            img = nib.load(str(image_path))
+            zooms = np.asarray(img.header.get_zooms()[:3], dtype=float)
+            rot = img.affine[:3, :3] / zooms[None, :]
+            # 极分解正交化：Q = U·Vᵀ 是 Frobenius 范数下距 rot 最近的正交阵
+            # （np.linalg.qr 的符号翻转实测偏差 3.28mm，不可用）；det<0 时翻一列
+            u, _, vt = np.linalg.svd(rot)
+            q = u @ vt
+            if np.linalg.det(q) < 0:
+                q[:, 0] = -q[:, 0]
+            fixed_aff = img.affine.copy()
+            fixed_aff[:3, :3] = q * zooms[None, :]
+            fixed = nib.Nifti1Image(
+                np.asarray(img.dataobj), fixed_aff, img.header.copy()
+            )
+            fixed.header.set_zooms(tuple(float(z) for z in zooms))
+            nib.save(fixed, str(fixed_path))
+        link.symlink_to(fixed_path.resolve())
     settings = load_settings()
     lock = acquire(
         settings.resolved_data_dir / ".gpu.lock",
@@ -145,7 +180,9 @@ def split_pred(pred_path: Path, image_path: Path, case_id: str,
                dataset_labels: dict[int, str]) -> Path:
     """预测单标签体（值 1-15）拆成每类一个 NIfTI（文件名 = TS 类名）。
 
-    affine 与原图一致（assert_affine_match 守卫，dice 前同守卫）。
+    affine 与原图一致（assert_affine_match 守卫，dice 前同守卫）；orthofix
+    case（输入是 header 正交化副本）守卫基准与写回 affine 都用修正后
+    affine（与 pred 输出一致，偏差 1.13e-4 mm > 1e-4 容差，不能用原图值）。
     返回拆分目录 STUDENT_DIR/<case>/。
     """
     import nibabel as nib
@@ -157,12 +194,14 @@ def split_pred(pred_path: Path, image_path: Path, case_id: str,
         return out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     img = nib.load(str(image_path))
+    fixed_path = STUDENT_DIR / "_orthofix" / f"{case_id}.nii.gz"
+    ref = nib.load(str(fixed_path)) if fixed_path.exists() else img
     pred_img = nib.load(str(pred_path))
-    assert_affine_match(img, pred_img, label=f"student-split {case_id}")
+    assert_affine_match(ref, pred_img, label=f"student-split {case_id}")
     pred_arr = np.asarray(pred_img.dataobj)
     for val, cls_name in sorted(dataset_labels.items()):
         nib.save(
-            nib.Nifti1Image((pred_arr == val).astype(np.uint8), img.affine),
+            nib.Nifti1Image((pred_arr == val).astype(np.uint8), ref.affine),
             str(out_dir / f"{cls_name}.nii.gz"),
         )
     return out_dir
