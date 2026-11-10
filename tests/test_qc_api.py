@@ -22,7 +22,9 @@ def test_thresholds_endpoint(client):
     doc = r.json()
     assert "rules" in doc
     assert "review_sampling" in doc
-    assert doc["rules"]["multi_teacher_consistency"]["enabled"] is False
+    # M4 起 multi_teacher_consistency 启用（学生模型已出现，阶段 5）
+    assert doc["rules"]["multi_teacher_consistency"]["enabled"] is True
+    assert doc["rules"]["multi_teacher_consistency"]["threshold"] == 0.80
 
 
 def test_review_tasks_list_endpoint(client):

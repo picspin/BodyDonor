@@ -111,6 +111,10 @@ def qc_series(
         hu_values=hu_values,
         totalseg_classes=totalseg_classes or None,
         thresholds=th,
+        # student_mask_arr / student_classes 显式不传：单图 QC 的对象是教师
+        # mask，学生 mask 需 GPU 级重推理，此处无现成学生 mask 可比（不为传
+        # 而传造假 mask）——multi_teacher_consistency 在 rule_scores 里记
+        # skipped="no student mask"，不进 flags、不计入 enabled 分母
     )
     # QCReport 落库（单一写入纪律）
     engine = db._engine(url)

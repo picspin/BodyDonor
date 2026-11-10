@@ -11,9 +11,11 @@
     （`qc_coldstart()`）。该数据集真值与教师同源偏乐观，只当起点（proposal §7）。
   - **在线校准**：人工抽检结果（接受/修正/拒绝）回流为标签，定期
     `qc_calibrate()` 重算各阈值并写回 yaml（source 变 calibrated_on_N）。
-- **多教师一致性规则 M3 不启用**：M3 只有 TotalSegmentator 一个教师，无第二
-  mask 可比（proposal §7 明示该规则在 M4 学生模型出现后启用，不为通过验收
-  造假数据）。配置 enabled=false；M4 起按同一冷启动流程校准后开启。
+- **多教师一致性规则 M4 启用**：M3 只有 TotalSegmentator 一个教师，无第二
+  mask 可比（proposal §7 明示不为通过验收造假数据）；M4 学生模型出现后启用，
+  按 **mean Dice** 聚合（阈值 0.80，校准依据见 rule docstring：均值 flag
+  5/30 例有判别力，最差类 flag 24/30 例无判别力）。单图 QC 无学生 mask 时
+  显式 skipped（不进 flags、不计入 enabled 分母）。
 - **抽检混合采样**（proposal §6 第 5 阶段）：flagged 70% / clean 随机 30%
   生成 ReviewTask（clean 组确认「没 flag 的真好」）。
 
@@ -24,7 +26,7 @@
 - holes：内部空洞占比高
 - boundary_smoothness：表面积/体积形状因子异常
 - hu_distribution：mask 内 HU 分布出软组织窗（骨类跳过）
-- multi_teacher_consistency：**M3 关闭**
+- multi_teacher_consistency：教师 vs 学生逐类 Dice（M4 启用，均值聚合）
 - left_right_symmetry：成对器官体积比异常
 - empty/full mask 检查：恒开（空 mask/全 mask 一票否决，不占 config 槽位）
 """
@@ -308,13 +310,77 @@ def rule_left_right_symmetry(
     }
 
 
-def rule_multi_teacher_consistency(**_kw) -> tuple[bool, float, dict[str, Any]]:
-    """多教师一致性：**M3 不执行**（单教师无第二 mask 可比）。
+def rule_multi_teacher_consistency(
+    teacher_arr: Any, student_arr: Any,
+    teacher_classes: dict[int, str] | None,
+    student_classes: dict[int, str] | None,
+    cfg: dict[str, Any], **_kw,
+) -> tuple[bool, float, dict[str, Any]]:
+    """多教师一致性（M4 启用）：教师 mask vs 学生 mask 逐类体素 Dice。
 
-    M4 学生模型出现后启用（proposal §7：不为通过验收造假数据）。本函数恒返回
-    skipped=True，M3 的 QCReport 不含该规则的 flagged 记录。
+    M4 学生模型出现后启用（proposal §7：不为通过验收造假数据）。聚合方式 =
+    参与比较类的 **mean Dice**（不是最差类）——校准依据（M4 收尾第二轮实测，
+    30 例教师 vs 学生逐类 Dice，2026-11-11）：最差类聚合在 threshold=0.80 下
+    flag 24/30 例（无判别力，基本等于全审），均值聚合 flag 5/30 例（flag 的
+    正是分歧最大的 5 例：case 级均值最低者）。阈值数值保持 0.80 不改，校准的
+    是聚合方式。阶段 5 校准输入：eval/student_teacher_consistency.json
+    （419 对 mean 0.8560、p10 0.6986）。
+
+    - 按类名对齐：教师值用 TS 标准值、学生值用 Dataset501 值 1-15（编号不同，
+      必须按名字对齐，不能按值比）
+    - 只比两者名字交集的类：学生范围外的教师类跳过（detail 记
+      skipped_teacher_only_classes 数量与类名），不算不一致
+    - 逐类 Dice 只算两边任一非空的类（空对空不计）
+    - flagged = 参与比较类的 mean Dice < cfg threshold
     """
-    return False, 1.0, {"skipped": "M3 单教师：该规则在 M4 学生模型出现后启用"}
+    if not cfg.get("enabled", True):
+        return False, 1.0, {"skipped": "disabled"}
+    import numpy as np
+
+    if teacher_arr is None or student_arr is None:
+        return False, 1.0, {"skipped": "no student mask"}
+    threshold = float(cfg.get("threshold", 0.80))
+    teacher_classes = teacher_classes or {}
+    student_classes = student_classes or {}
+
+    t_arr = np.asarray(teacher_arr)
+    s_arr = np.asarray(student_arr)
+    t_label_by_name = {v: k for k, v in teacher_classes.items()}
+    s_label_by_name = {v: k for k, v in student_classes.items()}
+    teacher_names = set(t_label_by_name)
+    student_names = set(s_label_by_name)
+    skipped_teacher_only = sorted(teacher_names - student_names)
+
+    per_class: dict[str, float] = {}
+    for name in sorted(teacher_names & student_names):
+        t = t_arr == t_label_by_name[name]
+        s = s_arr == s_label_by_name[name]
+        denom = float(t.sum()) + float(s.sum())
+        if denom == 0:
+            continue  # 空对空不计
+        per_class[name] = 2.0 * float((t & s).sum()) / denom
+
+    if not per_class:
+        return False, 1.0, {
+            "threshold": threshold, "mean_dice": 1.0,
+            "n_compared_classes": 0,
+            "skipped_teacher_only_classes": len(skipped_teacher_only),
+            "skipped_teacher_only_names": skipped_teacher_only,
+            "note": "无交集非空类可比（不 flag，不算不一致）",
+        }
+    mean_dice = sum(per_class.values()) / len(per_class)
+    worst_class = min(per_class, key=per_class.__getitem__)
+    flagged = mean_dice < threshold
+    return flagged, (0.0 if flagged else 1.0), {
+        "threshold": threshold,
+        "mean_dice": round(mean_dice, 4),
+        "worst_class": worst_class,
+        "worst_dice": round(per_class[worst_class], 4),
+        "n_compared_classes": len(per_class),
+        "per_class_dice": {k: round(v, 4) for k, v in sorted(per_class.items())},
+        "skipped_teacher_only_classes": len(skipped_teacher_only),
+        "skipped_teacher_only_names": skipped_teacher_only,
+    }
 
 
 # 恒开规则名 -> 实现
@@ -359,12 +425,17 @@ def run_qc(
     hu_values: Any = None,
     totalseg_classes: dict[int, str] | None = None,
     thresholds: dict[str, Any] | None = None,
+    student_mask_arr: Any = None,
+    student_classes: dict[int, str] | None = None,
 ) -> QCResult:
-    """对一张 mask 评分（proposal §7 全部规则；M3 无多教师一致性）。
+    """对一张 mask 评分（proposal §7 全部规则）。
 
     - 空 mask / 全 mask：恒开检查，任一命中一票否决（passed=false）
     - volume_prior 在 hard_flag_rules 里：一票否决
     - overall_score = 1 - flagged_rules/enabled_rules（线性降，空/全 mask = 0）
+    - multi_teacher_consistency（M4 启用）：仅当 student_mask_arr 给出才真跑；
+      enabled 但没给 → rule_scores 记 skipped（不进 flags、不计入 enabled
+      分母，与 disabled 规则同处理）
     """
     import numpy as np
 
@@ -503,15 +574,21 @@ def run_qc(
         rule_outputs.append((RULE_LEFT_RIGHT, flagged, score, detail))
     else:
         rule_scores[RULE_LEFT_RIGHT] = {"skipped": "disabled"}
-    # multi_teacher_consistency：M3 恒 skipped（单教师）
+    # multi_teacher_consistency（M4 启用）：enabled 且给了学生 mask → 真跑；
+    # enabled 但没给 → 显式 skipped（不进 flags、不计入 enabled 分母，与
+    # disabled 规则同处理）——qc_pipeline 调用点目前无学生 mask 可用（单图
+    # QC 时学生重推理代价 GPU 级），保持不传，不为传而传造假 mask
     cfg = _rule_cfg(th, RULE_MULTI_TEACHER)
     if cfg.get("enabled", False):
-        # M4 起才可能进入这里；M3 配置恒 false
-        flagged, score, detail = rule_multi_teacher_consistency()
-        rule_outputs.append((RULE_MULTI_TEACHER, flagged, score, detail))
+        if student_mask_arr is not None:
+            flagged, score, detail = rule_multi_teacher_consistency(
+                arr, student_mask_arr, totalseg_classes, student_classes, cfg,
+            )
+            rule_outputs.append((RULE_MULTI_TEACHER, flagged, score, detail))
+        else:
+            rule_scores[RULE_MULTI_TEACHER] = {"skipped": "no student mask"}
     else:
-        rule_scores[RULE_MULTI_TEACHER] = {"skipped": cfg.get(
-            "note", "M3 单教师：该规则在 M4 学生模型出现后启用")}
+        rule_scores[RULE_MULTI_TEACHER] = {"skipped": "disabled"}
 
     # ---- 汇总 ----
     hard_flags = set(th.get("overall", {}).get("hard_flag_rules", []))

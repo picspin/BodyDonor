@@ -41,18 +41,132 @@ def test_thresholds_all_have_source(th):
         assert cfg["source"] in ("cold_start", "calibrated_on_N")
 
 
-def test_multi_teacher_disabled_in_m3(th):
-    """多教师一致性 M3 不启用（proposal §7；M4 学生模型出现后启用）。"""
+def test_multi_teacher_enabled_in_m4(th):
+    """多教师一致性 M4 启用（proposal §7：学生模型出现后开，不造假数据）。"""
     cfg = th["rules"][RULE_MULTI_TEACHER]
-    assert cfg["enabled"] is False
-    assert "M4" in cfg["note"]
-    # run_qc 不对该规则产生 flagged 记录
+    assert cfg["enabled"] is True
+    assert cfg["threshold"] == 0.80
+    assert cfg["source"] == "cold_start"  # 阈值数值未变，校准的是聚合方式
+    assert cfg["calibrated_on"] == 0
+    assert "mean Dice" in cfg["note"]
+    assert "5/30" in cfg["note"]  # 校准数字在注记里可见
+
+
+def test_multi_teacher_identical_masks_not_flagged():
+    """一致 mask：逐类 Dice 全 1.0，mean 1.0 不 flag。"""
+    from bodydonor.qc import rule_multi_teacher_consistency
+
     shape = (32, 32, 16)
     arr = np.zeros(shape, dtype=np.uint8)
     arr[5:20, 5:20, 2:10] = 1
-    r = run_qc(arr, shape, "mv-x", "sid-x", thresholds=th)
+    arr[20:28, 5:12, 2:10] = 2
+    cfg = {"enabled": True, "threshold": 0.80}
+    flagged, score, detail = rule_multi_teacher_consistency(
+        arr, arr.copy(), {1: "liver", 2: "spleen"}, {1: "liver", 2: "spleen"}, cfg,
+    )
+    assert not flagged
+    assert score == 1.0
+    assert detail["mean_dice"] == 1.0
+    assert detail["n_compared_classes"] == 2
+    assert detail["worst_dice"] == 1.0
+    assert detail["threshold"] == 0.80
+    assert detail["per_class_dice"] == {"liver": 1.0, "spleen": 1.0}
+
+
+def test_multi_teacher_inconsistent_masks_flagged():
+    """不一致 mask：mean Dice < 0.80 flag（worst_class/worst_dice 落 detail）。"""
+    from bodydonor.qc import rule_multi_teacher_consistency
+
+    shape = (64, 64, 16)
+    t = np.zeros(shape, dtype=np.uint8)
+    s = np.zeros(shape, dtype=np.uint8)
+    t[5:25, 5:25, 2:12] = 1       # teacher liver 4000 体素
+    s[5:10, 5:10, 2:5] = 1        # student liver 只有小块（Dice < 0.2）
+    t[30:40, 30:40, 2:10] = 2     # teacher spleen 800 体素
+    s[30:40, 30:40, 2:10] = 2     # student spleen 完全一致（Dice 1.0）
+    cfg = {"enabled": True, "threshold": 0.80}
+    flagged, score, detail = rule_multi_teacher_consistency(
+        t, s, {1: "liver", 2: "spleen"}, {1: "liver", 2: "spleen"}, cfg,
+    )
+    assert flagged
+    assert score == 0.0
+    assert detail["mean_dice"] < 0.80
+    assert detail["worst_class"] == "liver"
+    assert detail["worst_dice"] < 0.2
+    assert detail["n_compared_classes"] == 2
+
+
+def test_multi_teacher_no_student_mask_skipped(th):
+    """enabled 但无学生 mask：run_qc 显式 skipped，不进 flags、不计入分母。"""
+    shape = (64, 64, 32)
+    arr = np.zeros(shape, dtype=np.uint8)
+    arr[10:30, 10:30, 5:20] = 1
+    hu = np.full(shape, 50, dtype=np.int16)
+    r = run_qc(
+        arr, shape, "mv-ns", "sid-ns", thresholds=th, hu_values=hu,
+        totalseg_classes={1: "liver"},  # 不传 student_mask_arr
+    )
     assert RULE_MULTI_TEACHER not in r.flags
-    assert r.rule_scores[RULE_MULTI_TEACHER].get("skipped")
+    assert r.rule_scores[RULE_MULTI_TEACHER] == {"skipped": "no student mask"}
+
+
+def test_multi_teacher_disabled_skipped(th):
+    """disabled：rule_scores 记 skipped=disabled（与其他规则同处理）。"""
+    from copy import deepcopy
+
+    from bodydonor.qc import rule_multi_teacher_consistency
+
+    shape = (32, 32, 16)
+    arr = np.zeros(shape, dtype=np.uint8)
+    arr[5:20, 5:20, 2:10] = 1
+    cfg = {"enabled": False, "threshold": 0.80}
+    flagged, score, detail = rule_multi_teacher_consistency(
+        arr, arr.copy(), {1: "liver"}, {1: "liver"}, cfg,
+    )
+    assert not flagged
+    assert score == 1.0
+    assert detail == {"skipped": "disabled"}
+    # yaml 整体 disabled 路径（run_qc 内）
+    th_off = deepcopy(th)
+    th_off["rules"][RULE_MULTI_TEACHER]["enabled"] = False
+    r = run_qc(arr, shape, "mv-off", "sid-off", thresholds=th_off)
+    assert r.rule_scores[RULE_MULTI_TEACHER] == {"skipped": "disabled"}
+
+
+def test_multi_teacher_skips_teacher_only_classes_by_name():
+    """教师独有类按名字跳过，不计入 mean（编号不同的映射证明按名对齐）。
+
+    教师 TS 标准值（liver=6、spleen=1），学生 Dataset501 值（liver=1、
+    spleen=2）——编号不同，按值比对必然全错；按名对齐后 liver 完全一致、
+    教师独有的 aorta 被跳过。
+    """
+    from bodydonor.qc import rule_multi_teacher_consistency
+
+    shape = (32, 32, 16)
+    t = np.zeros(shape, dtype=np.uint8)
+    s = np.zeros(shape, dtype=np.uint8)
+    t[5:20, 5:20, 2:10] = 6    # teacher liver（TS 值 6）
+    t[20:28, 20:28, 2:10] = 1  # teacher spleen（TS 值 1）
+    t[25:28, 3:6, 2:8] = 4     # teacher aorta（学生范围外；不与其他类重叠）
+    s[5:20, 5:20, 2:10] = 1    # student liver（Dataset501 值 1）
+    s[20:28, 20:28, 2:10] = 2  # student spleen（Dataset501 值 2）
+    teacher_classes = {6: "liver", 1: "spleen", 4: "aorta"}
+    student_classes = {1: "liver", 2: "spleen"}
+    cfg = {"enabled": True, "threshold": 0.80}
+    flagged, score, detail = rule_multi_teacher_consistency(
+        t, s, teacher_classes, student_classes, cfg,
+    )
+    assert not flagged
+    assert detail["mean_dice"] == 1.0
+    assert detail["n_compared_classes"] == 2
+    assert set(detail["per_class_dice"]) == {"liver", "spleen"}
+    assert detail["skipped_teacher_only_classes"] == 1
+    assert detail["skipped_teacher_only_names"] == ["aorta"]
+    # 反证：若按值比对（t==1 对 s==1），liver 会错配成 spleen 位置
+    by_value = 2.0 * float(((t == 1) & (s == 1)).sum()) / (
+        float((t == 1).sum()) + float((s == 1).sum())
+    )
+    assert by_value < 0.01  # 按值比对 liver Dice≈0，按名对齐 Dice=1.0
 
 
 def test_volume_prior_flags_tiny_mask():

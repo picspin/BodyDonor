@@ -5,10 +5,9 @@
 #   calibrated_on: 0            —— 已回流 case 数（qc-calibrate 重算时更新）
 #   calibrated_at: <date>       —— 最近一次在线校准日期（无则空）
 #
-# 多教师一致性规则（Dice < 0.80 则 flagged）：**M3 不启用**。
-# M3 只有 TotalSegmentator 一个教师（proposal §7 明示「该规则实际无法工作；
-# M3 验收中注明该规则在 M4 学生模型出现后启用，不要为通过验收造假数据」）。
-# M4 学生模型出现后 enabled 改 true 并补 threshold。
+# 多教师一致性规则（Dice < 0.80 则 flagged）：**M3 不启用（单教师）**，M4
+# 学生模型出现后启用（2026-11-11 enabled 改 true）。M3 只有 TotalSegmentator
+# 一个教师（proposal §7 明示「该规则实际无法工作；不要为通过验收造假数据」）。
 
 # 冷启动数据集（qc_thresholds.yaml 的校准依据记录）
 cold_start:
@@ -70,14 +69,14 @@ rules:
     # /costal/teeth/sacrum/craniofacial）不适用软组织窗，跳过本规则
     skip_bone_classes: true
 
-  # ---- 多教师一致性（M3 不启用：单教师无第二 mask 可比；M4 学生模型出现后启用）----
+  # ---- 多教师一致性（M3 不启用：单教师；M4 学生模型出现后启用，2026-11-11）----
   multi_teacher_consistency:
-    enabled: false
+    enabled: true
     source: cold_start
     calibrated_on: 0
     calibrated_at: ""
-    note: "M3 单教师（TotalSegmentator）无第二 mask 可比——proposal §7 明示该规则在 M4 学生模型出现后启用。M4 起本阈值生效。"
-    threshold: 0.80   # 预留初值（M4 启用时经同样的冷启动流程校准）
+    note: "M4 启用（学生模型 student-nnunet-v2-distill-20261109T062920Z 已出现）。聚合方式 = 参与比较类的 mean Dice（不是最差类）——校准依据（2026-11-11 实测，教师 vs 学生逐类 Dice，30 例）：419 对 mean 0.8560、p10 0.6986；case 级最差类聚合在 0.80 下 flag 24/30 例（无判别力，基本等于全审），均值聚合 flag 5/30 例（有判别力，flag 的正是分歧最大的 5 例）。阈值数值保持 0.80 初值不改——本次校准的是聚合方式，不是数值重算（source 保持 cold_start、calibrated_on 保持 0）。单图 QC 无学生 mask 时显式 skipped，不进 flags、不计入 enabled 分母。"
+    threshold: 0.80   # 均值 Dice 判据（校准的是聚合方式：均值而非最差类；数值未变）
 
   # ---- 左右对称性（适用成对器官；差异过大 flagged 交抽检）----
   left_right_symmetry:
