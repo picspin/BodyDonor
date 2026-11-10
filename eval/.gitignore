@@ -5,3 +5,4 @@
 !.gitignore
 !build_holdout.py
 !evaluate_holdout.py
+!evaluate_student_holdout.py
