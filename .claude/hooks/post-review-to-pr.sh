@@ -104,7 +104,7 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 0
 fi
 remote_url=$(git remote get-url origin 2>/dev/null || true)
-repo=$(printf '%s' "$remote_url" | sed -E 's#.*github\.com[/:]([^/]+/[^/]+?)(\.git)?$#\1#')
+repo=$(printf '%s' "$remote_url" | sed -E 's#.*github\.com[/:]([^/]+/[^/]+)$#\1#' | sed 's#\.git$##')
 if [ -z "$repo" ]; then
   echo "post-review-to-pr: SKIP — cannot derive owner/repo from origin ($remote_url)"
   exit 0
