@@ -201,13 +201,23 @@ def _stdout_to_stderr() -> Any:
         sys.stdout = real_stdout
 
 
+def _count_target_voxels(mask_arr):
+    """修正 mask 的前景体素数。
+
+    mask 是二值 0/1（target buffer uint8），target_label 只是语义类号，
+    不参与计数：前景 = mask > 0 的体素。空 mask 返回 0。
+    """
+    import numpy as np
+
+    arr = np.asarray(mask_arr)
+    return int((arr > 0).sum()) if arr.size else 0
+
 def run_task(task_json: dict[str, Any]) -> dict[str, Any]:
     """执行单个 nnInteractive 修正任务，返回结果 JSON（dict）。"""
     job_id = str(task_json.get("job_id", ""))
     image_nii = Path(str(task_json["image_nii"]))
     device = str(task_json.get("device", "cuda"))
     output_dir = Path(str(task_json["output_dir"]))
-    target_label = int(task_json.get("target_label", 1))
     prompts, perr = _validate_prompts(task_json.get("prompts"))
     if perr:
         return _error_result(2, perr)
@@ -331,7 +341,12 @@ def run_task(task_json: dict[str, Any]) -> dict[str, Any]:
     if peak is None and not peak_reason:
         peak_reason = "peak 值不可用"
 
-    n_target_voxels = int((mask_arr == target_label).sum()) if mask_arr.size else 0
+    # 修正 mask 是二值 0/1（target buffer 为 uint8，nnInteractive 只写 0/1），
+    # target_label 是语义类号（如 liver=44），不是 mask 里的体素值。
+    # 旧代码 (mask_arr == target_label) 在 target_label != 1 时恒为 0
+    # （2026-11-11 GPU 验证实测：mask 非零 16754 体素，sidecar 却报 0；
+    # CPU 验证 target_label=1 时 ==1 与 >0 等价，4055 恰好正确，同一口径）。
+    n_target_voxels = _count_target_voxels(mask_arr)
     return {
         "status": "ok",
         "exit_code": 0,

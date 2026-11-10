@@ -105,6 +105,40 @@ class TestLicenseGate:
 # 锁互斥（临时锁路径；真卡 live 验证另做，不动真实锁文件）
 # ---------------------------------------------------------------------------
 
+class TestTargetVoxelCount:
+    """n_target_voxels 计数回归（2026-11-11 GPU 验证发现的真 bug）。
+
+    修正 mask 是二值 0/1，target_label 是语义类号（如 liver=44），不是
+    mask 体素值。旧代码 (mask == target_label) 在 target_label != 1 时恒
+    报 0（GPU 验证：mask 非零 16754 体素，sidecar 报 0）；CPU 验证
+    target_label=1 时 ==1 与 >0 等价，4055 恰好正确——同一口径，不同结果。
+    """
+
+    def test_binary_mask_counts_foreground_not_target_label(self) -> None:
+        import numpy as np
+
+        from bodydonor.nni_runner import _count_target_voxels
+
+        arr = np.zeros((10, 10, 10), dtype=np.uint8)
+        arr[2:5, 2:5, 2:5] = 1  # 27 个前景体素
+        # 语义类号 44 不应影响计数：前景就是 27
+        assert _count_target_voxels(arr) == 27
+
+    def test_empty_mask_counts_zero(self) -> None:
+        import numpy as np
+
+        from bodydonor.nni_runner import _count_target_voxels
+
+        assert _count_target_voxels(np.zeros((4, 4, 4), dtype=np.uint8)) == 0
+
+    def test_full_mask_counts_all(self) -> None:
+        import numpy as np
+
+        from bodydonor.nni_runner import _count_target_voxels
+
+        assert _count_target_voxels(np.ones((3, 3, 3), dtype=np.uint8)) == 27
+
+
 class TestLockMutex:
     def test_interactive_fast_fail_when_held(self, tmp_path: Path) -> None:
         """CUDA 交互修正：锁被占（假持有者）时 GpuBusyError fast-fail。"""
@@ -294,6 +328,12 @@ class TestRunnerContractCpu:
         # baselineTeacherVersion：tmp patch 无 DB 行 → null + 注明原因（不猜数字）
         assert prov["baselineTeacherVersion"] is None
         assert prov["baselineTeacherVersionReason"]
+        # n_target_voxels 与落盘 mask 交叉核对（2026-11-11 回归：二值 mask
+        # 前景计数，target_label=1 时旧口径恰好正确，改口径后仍须一致）
+        import nibabel as _nib
+
+        _mask_arr = np.asarray(_nib.load(result.mask_path).dataobj)
+        assert sidecar["n_target_voxels"] == int((_mask_arr > 0).sum())
         # 实测耗时 > 0（真实跑通）
         assert result.load_seconds > 0
         assert result.inference_seconds > 0
