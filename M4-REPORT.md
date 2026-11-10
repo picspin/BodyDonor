@@ -314,8 +314,8 @@ s0209 学生成绩真实差：aorta dice 0.17（GT 105288 体素 vs 预测 11295
 7. **阶段 5 规则在 qc_pipeline 侧尚无学生 mask 可用**（§3.3）：单图 QC 显式
    skipped；真学生 mask 的线上 flag 只在母代理真机复核跑过两例。
 8. **s0209 极端椭球 case 学生漏检未处理**（§3.6）。
-9. **本地 main 领先远端 34 提交、未推**（`git rev-list --count origin/main..HEAD`
-   实测 34；本报告 commit 后 +1）。push 是显式决策。
+9. **本地 main 领先远端 37 提交、未推**（截至本 commit，`git rev-list --count origin/main..HEAD`
+   实测 37，含本报告三个 commit）。push 是显式决策。
 10. **M3 遗留不变项**：TotalSegmentator dataset 全量下载、100 MB 三处强制的
     另两处、多指纹部署语义、BSL LICENSE 占位、Uberon 56 条空串待核对、
     niivue MIP 推迟 1.x stable。
