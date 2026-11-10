@@ -271,6 +271,14 @@ s0209 学生成绩真实差：aorta dice 0.17（GT 105288 体素 vs 预测 11295
 的 VRAM 5569.0 与耗时 1957.8s 在 ~/m4-logs/student-holdout.log 首次 summary
 里，两处不混写。这是运行产物不入仓（eval/.gitignore）的固有代价，日志留档。
 
+### 3.8 6c28f95 提交信息“42 项”是错数
+
+`6c28f95`（M4 蒸馏数据集准备）提交信息写
+“tests/test_distill_license_gate.py：42 项全绿”，实测该提交只新增 25 个
+`def test`（`git show 6c28f95 -- tests/` 计数，25 个函数名可逐一核对）。
+42 是错数，实测新增 25 项（M4 阶段 4 复核结论）。本报告 §2.2 的 pytest
+基线演进按实测点数计，不按提交信息。
+
 ---
 
 ## 4. 非目标清单（M4 不做项）
@@ -311,6 +319,8 @@ s0209 学生成绩真实差：aorta dice 0.17（GT 105288 体素 vs 预测 11295
 10. **M3 遗留不变项**：TotalSegmentator dataset 全量下载、100 MB 三处强制的
     另两处、多指纹部署语义、BSL LICENSE 占位、Uberon 56 条空串待核对、
     niivue MIP 推迟 1.x stable。
+
+11. **6c28f95 “42 项”错数**：见 §3.8（实测新增 25 项，提交信息写 42 是错的）。
 
 ---
 
