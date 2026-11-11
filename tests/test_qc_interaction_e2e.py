@@ -108,6 +108,9 @@ class TestReplayRealPath:
 
         与 TestCorrectSubmitE2E.e2e_series 同构（tracker 清空注册为 finalizer；
         settings.database.url 在 scan 前指 tmp——series_id = hash(文件名)）。
+        另 data_dir 指 tmp：qc_series 读 settings.resolved_data_dir / "storage"
+        （与 app.storage 的 monkeypatch 无关），不指则 submit 的 mask_vN 落
+        tmp storage 而 qc_series 读真实目录 → KeyError。
         """
         import nibabel as nib
         from fastapi.testclient import TestClient  # noqa: F401
@@ -128,13 +131,20 @@ class TestReplayRealPath:
             type(app_module.settings.database)(url=tmp_url),
         )
         settings.database.url = tmp_url
+        monkeypatch.setattr(app_module.settings, "data_dir", tmp_path / "data")
+        settings.data_dir = tmp_path / "data"  # scan/commit/qc_series 同一 resolved_data_dir
         app_module._interaction_trackers.clear()
 
         from bodydonor.db import init_db
 
         init_db(tmp_url)
         outcome = scan(patch, settings)
-        storage = LocalFsStorage(tmp_path / "storage")
+        # storage 根与 qc_series 统一（settings.resolved_data_dir / "storage" =
+        # tmp/data/storage）：app._get_storage 返回模块级 storage（monkeypatch
+        # 本属性），qc_series 自建 LocalFsStorage(settings.resolved_data_dir /
+        # "storage")——两处不同根会让 submit 的 mask_vN 落 tmp/storage 而
+        # qc_series 读 tmp/data/storage → KeyError
+        storage = LocalFsStorage(settings.resolved_data_dir / "storage")
         monkeypatch.setattr(app_module, "storage", storage)
         committed = commit(outcome, settings, storage)
         sid = committed.selected_series_ids[0]
@@ -254,23 +264,29 @@ class TestReplayRealPath:
         # ---- 互补性：过程级 vs 结果级（同 case，全规则 thresholds）----
         out_full = qc_series(sid, settings, thresholds=load_qc_thresholds())
         result_flags = set(out_full["flags"])
+        process_rule_set = {RULE_INTERACTION_CONVERGENCE, RULE_INTERACTION_ABANDONMENT}
         overlap = sorted(flags & result_flags)
-        only_process = sorted(flags - result_flags)
         only_result = sorted(result_flags - flags)
-        # 互补性数字（真实回放语料 1 case，交互 case 占比 1/1）：
-        # aorta 修正产物小而实心，结果级体素规则预期不 flag → 互补 =
-        # 仅过程级 flag（interaction_abandonment）≥ 1
-        assert only_process, (
-            f"过程级与结果级完全重叠则无可度量互补性：process={sorted(flags)} "
-            f"result={sorted(result_flags)}"
+        # 互补性可度量口径：结果级 flag 集合里既有过过程级 flag（重叠）又有
+        # 过程级不知道的维度（only_result，体素/统计规则——过程信号不覆盖），
+        # 且过程级 flag 的信号（abandonment 事件）在最小 thresholds 下就 flag
+        # （结果级全 thresholds 下同 rule 名也 flag）——两类规则各提供对方
+        # 没有的信号，非完全重叠
+        n_process = len([f for f in result_flags if f in process_rule_set])
+        n_result_only = len([f for f in only_result if f not in process_rule_set])
+        assert n_process >= 1, f"过程级 flag 缺失：{sorted(result_flags)}"
+        assert n_result_only >= 1, (
+            f"无可度量互补性（结果级无过程级不覆盖的维度）："
+            f"process={sorted(flags)} result={sorted(result_flags)}"
         )
         summary = {
             "case": sid,
-            "process_flags": sorted(flags),
-            "result_flags": sorted(result_flags),
+            "process_flags_min_thresholds": sorted(flags),
+            "result_flags_full_thresholds": sorted(result_flags),
             "overlap": overlap,
-            "only_process": only_process,
             "only_result": only_result,
+            "n_process_flagged": n_process,
+            "n_result_only_flagged": n_result_only,
         }
         (tmp_path / "m6b_complementarity.json").write_text(
             json.dumps(summary, indent=1, ensure_ascii=False), encoding="utf-8"
@@ -279,22 +295,25 @@ class TestReplayRealPath:
     def test_replay_pure_auto_skipped(self, replay_series) -> None:  # noqa: ANN001
         """纯自动 case（无 interactionMetrics）：qc_series 两规则显式 skipped。
 
-        最新 MaskVersion 挂 interactionMetrics={} 的 provenance（合成：标注
-        synthetic sessionId——模拟 tracker 空时 submit 的真实产物形态），
-        测完恢复 provenance=None（不污染同 class fixture 的其他测试）。
+        seed 一个 teacher MaskVersion（provenance=None——segmentation worker
+        落的 MV 真实形态，纯自动 case 没有 nnInteractive 交互），qc_series 取
+        该 MV 回放。commit 本身不建 MaskVersion（只有 segmentation worker /
+        submit 建），fixture 后 DB 无 MV，本测试 seed 之（storage_key 指向
+        fixture 已落盘的 mask.nii.gz，真实像素文件）。
         """
+        import nibabel as nib
         from sqlalchemy import select
         from sqlalchemy.orm import Session
 
         from bodydonor import db
         from bodydonor.models import MaskVersion
 
-        sid, _storage, settings = replay_series
+        sid, storage, settings = replay_series
         engine = db._engine(settings.database.url)
         try:
             with engine.connect() as conn:
                 s = Session(conn)
-                mv = (
+                n_before = (
                     s.execute(
                         select(MaskVersion)
                         .where(MaskVersion.series_id == sid[:60])
@@ -307,13 +326,25 @@ class TestReplayRealPath:
                 s.close()
         finally:
             engine.dispose()
-        assert mv is not None
-        mv.provenance = {"sessionId": "synthetic-empty", "interactionMetrics": {}}
+        assert n_before is None, "fixture 后不应有 MaskVersion（commit 不建 MV）"
+        # seed teacher MV（provenance=None）：mask 用 fixture 已落盘的基线 mask
+        row = storage.list_prefix("patch48")
+        mask_key = next(k for k in row if k.endswith("/mask.nii.gz"))
+        nib.load(str(storage.root / mask_key))  # 校验可读（真实像素文件）
         engine = db._engine(settings.database.url)
         try:
             with db.write_lock, engine.connect() as conn:
                 s = Session(conn)
-                s.merge(mv)
+                s.add(
+                    MaskVersion(
+                        mask_version_id="mv-m6b-pure-auto",
+                        series_id=sid[:60],
+                        version=1,
+                        source="teacher",
+                        storage_key=mask_key,
+                        provenance=None,
+                    )
+                )
                 s.commit()
                 s.close()
             out = qc_series(sid, settings, thresholds=_interaction_thresholds())
@@ -324,13 +355,6 @@ class TestReplayRealPath:
             assert RULE_INTERACTION_CONVERGENCE not in out["flags"]
             assert RULE_INTERACTION_ABANDONMENT not in out["flags"]
         finally:
-            # 恢复 provenance=None（不污染同 class fixture 的其他测试）
-            with db.write_lock, engine.connect() as conn:
-                s = Session(conn)
-                m = s.get(MaskVersion, mv.mask_version_id)
-                m.provenance = None
-                s.commit()
-                s.close()
             engine.dispose()
 
 
