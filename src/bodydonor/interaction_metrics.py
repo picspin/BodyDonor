@@ -69,7 +69,8 @@ def convergence_steps(
     """连续 consecutive 步 ΔDice < τ 时返回触发步数（1-based）；未收敛 None。
 
     例：[0.12, 0.008, 0.005] → 第 3 步触发（第 2、3 步连续 < 0.01）→ 3。
-    [0.12, 0.008] → 第 2 步触发 → 2。[0.12, 0.02] → 未收敛 → None。
+    [0.12, 0.008] → 仅 1 步 < τ（连续 2 步才计数）→ None。
+    [0.008, 0.02, 0.008, 0.005] → 中断重置 → 第 4 步触发 → 4。
     """
     run = 0
     for i, d in enumerate(per_step_delta_dice, start=1):
