@@ -26,15 +26,61 @@ from .storage import Job, LocalFsStorage, SqliteJobsQueue
 
 settings: Settings = load_settings()
 
-# M6-a：交互轨迹采集缓冲（进程内按 series；重启后草稿历史丢失，指标退化为
-# 空 dict 不造假重建——interaction_metrics 模块 docstring 诚实边界）
+# M6-a：交互轨迹采集缓冲（进程内按 series）。M6-b 跨重启持久化：首次为该
+# series 建 tracker 时从最新 MaskVersion 的 provenance.interactionMetrics
+# 恢复标量状态（abandonedAttempts / numPrompts，restore_tracker_from_metrics）；
+# 草稿序列不在落盘产物里，不造假重建（interaction_metrics 模块 docstring）。
 _interaction_trackers: dict[str, InteractionTracker] = {}
 _teacher_eval_counts: dict[str, int] | None | bool = False  # False=未加载, None=加载失败
 
 
 def _interaction_tracker(series_id: str) -> InteractionTracker:
-    """该 series 的 tracker（惰性创建）。"""
-    return _interaction_trackers.setdefault(series_id, InteractionTracker())
+    """该 series 的 tracker（惰性创建 + 惰性恢复 M6-b 标量状态）。"""
+    if series_id not in _interaction_trackers:
+        tracker = InteractionTracker()
+        _restore_tracker(series_id, tracker)
+        _interaction_trackers[series_id] = tracker
+    return _interaction_trackers[series_id]
+
+
+def _restore_tracker(series_id: str, tracker: InteractionTracker) -> None:
+    """从最新 MaskVersion 的 provenance.interactionMetrics 恢复标量（M6-b）。
+
+    DB 查询失败/无 MV/无 provenance 时静默跳过（tracker 保持空 dict——采集
+    主流程不因恢复路径异常而挡）；恢复语义见 restore_tracker_from_metrics。
+    """
+    from sqlalchemy import select
+
+    from . import db
+    from .interaction_metrics import restore_tracker_from_metrics
+    from .models import MaskVersion
+
+    try:
+        engine = db._engine(settings.database.url)
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy.orm import Session
+
+                s = Session(conn)
+                mv = (
+                    s.execute(
+                        select(MaskVersion)
+                        .where(MaskVersion.series_id == series_id[:60])
+                        .order_by(MaskVersion.version.desc())
+                        .limit(1)
+                    )
+                    .scalars()
+                    .first()
+                )
+                s.close()
+        finally:
+            engine.dispose()
+        prov = mv.provenance if mv is not None and isinstance(mv.provenance, dict) else {}
+        metrics = prov.get("interactionMetrics")
+        if isinstance(metrics, dict):
+            restore_tracker_from_metrics(tracker, metrics)
+    except Exception:  # noqa: BLE001 — 恢复失败不挡采集主流程（tracker 空 dict 继续）
+        pass
 
 
 def _teacher_case_counts() -> dict[str, int] | None:

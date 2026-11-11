@@ -23,8 +23,10 @@ acceptedClasses[]} 只存档不计算；本模块把 M5-d 推理调度已经产�
   标记：高风险类（prostate + 39/117 低频名单）为 "low"（M6-b 对这些类
   的 finalLocalDice 降权或不使用）。
 - tracker 是采集期内存缓冲（进程内按 series 实例化）：重启后草稿历史
-  丢失，指标退化为空 dict——不造假重建（任务 2：不从事后落盘产物重建
-  草稿序列）。
+  丢失——M6-b 起标量状态（abandonedAttempts / numPrompts）经
+  restore_tracker_from_metrics 从落盘 provenance 恢复（app._interaction_tracker
+  惰性恢复，同 series 最新 MaskVersion 的 interactionMetrics）；草稿序列
+  （drafts）不在落盘产物里，不造假重建，恢复后草稿间 delta 从新序列重算。
 """
 
 from __future__ import annotations
@@ -181,6 +183,40 @@ class InteractionTracker:
         }
 
 
+def restore_tracker_from_metrics(
+    tracker: InteractionTracker,
+    class_metrics: dict[str, Any],
+) -> None:
+    """从落盘的 provenance.interactionMetrics 恢复 tracker 标量状态（M6-b 任务 6）。
+
+    跨重启持久化：abandonedAttempts / numPrompts 是标量，可诚实恢复（重启后
+    再 correct/submit 仍能累计到上一进程的放弃计数与提示数）；草稿序列
+    （drafts）无法从 provenance 恢复——像素级历史不在落盘产物里，不造假重建
+    （M6-a 诚实边界不变），恢复后 convergenceSteps/perStepDeltaDice 从新草稿
+    序列重算（重启前的草稿间 delta 不可恢复，如实缺失）。
+
+    只恢复非负 int 标量（类型异常跳过该字段——不猜）；无条目/结构异常不 raise。
+    """
+    if not isinstance(class_metrics, dict):
+        return
+    for cls, entry in class_metrics.items():
+        if not isinstance(entry, dict):
+            continue
+        abandoned = entry.get("abandonedAttempts")
+        if isinstance(abandoned, int) and not isinstance(abandoned, bool) and abandoned > 0:
+            tracker.abandoned[cls] = tracker.abandoned.get(cls, 0) + abandoned
+        prompts = entry.get("numPrompts")
+        # 提示数只在该类无草稿序列时恢复（有草稿 = 本进程已 record，
+        # record_draft 会覆盖；无草稿 = 重启后首次 correct 前的兜底）
+        if (
+            isinstance(prompts, int)
+            and not isinstance(prompts, bool)
+            and prompts > 0
+            and not tracker.drafts.get(cls)
+        ):
+            tracker.prompt_counts[cls] = prompts
+
+
 __all__ = [
     "CONVERGENCE_CONSECUTIVE",
     "HIGH_RISK_TEACHER_CLASSES",
@@ -190,5 +226,6 @@ __all__ = [
     "convergence_steps",
     "dice_binary",
     "load_teacher_eval",
+    "restore_tracker_from_metrics",
     "teacher_reliability",
 ]

@@ -826,3 +826,147 @@ class TestCorrectSubmitE2E:
             )
             assert r1.status_code == 200
             assert r1.json()["abandonedAttempts"] == 2
+
+    def test_abandon_survives_tracker_reset(self, e2e_series) -> None:  # noqa: ANN001
+        """M6-b 跨重启持久化：_interaction_trackers.clear()（重启模拟）后
+        correct/abandon 计数从 provenance.interactionMetrics 恢复——abandon-draft
+        返回累计值（含上一进程次数）。真实 CPU 推理 ×2（~36s）。"""
+        from fastapi.testclient import TestClient
+
+        from bodydonor import app as app_module
+
+        sid, _storage, _settings = e2e_series
+        semantic_name = "aorta"
+        with TestClient(app_module.app) as c:
+            # 进程 1：correct + abandon ×1 → submit 落 provenance
+            r = c.post(
+                f"/review/{sid}/nninteractive-correct",
+                json={
+                    "prompts": [{"type": "point", "x": 24, "y": 24, "z": 24, "include": True}],
+                    "target_label": 1,
+                    "class_name": semantic_name,
+                },
+            )
+            assert r.status_code == 200, r.text
+            ra = c.post(
+                f"/review/{sid}/abandon-draft",
+                json={"target_label": 1, "class_name": semantic_name},
+            )
+            assert ra.status_code == 200
+            assert ra.json()["abandonedAttempts"] == 1
+            rs = c.post(
+                f"/review/{sid}/submit-nni",
+                json={
+                    "target_label": 1,
+                    "prompts": [
+                        {
+                            "type": "point",
+                            "x": 24,
+                            "y": 24,
+                            "z": 24,
+                            "include": True,
+                            "class": semantic_name,
+                        }
+                    ],
+                    "acceptedClasses": [semantic_name],
+                    "sessionId": "m6b-restart-1",
+                    "baselineTeacherVersion": None,
+                },
+            )
+            assert rs.status_code == 200, rs.text
+            assert (
+                rs.json()["provenance"]["interactionMetrics"][semantic_name]["abandonedAttempts"]
+                == 1
+            )
+        # ---- 重启模拟：进程内缓冲清空（tracker 丢失）----
+        app_module._interaction_trackers.clear()
+        with TestClient(app_module.app) as c:
+            # 进程 2：abandon-draft 从 provenance 恢复 abandoned=1 后 +1 → 2
+            ra2 = c.post(
+                f"/review/{sid}/abandon-draft",
+                json={"target_label": 1, "class_name": semantic_name},
+            )
+            assert ra2.status_code == 200
+            assert ra2.json()["abandonedAttempts"] == 2, (
+                "跨重启恢复失败：tracker 清空后 abandoned 计数应从 provenance 恢复"
+            )
+
+
+# ---------------------------------------------------------------------------
+# M6-b：tracker 跨重启持久化（restore_tracker_from_metrics + app 惰性恢复）
+# ---------------------------------------------------------------------------
+
+
+class TestRestoreTrackerFromMetrics:
+    def test_restores_abandoned_and_prompts(self) -> None:
+        """标量恢复：abandonedAttempts / numPrompts 进 tracker。"""
+        from bodydonor.interaction_metrics import restore_tracker_from_metrics
+
+        t = InteractionTracker()
+        restore_tracker_from_metrics(
+            t,
+            {
+                "aorta": {
+                    "numPrompts": 3,
+                    "convergenceSteps": None,
+                    "perStepDeltaDice": [],
+                    "finalLocalDice": None,
+                    "teacherReliability": "high",
+                    "abandonedAttempts": 2,
+                }
+            },
+        )
+        assert t.abandoned["aorta"] == 2
+        assert t.prompt_counts["aorta"] == 3
+        assert t.drafts == {}  # 草稿序列不造假重建
+
+    def test_adds_to_existing_counts(self) -> None:
+        """恢复叠加：tracker 已有计数时累加（不覆盖）。"""
+        from bodydonor.interaction_metrics import restore_tracker_from_metrics
+
+        t = InteractionTracker()
+        t.record_abandoned("aorta")
+        restore_tracker_from_metrics(t, {"aorta": {"numPrompts": 1, "abandonedAttempts": 2}})
+        assert t.abandoned["aorta"] == 3
+
+    def test_prompts_not_restored_when_drafts_exist(self) -> None:
+        """有草稿序列（本进程已 record）：提示数不恢复（record_draft 会覆盖）。"""
+        from bodydonor.interaction_metrics import restore_tracker_from_metrics
+
+        t = InteractionTracker()
+        t.record_draft("aorta", np.zeros((4, 4, 4), dtype=np.uint8), 5)
+        restore_tracker_from_metrics(t, {"aorta": {"numPrompts": 3, "abandonedAttempts": 0}})
+        assert t.prompt_counts["aorta"] == 5  # 保持本进程值
+
+    def test_non_int_garbage_skipped(self) -> None:
+        """类型异常标量跳过（不猜，不 raise）。"""
+        from bodydonor.interaction_metrics import restore_tracker_from_metrics
+
+        t = InteractionTracker()
+        restore_tracker_from_metrics(
+            t,
+            {
+                "aorta": {"numPrompts": "many", "abandonedAttempts": None},
+                "liver": "garbage",
+                "kidney_left": 42,
+            },
+        )
+        assert t.abandoned == {}
+        assert t.prompt_counts == {}
+
+    def test_non_dict_input_noop(self) -> None:
+        from bodydonor.interaction_metrics import restore_tracker_from_metrics
+
+        t = InteractionTracker()
+        restore_tracker_from_metrics(t, None)  # type: ignore[arg-type]
+        restore_tracker_from_metrics(t, "garbage")  # type: ignore[arg-type]
+        assert t.abandoned == {}
+
+    def test_zero_counts_not_restored(self) -> None:
+        """0 计数不进 dict（保持无信号语义，build_metrics get(cls, 0) 同值）。"""
+        from bodydonor.interaction_metrics import restore_tracker_from_metrics
+
+        t = InteractionTracker()
+        restore_tracker_from_metrics(t, {"aorta": {"numPrompts": 0, "abandonedAttempts": 0}})
+        assert "aorta" not in t.abandoned
+        assert "aorta" not in t.prompt_counts
