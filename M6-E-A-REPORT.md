@@ -160,4 +160,173 @@ run_qc 均值聚合 threshold 0.80）：
 
 ---
 
-（M6-a 一节由 M6-a 实施方在此追加。）
+## 2. M6-a：轨迹结构化——provenance.interactionMetrics（过程级指标）
+
+### 2.1 任务与范围
+
+~/M6-PLAN.md M6-a 节（v2，2026-11-11 修订版为准）：M5-e 的 provenance
+`{sessionId, baselineTeacherVersion, prompts[], acceptedClasses[]}` 只存档
+不计算；M6-a 增加 per-class 过程指标 `interactionMetrics`，**不改变合规
+语义**（nnInteractive 产物仍不进蒸馏训练集，消费方只读本指标、不读像素）：
+
+    {"<class>": {numPrompts, convergenceSteps, perStepDeltaDice[],
+                 finalLocalDice, teacherReliability, abandonedAttempts}}
+
+v2 关键修正（本节实现的口径）：
+
+- **perStepDeltaDice[i] = Dice(draft_{i-1}, draft_i)，草稿间语义**——绝不用
+  教师 mask 当伪真值（M4 实测教师 prostate 0.5914、AMOS 5/15 整类漏检、
+  39/117 低频类不可靠；教师当真值会系统性误导：用户修正教师漏检区域时
+  ΔDice 反而显示"变差"）。
+- **convergenceSteps = 连续 2 步 perStepDeltaDice < τ（τ=0.01）时的步数**
+  （明确可计算；未收敛 null）。
+- **finalLocalDice 保留 vs 教师语义，必须带 teacherReliability 标记**：
+  M4 高风险类（prostate + 39/117 低频名单）为 "low"，M6-b 对这些类降权。
+- **abandonedAttempts** 记录 M5-b"越改越差 → 放弃本类"次数。
+- **采集点在 M5-d 推理调度，只持久化已有中间变量，不新增推理开销**；
+  在上一版草稿仍在内存时直接算该步 delta，不从事后落盘产物重建草稿序列。
+
+### 2.2 采集点核实结论（关键设计点）
+
+**核实方式**：读 nni_runner.py / nninteractive_backend.py / app.py /
+review.html 的实际数据流，2026-11-12 实测。
+
+1. **nnInteractive 修正每次全量跑**：nni_runner.py `run_task` 从空 target
+   buffer 开始跑所有 prompts（上游 nnInteractiveInferenceSession 无"上一版
+   草稿"状态跨请求驻留）——草稿序列**不存在于单次推理进程内**，只存在于
+   **连续多次 HTTP 请求之间**（前端 m5RunInference 每次提示变化发一次
+   `/review/{series_id}/nninteractive-correct`）。
+2. **因此采集点在 app 层**：`review_nninteractive_correct` 推理成功后把本次
+   草稿落 per-series 进程内 tracker（`_interaction_trackers`），上一版草稿
+   仍在 tracker 内存中时直接算该步 delta——**不重跑推理、不读 nnInteractive
+   像素做任何指标以外的用途**（草稿 mask 本身来自 correct_image 落盘产物，
+   只用于 ΔDice 计算，不落库、不进蒸馏）。
+3. **tracker key 三端统一**：nninteractive-correct（采集）/ submit-nni
+   （持久化）/ abandon-draft（放弃）都用语义类名（body.class_name，前端
+   m5ClassName(lv)，缺省回退 `label-{n}`）。
+4. **前端放弃路径**（review.html data-discard）目前只清前端状态、不发后端
+   请求；abandon-draft 端点已就位（M6-b 消费时前端接线即可，本轮不改前端）。
+
+### 2.3 实现
+
+- **`src/bodydonor/interaction_metrics.py`**（77e1186，纯逻辑新模块）：
+  `dice_binary`（双空集=1.0）/ `convergence_steps`（连续 2 步 < τ，1-based）
+  / `teacher_reliability`（prostate 显式 low + 低频 <10 cases low，计数缺失
+  只按显式名单判）/ `load_teacher_eval`（eval/holdout_results.json 的
+  117 类 per_class_cases）/ `InteractionTracker`（record_draft 就地算
+  delta、record_abandoned 清草稿+计数、build_metrics 产 JSON 条目）。
+- **`app.py` 接线**（fa01c09 + e8aeecb）：
+  - `review_nninteractive_correct`：推理成功且 n_target_voxels>0 时草稿落
+    tracker，返回值增 `step_delta_dice`（首步 None）+`step_delta_error`；
+    采集失败不挡修正主流程。
+  - `review_submit_nni`：provenance 增 `interactionMetrics`（该类条目；
+    finalLocalDice = 基线 mask ∪ 本次修正体素 vs 基线，结果级、带
+    teacherReliability 标记；教师基线 mask 不可读时 null 不猜数字）；
+    tracker 无数据时空 dict **不造假**（重启后草稿历史丢失）。
+  - `POST /review/{series_id}/abandon-draft`：放弃事件 → abandonedAttempts
+    +1、草稿序列清空（与 DraftStore.discard 同语义）。
+- `CorrectionResult` 增 `step_delta_dice`/`step_delta_error` 字段
+  （nninteractive_backend.py，默认 None 不影响既有调用方）。
+
+### 2.4 实测数字
+
+**回放验证**（scripts/replay_m6a_metrics.py，4a51e98）：
+
+- **回放源**：无可回放的真实会话——DB mask_versions 表 10 行全部无
+  provenance（M5 浏览器会话在修正前 4 轮 manual 版本、nnInteractive 产物
+  不建行）；真实 sidecar 仅 1 条（nni-gpu-verify/amos_0004，单 point 提示、
+  无草稿序列）；浏览器测试记录（run4-*/results.json）未保留。按任务 7b
+  用**真实教师 mask + 脚本化提示序列**构造回放。
+- 真实教师 mask：amos_0004 aorta（ts_out/aorta.nii.gz，**14468 体素**）。
+- 脚本化提示序列：3 步草稿 = 教师区域 50% → 90% → 100%（模拟医生逐步
+  提示补全欠分割区域）。
+- **一致性：tracker perStepDeltaDice [0.7143, 0.9474] == 手工草稿间 Dice
+  [0.7143, 0.9474]（逐位一致）**。
+- **伪真值检查**：vs 教师序列 [0.6667, 0.9474] ≠ 草稿间序列 [0.7143,
+  0.9474]（第一步若混入教师会得 0.6667——证明 ΔDice 只由草稿序列决定）。
+- finalLocalDice（草稿3=教师）= 1.0；teacherReliability = high（aorta
+  30 cases 非低频）；convergenceSteps = null（逐级扩展无 <τ 收敛）；
+  abandonedAttempts 放弃后 = 1、序列清空。
+
+**单测**（tests/test_interaction_metrics.py，30 项全绿）：
+
+- dice_binary 4 项（相同 1.0 / 双空集 1.0 / 部分重叠 / 不相交 0）
+- convergence_steps 7 项（连续 2 步才计数 / 中断重置 / ΔDice==τ 不算
+  below / 单步不足 / 从未收敛 / 空）
+- teacher_reliability 6 项（prostate 显式 low / 低频 low / 高频 high /
+  计数缺失只按显式名单 / 教师评估产物 117 类加载 / 文件缺失 None）
+- InteractionTracker 纯逻辑 9 项（首步无 delta / 草稿间语义与教师无关 /
+  **教师整类漏检 synthetic case：草稿扩展 delta ∈ (0,1) 反映真实改进方向
+  绝不因教师为空判"变差"** / 完整结构 / <τ 收敛形态 / 放弃计数+清草稿 /
+  放弃后重做累计 / JSON roundtrip）
+- TestSubmitNniPersistence 4 项（tracker 采集 → submit-nni →
+  MaskVersion.provenance.interactionMetrics **DB roundtrip**（生产库同款
+  sqlite 往返，numPrompts/sessionId 逐位一致）/ 空 tracker → interactionMetrics
+  = {} 不造假 / abandon 端点累计 + 重复放弃计数 → submit 后 provenance
+  反映 / 非法 target_label 422）
+
+**接线行为验证**（TestSubmitNniPersistence 实测值）：2 步草稿（16 体素 →
+25 体素）→ perStepDeltaDice [0.7805]（= 2·16/41 手工一致）；finalLocalDice
+0.9921（基线 label-1 100 体素 ∪ 修正 16 体素有交叠）；"label-1" 不在教师
+117 类表 → teacherReliability = low（保守判，语义边界在单测注明）。
+
+### 2.5 提交 hashes（本地 main，未推）
+
+| 提交 | 内容 |
+|---|---|
+| `77e1186` | feat(m6a): interaction_metrics 模块（per-class 过程指标） |
+| `fa01c09` | feat(m6a): 轨迹采集接线（草稿 delta + interactionMetrics 持久化 + abandon-draft 端点） |
+| `259d634` | test(m6a): interaction_metrics 单测 26 项 |
+| `4a51e98` | feat(m6a): 回放验证脚本（真实教师 mask + 脚本化提示序列） |
+| `e8aeecb` | fix(m6a)+test: tracker key 三端统一 + 持久化端到端单测 4 项 |
+
+### 2.6 pytest / ruff
+
+- 全套见 §2.7 收尾自查；提交点实测：
+  - tests/test_interaction_metrics.py **30 passed**
+  - tests/test_review_api.py + test_m5e.py + test_nninteractive_backend.py +
+    test_distill_license_gate.py **103 passed**（接线不破坏既有行为）
+  - tests/test_m6e_wiring.py（30 例真实 mask 回归）见收尾
+- ruff check src tests scripts eval alembic config：全绿；
+  ruff format：全部已格式化
+
+### 2.7 收尾自查
+
+- 全套 pytest：见 §2.8 最终验证数字
+- /code-review 自查：headless 下斜杠命令不可用，改为逐项自查（结论：
+  (a) 采集只读 correct_image 已落盘的草稿 mask 算 ΔDice，**不读
+  nnInteractive 像素做指标以外用途、不落库**；(b) interactionMetrics 只进
+  provenance JSON 列，nninteractive_guided 来源不进蒸馏训练集（许可门禁
+  103 项含负测试全绿）；(c) 默认行为不变——tracker 无数据时
+  interactionMetrics={}，step_delta_dice=None，既有 submit-nni 测试全绿；
+  (d) 无 mock 数字——回放用真实教师 mask，回归用真实 mask 产物；
+  (e) 过程信号不替代结果门禁——未动 eval/holdout.txt 与 M4 门禁
+  （ModelVersion gate_status 保持 passed））
+
+### 2.8 最终验证数字
+
+- 全套 pytest：见收尾运行结果（本节由收尾运行回填）
+- ruff check src tests scripts eval alembic config：全绿
+
+### 2.9 遗留
+
+1. **前端放弃路径未接 abandon-draft**：review.html 的 data-discard 只清
+   前端状态，不发后端请求（abandonedAttempts 只在后端端点被调用时计数）。
+   M6-b 消费 abandonedAttempts 时接线（一处 fetch 调用），本轮不改前端。
+2. **tracker 是进程内存缓冲**：服务重启后草稿历史丢失，后续 submit 的
+   interactionMetrics 退化为空 dict 或只含放弃计数——不造假重建（任务 2
+   诚实边界）。若 M6-b 需要跨重启的完整轨迹，需把 tracker 状态序列化到
+   sidecar 或 DB（属 M6-b 范围）。
+3. **nni_runner 单次推理无草稿序列**：perStepDeltaDice 的"步"粒度 =
+   HTTP 请求粒度（前端每次提示变化发一次），不是 runner 内逐步。上游
+   nnInteractiveInferenceSession 有 predict_next 语义但未暴露增量接口——
+   请求粒度对 M6-b 的 flag 逻辑（numPrompts/convergenceSteps 阈值）够用，
+   更细粒度留 M7 特征工程。
+4. **"label-1" 类合成类名保守判 low**：测试用合成类名不在教师评估 117 类
+   表 → teacherReliability=low。生产类名是语义名（前端 m5ClassName），命中
+   117 类表按 cases 数判；不在表内的自定义类同样保守判 low（合理默认：
+   无教师可靠性证据时不用 Dice 判断）。
+
+---
+
+（M6-a 一节完。）
