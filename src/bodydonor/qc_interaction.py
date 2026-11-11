@@ -61,6 +61,7 @@ def _int_field(entry: dict[str, Any], key: str) -> int:
 
 
 def is_high_risk(
+    cls: str,
     entry: dict[str, Any],
     high_risk_classes: frozenset[str] | None = None,
 ) -> bool:
@@ -68,8 +69,9 @@ def is_high_risk(
 
     provenance 条目里 teacherReliability 由 M6-a build_metrics 按
     teacher_reliability() 打标（prostate + 低频名单），直接复用——规则不重算，
-    两端同一标记同一语义。条目缺该字段（旧数据）时回退显式名单；无名单且无
-    标记 → 按普通类处理（不猜）。
+    两端同一标记同一语义。条目缺该字段（旧数据）时回退显式名单（按
+    class_metrics 的 key 判，条目内无类名字段）；无名单且无标记 → 按普通类
+    处理（不猜）。
     """
     reliability = entry.get("teacherReliability")
     if reliability == "low":
@@ -77,7 +79,7 @@ def is_high_risk(
     if reliability == "high":
         return False
     # 旧数据无标记：显式名单兜底（prostate），否则按普通类
-    return bool(high_risk_classes and entry.get("__class__") in high_risk_classes)
+    return bool(high_risk_classes and cls in high_risk_classes)
 
 
 def rule_interaction_convergence(
@@ -110,7 +112,7 @@ def rule_interaction_convergence(
         conv_steps = entry.get("convergenceSteps")
         is_int = isinstance(conv_steps, int) and not isinstance(conv_steps, bool)
         steps = conv_steps if is_int else 0
-        high_risk = is_high_risk(entry, high_risk_classes)
+        high_risk = is_high_risk(cls, entry, high_risk_classes)
         hit = num_prompts > n_max or (not high_risk and steps > k_max)
         if hit:
             flagged_classes.append(cls)
@@ -157,7 +159,7 @@ def rule_interaction_abandonment(
         "flagged_classes": flagged_classes,
         "worst_abandoned_attempts": worst_abandoned,
         "high_risk_flagged": [
-            c for c in flagged_classes if is_high_risk(class_metrics[c], high_risk_classes)
+            c for c in flagged_classes if is_high_risk(c, class_metrics[c], high_risk_classes)
         ],
     }
     return flagged, 0.0 if flagged else 1.0, detail

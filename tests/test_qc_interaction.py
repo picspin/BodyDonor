@@ -138,6 +138,17 @@ class TestRuleInteractionConvergence:
         flagged, _score, _detail = rule_interaction_convergence({"liver": entry}, _cfg())
         assert flagged  # 普通类：convergenceSteps 越界 flag
 
+    def test_old_data_prostate_key_falls_back_to_high_risk(self) -> None:
+        """旧数据无 teacherReliability + 显式名单：prostate 兜底高风险
+        （不看 convergenceSteps——deep-review W1 修复的可达路径）。"""
+        entry = _entry(num_prompts=1, convergence_steps=99)
+        entry.pop("teacherReliability")
+        flagged, _score, detail = rule_interaction_convergence(
+            {"prostate": entry}, _cfg(), frozenset({"prostate"})
+        )
+        assert not flagged
+        assert detail["flagged_classes"] == []
+
     def test_non_dict_entries_ignored(self) -> None:
         """结构异常条目（非 dict）跳过，不崩。"""
         flagged, _score, detail = rule_interaction_convergence(
@@ -196,19 +207,19 @@ class TestRuleInteractionAbandonment:
 
 class TestIsHighRisk:
     def test_reliability_low_is_high_risk(self) -> None:
-        assert is_high_risk({"teacherReliability": "low"})
+        assert is_high_risk("prostate", {"teacherReliability": "low"})
 
     def test_reliability_high_is_not(self) -> None:
-        assert not is_high_risk({"teacherReliability": "high"})
+        assert not is_high_risk("liver", {"teacherReliability": "high"})
 
     def test_missing_reliability_explicit_list_fallback(self) -> None:
         """旧数据无标记：显式名单兜底（prostate），否则普通类。"""
-        assert is_high_risk({"__class__": "prostate"}, frozenset({"prostate"}))
-        assert not is_high_risk({"__class__": "liver"}, frozenset({"prostate"}))
+        assert is_high_risk("prostate", {}, frozenset({"prostate"}))
+        assert not is_high_risk("liver", {}, frozenset({"prostate"}))
 
     def test_missing_both_treats_as_normal(self) -> None:
         """无标记无名册 → 普通类（不猜）。"""
-        assert not is_high_risk({})
+        assert not is_high_risk("liver", {})
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,8 @@ M1 ingest 端点在后端做 max_upload_mb 强制流式计数（前端预检/反
 from __future__ import annotations
 
 import io
+import os
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
@@ -31,23 +33,33 @@ settings: Settings = load_settings()
 # 恢复标量状态（abandonedAttempts / numPrompts，restore_tracker_from_metrics）；
 # 草稿序列不在落盘产物里，不造假重建（interaction_metrics 模块 docstring）。
 _interaction_trackers: dict[str, InteractionTracker] = {}
+_tracker_lock = threading.Lock()  # 惰性创建 + 恢复的并发守卫（M6-b deep-review W3）
 _teacher_eval_counts: dict[str, int] | None | bool = False  # False=未加载, None=加载失败
 
 
 def _interaction_tracker(series_id: str) -> InteractionTracker:
-    """该 series 的 tracker（惰性创建 + 惰性恢复 M6-b 标量状态）。"""
-    if series_id not in _interaction_trackers:
+    """该 series 的 tracker（惰性创建 + 惰性恢复 M6-b 标量状态，锁内单次创建）。
+
+    双重检查：锁外快路径（已存在直接返回）；锁内重建时以 setdefault 语义
+    保留先建实例（并发首访同一 series 不丢计数——deep-review W3）。
+    """
+    if series_id in _interaction_trackers:
+        return _interaction_trackers[series_id]
+    with _tracker_lock:
+        if series_id in _interaction_trackers:
+            return _interaction_trackers[series_id]
         tracker = InteractionTracker()
         _restore_tracker(series_id, tracker)
         _interaction_trackers[series_id] = tracker
-    return _interaction_trackers[series_id]
+        return tracker
 
 
 def _restore_tracker(series_id: str, tracker: InteractionTracker) -> None:
     """从最新 MaskVersion 的 provenance.interactionMetrics 恢复标量（M6-b）。
 
-    DB 查询失败/无 MV/无 provenance 时静默跳过（tracker 保持空 dict——采集
-    主流程不因恢复路径异常而挡）；恢复语义见 restore_tracker_from_metrics。
+    无 MV/无 provenance 静默跳过（tracker 保持空 dict）；DB 查询失败警告到
+    stderr（不挡采集主流程——deep-review W2：恢复失败须可观测）；恢复语义见
+    restore_tracker_from_metrics。
     """
     from sqlalchemy import select
 
@@ -75,12 +87,18 @@ def _restore_tracker(series_id: str, tracker: InteractionTracker) -> None:
                 s.close()
         finally:
             engine.dispose()
-        prov = mv.provenance if mv is not None and isinstance(mv.provenance, dict) else {}
-        metrics = prov.get("interactionMetrics")
-        if isinstance(metrics, dict):
-            restore_tracker_from_metrics(tracker, metrics)
-    except Exception:  # noqa: BLE001 — 恢复失败不挡采集主流程（tracker 空 dict 继续）
-        pass
+    except Exception as e:  # noqa: BLE001 — DB 故障警告后继续（tracker 空 dict）
+        print(
+            f"[m6b] tracker 恢复失败（DB 查询，series={series_id[:20]}）："
+            f"{type(e).__name__}: {e}",
+            file=os.sys.stderr,
+            flush=True,
+        )
+        return
+    prov = mv.provenance if mv is not None and isinstance(mv.provenance, dict) else {}
+    metrics = prov.get("interactionMetrics")
+    if isinstance(metrics, dict):
+        restore_tracker_from_metrics(tracker, metrics)
 
 
 def _teacher_case_counts() -> dict[str, int] | None:

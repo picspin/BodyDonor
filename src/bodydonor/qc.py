@@ -606,7 +606,18 @@ def run_qc(
 
     # interaction_convergence / interaction_abandonment（M6-b 过程级）：
     # enabled 且 interaction_metrics 非空 → 真跑；enabled 但无/空 → 显式
-    # skipped（纯自动 case 不造假，不进 flags、不计入 enabled 分母）
+    # skipped（纯自动 case 不造假，不进 flags、不计入 enabled 分母）。
+    # high_risk_classes 显式名单传入（旧数据无 teacherReliability 标记时
+    # 兜底判定，prostate + 39 低频名单同 interaction_metrics.py 口径）
+    from .interaction_metrics import (
+        HIGH_RISK_TEACHER_CLASSES,
+        MIN_PER_CLASS,
+        load_teacher_eval,
+    )
+
+    high_risk_classes = HIGH_RISK_TEACHER_CLASSES | {
+        c for c, n in (load_teacher_eval() or {}).items() if n < MIN_PER_CLASS
+    }
     interaction_cfg = th.get("rules", {}).get(RULE_INTERACTION_CONVERGENCE, {})
     convergence_enabled = interaction_cfg.get("enabled", False)
     abandonment_cfg = th.get("rules", {}).get(RULE_INTERACTION_ABANDONMENT, {})
@@ -615,7 +626,7 @@ def run_qc(
     if convergence_enabled:
         if has_interaction:
             flagged, score, detail = rule_interaction_convergence(
-                interaction_metrics, interaction_cfg
+                interaction_metrics, interaction_cfg, high_risk_classes
             )
             rule_outputs.append((RULE_INTERACTION_CONVERGENCE, flagged, score, detail))
         else:
@@ -625,7 +636,7 @@ def run_qc(
     if abandonment_enabled:
         if has_interaction:
             flagged, score, detail = rule_interaction_abandonment(
-                interaction_metrics, abandonment_cfg
+                interaction_metrics, abandonment_cfg, high_risk_classes
             )
             rule_outputs.append((RULE_INTERACTION_ABANDONMENT, flagged, score, detail))
         else:
