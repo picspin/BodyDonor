@@ -279,6 +279,8 @@ review.html 的实际数据流，2026-11-12 实测。
 | `259d634` | test(m6a): interaction_metrics 单测 26 项 |
 | `4a51e98` | feat(m6a): 回放验证脚本（真实教师 mask + 脚本化提示序列） |
 | `e8aeecb` | fix(m6a)+test: tracker key 三端统一 + 持久化端到端单测 4 项 |
+| `67ca138` | docs: M6-E-A-REPORT M6-a 一节 |
+| `fe2b254` | docs: §2.6-2.8 回填最终验证数字（506 passed + ruff 全绿） |
 
 ### 2.6 pytest / ruff
 
