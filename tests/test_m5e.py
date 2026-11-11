@@ -31,8 +31,9 @@ def test_maskversion_source_column_width() -> None:
 
 
 def test_alembic_upgrade_head_on_fresh_db(tmp_path: Path) -> None:
-    """迁移实测：空库 upgrade head → M0 + M5-e；source VARCHAR(32)，
-    provenance 列存在；可插入 20 字符来源行并读回 provenance。"""
+    """迁移实测：空库 upgrade head → M0 + M5-e + M0-stale 补列；source
+    VARCHAR(32)，provenance 列存在；series.source_instances_json 列存在；
+    可插入 20 字符来源行并读回 provenance。"""
     db = tmp_path / "mig.db"
     url = f"sqlite:///{db}"
     r = subprocess.run(
@@ -44,10 +45,16 @@ def test_alembic_upgrade_head_on_fresh_db(tmp_path: Path) -> None:
     )
     assert r.returncode == 0, f"alembic upgrade 失败：{r.stdout[-500:]}{r.stderr[-500:]}"
     c = sqlite3.connect(db)
-    assert c.execute("SELECT version_num FROM alembic_version").fetchone() == ("e7f3a1c9d204",)
+    # head = b8e21c4a7f05（M0-stale 补列，2026-11-11 加到链尾；M5-e 迁移
+    # e7f3a1c9d204 仍是链中段，不回退）
+    assert c.execute("SELECT version_num FROM alembic_version").fetchone() == (
+        "b8e21c4a7f05",
+    )
     cols = {row[1]: row[2] for row in c.execute("PRAGMA table_info(mask_versions)")}
     assert cols["source"] == "VARCHAR(32)"
     assert "provenance" in cols
+    series_cols = {row[1] for row in c.execute("PRAGMA table_info(series)")}
+    assert "source_instances_json" in series_cols  # M0-stale 补列
     assert c.execute("PRAGMA foreign_key_check").fetchall() == []
     c.close()
 
