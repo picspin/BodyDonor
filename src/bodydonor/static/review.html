@@ -758,7 +758,7 @@ function renderDraftList() {
     </div>`);
   });
   el.innerHTML = rows.length ? rows.join("") : `<span style="color:var(--dim)">暂无草稿</span>`;
-  el.querySelectorAll("[data-discard]").forEach((b) => b.addEventListener("click", () => {
+  el.querySelectorAll("[data-discard]").forEach((b) => b.addEventListener("click", async () => {
     const lv = parseInt(b.dataset.discard, 10);
     m5.drafts.delete(lv);
     m5.promptsByClass.delete(lv);
@@ -767,6 +767,18 @@ function renderDraftList() {
     updateSegVisibility();
     updateModeBadge();
     toast(`${m5ClassName(lv)} 已放弃，回到 teacher（提示已清空）`);
+    // M6-a 放弃事件上报（abandonedAttempts 采集；失败不挡本地放弃——
+    // 本地状态已清，后端计数缺失只是过程信号少一条）
+    try {
+      const r = await fetch(`/review/${encodeURIComponent(SERIES_ID)}/abandon-draft`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_label: lv, class_name: m5ClassName(lv) }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    } catch (e) {
+      toast(`放弃事件上报失败（本地已放弃）：${e.message}`, "err");
+    }
   }));
   el.querySelectorAll("[data-accept]").forEach((b) => b.addEventListener("click", () => {
     const lv = parseInt(b.dataset.accept, 10);
