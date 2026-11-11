@@ -282,22 +282,22 @@ review.html 的实际数据流，2026-11-12 实测。
 
 ### 2.6 pytest / ruff
 
-- 全套见 §2.7 收尾自查；提交点实测：
+- 全套见 §2.8（506 passed）；提交点实测：
   - tests/test_interaction_metrics.py **30 passed**
   - tests/test_review_api.py + test_m5e.py + test_nninteractive_backend.py +
     test_distill_license_gate.py **103 passed**（接线不破坏既有行为）
-  - tests/test_m6e_wiring.py（30 例真实 mask 回归）见收尾
+  - tests/test_m6e_wiring.py（30 例真实 mask 回归）**4 passed**（exit 0）
 - ruff check src tests scripts eval alembic config：全绿；
-  ruff format：全部已格式化
+  ruff format：本轮 5 个新改文件已格式化（仓库既有 format 状态不动）
 
 ### 2.7 收尾自查
 
-- 全套 pytest：见 §2.8 最终验证数字
+- 全套 pytest：见 §2.8（506 passed）
 - /code-review 自查：headless 下斜杠命令不可用，改为逐项自查（结论：
   (a) 采集只读 correct_image 已落盘的草稿 mask 算 ΔDice，**不读
   nnInteractive 像素做指标以外用途、不落库**；(b) interactionMetrics 只进
   provenance JSON 列，nninteractive_guided 来源不进蒸馏训练集（许可门禁
-  103 项含负测试全绿）；(c) 默认行为不变——tracker 无数据时
+  负测试全绿）；(c) 默认行为不变——tracker 无数据时
   interactionMetrics={}，step_delta_dice=None，既有 submit-nni 测试全绿；
   (d) 无 mock 数字——回放用真实教师 mask，回归用真实 mask 产物；
   (e) 过程信号不替代结果门禁——未动 eval/holdout.txt 与 M4 门禁
@@ -305,8 +305,14 @@ review.html 的实际数据流，2026-11-12 实测。
 
 ### 2.8 最终验证数字
 
-- 全套 pytest：见收尾运行结果（本节由收尾运行回填）
+- 全套 pytest：**506 passed, 0 failed**（2026-11-12 实测；分两条跑：
+  38 个快速文件 472 passed in 194.03s + 2 个慢文件
+  test_interaction_metrics.py 30 项 + test_m6e_wiring.py 4 项（30 例真实
+  mask 回归）34 passed in 576.14s；首次全套单跑因 m6e_wiring 30 例回归
+  拖慢在 10 分钟后台超时被杀，无 fail——分两条覆盖全部 40 个测试文件）
 - ruff check src tests scripts eval alembic config：全绿
+- 本轮 5 个新改/新增文件 ruff format 已格式化（仓库其余 61 个文件的
+  既有 format 状态不动，与 M6-e 同口径）
 
 ### 2.9 遗留
 
