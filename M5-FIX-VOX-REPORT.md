@@ -149,7 +149,7 @@ key = mask_key.replace("image.nii.gz", f"mask_v{version}.nii.gz")
 ```
 
 但 `mask_key` 本身来自 `row.storage_key.replace("image.nii.gz", "mask.nii.gz")`
-（app.py:842/1132/1369），值已是 `amos_0004/nifti-b63b1d93/mask.nii.gz`，不含
+（各端点内联；现于 `_base_mask_key` 一处），值已是 `amos_0004/nifti-b63b1d93/mask.nii.gz`，不含
 `"image.nii.gz"` —— 第二次 replace 是 no-op，`key` 恒等于 `mask.nii.gz`，每次
 提交都覆盖同一个文件。DB 实证：该 series 的 v1–v9 共 9 行 MaskVersion 全指同一
 storage_key `amos_0004/nifti-b63b1d93/mask.nii.gz`（v1–5 teacher、v6–9 manual）。
@@ -209,7 +209,9 @@ acceptedClasses=["label-1"]，sessionId 区分轮次，baselineTeacherVersion=nu
 
 ### 7.5 测试与提交
 
-- pytest 全套：**464 passed**，exit 0（`.venv/bin/python -m pytest`，189.10s）。
+- pytest 全套：**467 passed**，exit 0（`.venv/bin/python -m pytest`，189.10s 时为
+  464 passed；§7.6 新增 2 条读路径回归测试后为 466，第三轮收尾补 1 条 propagate
+  回归后全量实测 467）。
 - ruff：`ruff check src tests scripts eval alembic config` **All checks passed**，exit 0。
 
 ### 7.6 读路径回归修复（7.2 修法的第二层问题）
@@ -219,8 +221,8 @@ acceptedClasses=["label-1"]，sessionId 区分轮次，baselineTeacherVersion=nu
 - 验证：TestClient 回归测试 + 真实 API 两次 correct/submit + 真实 GPU 推理，无 mock
 
 **问题**：7.2 把写路径改为 `mask_v{N}.nii.gz` 后，`mask.nii.gz` 永远停留在原始
-版本；但 `review_save` / `review_propagate` / `review_submit_nni`（app.py
-842/1132/1369）仍从 `mask.nii.gz` 读基底——之后每次保存都以原始版为起点，
+版本；但 `review_save` / `review_propagate` / `review_submit_nni` 仍从
+`mask.nii.gz` 读基底——之后每次保存都以原始版为起点，
 上一次保存的人工修正全部丢失（7.3 的两次提交因 sidecar prompts 相同、修正区域
 相同，恰好掩盖了这一点）。
 
@@ -261,7 +263,25 @@ acceptedClasses=["label-1"]，sessionId 区分轮次，baselineTeacherVersion=nu
 `nninteractive-correction/`；`mask.nii.gz` md5/字节数与基线一致（未恢复即一致）；
 DB MaskVersion 回到 10 行、与快照字节级一致；nnInteractive 修正产物未进蒸馏训练集。
 
-**全套验证**：pytest **466 passed**、exit 0（新增 2 测试）；`ruff check
+**全套验证**：pytest **467 passed**、exit 0（新增 3 测试：2 条读路径回归 +
+1 条 propagate 补齐）；`ruff check
 src/bodydonor/app.py tests/test_review_api.py` All checks passed、exit 0。
 uvicorn 重启（PID 231261 → 237991，同一命令），`/health` 返回
 `{"status":"ok","version":"0.1.0"}`。
+
+**回归测试补齐（第三轮复审收尾，2026-11-11）**：`_base_mask_key` 三处读基底中
+`review_propagate` 此前无回归覆盖——补
+`test_propagate_second_call_includes_first_correction`（连续两次 propagate，
+slice 14→15、slice 15→16 各 100 体素）：断言第二次传播以 `mask_v1.nii.gz` 为
+基底（z=15 体素参与投影）、输出含第一次传播体素（z=15 与 z=16 均 100）、
+`mask.nii.gz` 未被覆盖（z=15/16 均 0）、v1/v2 行 storage_key 逐一等于
+`mask_v{N}.nii.gz`（与 save / submit-nni 两条回归测试同等力度）。同轮修
+`_drawing_bytes` 内部 `import tempfile` 移文件顶部、§7.1/§7.6 读基底行号引用改
+函数名以免漂移、本节与 §7.5 pytest 数字统一为全量实测 467。
+
+**已接受的 Minor（不再修）**：
+
+- `_base_mask_key` 每次调用新建 engine——与 `review_mask` 既有模式一致，功能
+  正确，仅多余连接开销，非阻塞。
+- `m5CurrentVox(ev)`（review.html 前端体素回显）无自动化测试——仓库无 JS 测试
+  基建，报告 §6 已记为接受的残留。
