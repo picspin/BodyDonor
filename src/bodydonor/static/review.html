@@ -813,6 +813,9 @@ async function m5RunInference(lv) {
             ? { type: "scribble", points: p.points }
             : { type: "point", x: p.x, y: p.y, z: p.z, include: p.include }),
         target_label: lv,
+        // M6-a tracker key：语义类名（与 submit-nni 的 acceptedClasses[0] /
+        // abandon-draft 的 class_name 同一约定，后端缺省回退 label-{n}）
+        class_name: m5ClassName(lv),
       }),
     });
     if (version !== m5.inferSeq) return;  // 旧 version 结果丢弃（快速连点不出错乱）

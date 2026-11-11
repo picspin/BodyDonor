@@ -553,3 +553,276 @@ class TestSubmitNniPersistence:
             assert r.status_code == 422
             r2 = c.post(f"/review/{sid}/abandon-draft", json={})
             assert r2.status_code == 422
+
+
+class TestCorrectSubmitE2E:
+    """Blocker 修复验收（M6-E-A-REPORT §3 Blocker 1/2）：correct→abandon→
+    correct→submit 全路径 HTTP 端到端（前端实际 payload 形状，真实 CPU 推理）。
+
+    - Blocker 1：correct 请求体带 class_name（前端 m5ClassName(lv)）→
+      后端 tracker 以语义类名记录 → submit-nni 的 acceptedClasses[0] 用
+      同名查 tracker → interactionMetrics 非空且 finalLocalDice 有值。
+      旧代码 correct 不带 class_name（tracker 落 label-{N}）而 submit 用
+      accepted[0]（语义名）查——两边 key 对不上，生产浏览器流程
+      interactionMetrics 落 {}、finalLocalDice 为 null，本测试在该形态下
+      fail（key miss → interactionMetrics == {}）。
+    - Blocker 2：abandon-draft 带 class_name 放弃 → abandonedAttempts +1 →
+      重新 correct → submit 后 provenance 反映放弃计数。
+    - 推理 mock 边界：correct_image 用真实 nnInteractive CPU 推理（48³
+      patch ~18s/次 ×3），**不 mock 该链路**（任务验收要求）；仅 DB/storage
+      隔离到 tmp（committed_series fixture）。真实 case 缺失时 skip。
+    """
+
+    @pytest.fixture(scope="class")
+    def real_patch(self) -> Path:
+        """真实 amos_0004 裁 48³ patch（真实输入；case 文件缺失则 skip）。
+
+        与 tests/test_nninteractive_backend.py 同源：中心 (318,255,54) 肝区，
+        点提示命中有效组织（实测中心 HU 100）。
+        """
+        import nibabel as nib
+
+        src = (
+            Path.home()
+            / "data"
+            / "BodyDonor"
+            / "downloads"
+            / "amos22_subset"
+            / "train"
+            / "imagesTr"
+            / "amos_0004.nii.gz"
+        )
+        if not src.exists():
+            pytest.skip(f"真实 case 缺失：{src}")
+        img = nib.load(str(src))
+        arr = np.asarray(img.dataobj)
+        patch = arr[290:338, 231:279, 30:78]
+        patch_img = nib.Nifti1Image(np.ascontiguousarray(patch, dtype=np.float32), img.affine)
+        import tempfile
+
+        out = Path(tempfile.mkdtemp(prefix="m6a-e2e-")) / "patch48.nii.gz"
+        nib.save(patch_img, str(out))
+        return out
+
+    @pytest.fixture
+    def e2e_series(self, request, tmp_path, settings, monkeypatch):  # noqa: ANN001
+        """真实 patch 入库（storage+DB 隔离到 tmp）→ (sid, storage, settings)。
+
+        scan/commit 消费真实 patch（Hounsfield 数值域，同 test_review_api
+        的 committed_series 流程）；app.storage 指向 tmp storage、app.settings
+        的 DB 指向 tmp sqlite。tracker 清空注册为 finalizer。
+        settings.database.url 在 scan 前指 tmp——series_id = hash(文件名)，
+        真库里已有同 hash 行（前轮回放 patch48.nii.gz），DB 不隔离则 commit
+        复用真库行而 app 端查 tmp 库 → 404。
+        """
+        import nibabel as nib
+        from fastapi.testclient import TestClient  # noqa: F401
+
+        patch = request.getfixturevalue("real_patch")  # 类级 fixture 结果（非 self.real_patch）
+
+        from bodydonor import app as app_module
+        from bodydonor import db
+        from bodydonor.models import Series
+        from bodydonor.pipeline import commit, scan
+        from bodydonor.storage import LocalFsStorage
+
+        request.addfinalizer(app_module._interaction_trackers.clear)
+        tmp_url = f"sqlite:///{tmp_path}/m6a_e2e.db"
+        monkeypatch.setattr(
+            app_module.settings,
+            "database",
+            type(app_module.settings.database)(url=tmp_url),
+        )
+        settings.database.url = tmp_url  # scan/commit 用同一 tmp 库
+        app_module._interaction_trackers.clear()
+
+        from bodydonor.db import init_db
+
+        init_db(tmp_url)
+        outcome = scan(patch, settings)
+        storage = LocalFsStorage(tmp_path / "storage")
+        monkeypatch.setattr(app_module, "storage", storage)
+        committed = commit(outcome, settings, storage)
+        sid = committed.selected_series_ids[0]
+
+        from sqlalchemy import select
+
+        engine = db._engine(settings.database.url)
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy.orm import Session
+
+                s = Session(conn)
+                row = s.execute(select(Series).where(Series.series_id == sid)).scalar_one()
+                key = row.storage_key
+                s.close()
+        finally:
+            engine.dispose()
+
+        # 落基线 teacher mask（全零也行：correct/submit 不要求前景交叠；
+        # mask 有交叠使 finalLocalDice 落在 (0,1) 真实区间）：
+        # 修正点在 patch 中心 (24,24,24)，基线前景放 (18:22, 18:22, 18:22)
+        img = nib.load(str(storage.root / key))
+        mask_arr = np.zeros(img.shape, dtype=np.uint8)
+        mask_arr[18:22, 18:22, 18:22] = 1
+        mask = nib.Nifti1Image(mask_arr, img.affine)
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
+            tmp_name = tf.name
+        try:
+            nib.save(mask, tmp_name)
+            payload = Path(tmp_name).read_bytes()
+        finally:
+            Path(tmp_name).unlink(missing_ok=True)
+        storage.save(key.replace("image.nii.gz", "mask.nii.gz"), payload)
+        return sid, storage, settings
+
+    def _correct_payload(self, z: float, class_name: str) -> dict:
+        """前端 review.html m5RunInference 的实际 payload 形状（含 class_name）。
+
+        prompts 形状 = 前端 merged.map(...) 产物（bbox/scribble 折叠为
+        point-only 场景同构）；class_name = m5ClassName(lv)（语义类名）。
+        """
+        return {
+            "prompts": [{"type": "point", "x": 24, "y": 24, "z": z, "include": True}],
+            "target_label": 1,
+            "class_name": class_name,
+        }
+
+    def test_correct_to_submit_full_path_interaction_metrics(
+        self, e2e_series, tmp_path: Path
+    ) -> None:  # noqa: ANN001
+        """Blocker 1 验收：correct（class_name）→ correct → abandon（class_name）
+        → correct → submit-nni → interactionMetrics 非空 + finalLocalDice 有值
+        （DB roundtrip 复核）。三段推理全真实（CPU ~18s/段，无 mock）。"""
+        from fastapi.testclient import TestClient
+
+        from bodydonor.app import app
+
+        sid, storage, settings = e2e_series
+        semantic_name = "aorta"  # 前端 m5ClassName(lv) 对 label-1 的语义类名
+        with TestClient(app) as c:
+            # 步骤 1/2：两次修正（草稿 2 步序列）：第 1 步无前驱（delta=None），
+            # 第 2 步有前驱草稿（delta 有值——草稿间语义）
+            deltas = []
+            for z in (23, 24):
+                r = c.post(
+                    f"/review/{sid}/nninteractive-correct",
+                    json=self._correct_payload(z, semantic_name),
+                )
+                assert r.status_code == 200, r.text
+                out = r.json()
+                assert out["n_target_voxels"] > 0
+                deltas.append(out["step_delta_dice"])
+            assert deltas[0] is None  # 第 1 步无前驱
+            assert deltas[1] is not None  # 第 2 步草稿间 ΔDice（tracker 采集成功）
+            # Blocker 2：放弃（带 class_name，与 correct/submit 同 key）→ +1
+            ra = c.post(
+                f"/review/{sid}/abandon-draft",
+                json={"target_label": 1, "class_name": semantic_name},
+            )
+            assert ra.status_code == 200
+            assert ra.json()["abandonedAttempts"] == 1
+            assert ra.json()["class"] == semantic_name
+            # 步骤 3：放弃后重新修正（新草稿序列，1 步）
+            r = c.post(
+                f"/review/{sid}/nninteractive-correct",
+                json=self._correct_payload(25, semantic_name),
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["step_delta_dice"] is None  # 放弃清草稿 → 新序列第 1 步
+            # Blocker 1 主断言：submit-nni（前端 btn-submit-nni payload 形状：
+            # prompts 每条带 class（review.html m5AddPrompt）+ acceptedClasses[0]
+            # = m5ClassName(lv) 语义名）
+            rs = c.post(
+                f"/review/{sid}/submit-nni",
+                json={
+                    "target_label": 1,
+                    "prompts": [
+                        {
+                            "type": "point",
+                            "x": 24,
+                            "y": 24,
+                            "z": 25,
+                            "include": True,
+                            "class": semantic_name,
+                        }
+                    ],
+                    "acceptedClasses": [semantic_name],
+                    "sessionId": "e2e-m6a",
+                    "baselineTeacherVersion": None,
+                },
+            )
+        assert rs.status_code == 200, rs.text
+        prov = rs.json()["provenance"]
+        assert prov["interactionMetrics"] != {}, (
+            "Blocker 1 回归：correct 未带 class_name 时 tracker key 对不上"
+            "（label-1 vs aorta），interactionMetrics 落空"
+        )
+        m = prov["interactionMetrics"][semantic_name]
+        assert m["numPrompts"] == 1  # 放弃后新序列最后一次全量提示数
+        assert m["perStepDeltaDice"] == []  # 新序列 1 步草稿，无 delta
+        assert m["abandonedAttempts"] == 1  # Blocker 2：放弃计数进 provenance
+        assert m["finalLocalDice"] is not None
+        assert 0.0 < m["finalLocalDice"] < 1.0  # 基线 ∪ 修正有交叠但不重合
+        assert m["teacherReliability"] == "high"  # aorta 命中教师 117 类表（30 cases）
+        # DB roundtrip：provenance 真落 MaskVersion（重启丢 tracker 的另一侧真相源）
+        from sqlalchemy import select
+
+        from bodydonor import db
+        from bodydonor.models import MaskVersion
+
+        engine = db._engine(settings.database.url)
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy.orm import Session
+
+                s = Session(conn)
+                mv = (
+                    s.execute(
+                        select(MaskVersion)
+                        .where(MaskVersion.series_id == sid)
+                        .order_by(MaskVersion.version.desc())
+                    )
+                    .scalars()
+                    .first()
+                )
+                s.close()
+        finally:
+            engine.dispose()
+        assert mv is not None and mv.source == "nninteractive_guided"
+        db_metrics = mv.provenance["interactionMetrics"][semantic_name]
+        assert db_metrics["abandonedAttempts"] == 1
+        assert db_metrics["finalLocalDice"] is not None
+
+    def test_abandon_flow_via_endpoint_increments(self, e2e_series) -> None:  # noqa: ANN001
+        """Blocker 2 验收：abandon-draft（class_name 形状 = 前端新 data-discard
+        payload）→ abandonedAttempts 正确 +1（correct 草稿在 tracker 时）。"""
+        from fastapi.testclient import TestClient
+
+        from bodydonor.app import app
+
+        sid, _storage, _settings = e2e_series
+        semantic_name = "aorta"
+        with TestClient(app) as c:
+            r = c.post(
+                f"/review/{sid}/nninteractive-correct",
+                json=self._correct_payload(24, semantic_name),
+            )
+            assert r.status_code == 200
+            assert r.json()["step_delta_dice"] is None  # 首步无前驱
+            # 前端 data-discard 的实际 payload（修复后形状）
+            r0 = c.post(
+                f"/review/{sid}/abandon-draft",
+                json={"target_label": 1, "class_name": semantic_name},
+            )
+            assert r0.status_code == 200
+            assert r0.json()["abandonedAttempts"] == 1
+            # 重复放弃同样计数（草稿已清，事件本身是过程信号）
+            r1 = c.post(
+                f"/review/{sid}/abandon-draft",
+                json={"target_label": 1, "class_name": semantic_name},
+            )
+            assert r1.status_code == 200
+            assert r1.json()["abandonedAttempts"] == 2
