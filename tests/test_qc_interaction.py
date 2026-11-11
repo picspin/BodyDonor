@@ -98,12 +98,13 @@ class TestRuleInteractionConvergence:
         flagged, _score, _detail = rule_interaction_convergence(cm, _cfg())
         assert flagged
 
-    def test_high_risk_abandoned_flags(self) -> None:
-        """高风险类：abandonedAttempts >= 1 → flag（即使 numPrompts 少）。"""
+    def test_high_risk_abandoned_not_convergence_flag(self) -> None:
+        """高风险类放弃归 abandonment 规则：convergence 不查 abandonedAttempts
+        （同事件不双 flag）。"""
         cm = {"prostate": _entry(num_prompts=1, reliability="low", abandoned=1)}
         flagged, _score, detail = rule_interaction_convergence(cm, _cfg())
-        assert flagged
-        assert detail["flagged_classes"] == ["prostate"]
+        assert not flagged
+        assert detail["flagged_classes"] == []
 
     def test_high_risk_boundary_zero_abandoned_not_flagged(self) -> None:
         """高风险类：abandonedAttempts=0、numPrompts 在界内 → 不 flag。"""
@@ -119,7 +120,8 @@ class TestRuleInteractionConvergence:
         assert rule_interaction_convergence(good_dice_flagged, _cfg())[0]
 
     def test_mixed_classes_flag_only_bad(self) -> None:
-        """多类混合：只 flag 越界类，正常类不受牵连。"""
+        """多类混合：只 flag 越界类（高风险类放弃不进 convergence——归
+        abandonment 规则），正常类不受牵连。"""
         cm = {
             "liver": _entry(num_prompts=2, convergence_steps=1),
             "prostate": _entry(num_prompts=1, reliability="low", abandoned=1),
@@ -127,7 +129,7 @@ class TestRuleInteractionConvergence:
         }
         flagged, _score, detail = rule_interaction_convergence(cm, _cfg())
         assert flagged
-        assert sorted(detail["flagged_classes"]) == ["kidney_left", "prostate"]
+        assert detail["flagged_classes"] == ["kidney_left"]
 
     def test_old_data_missing_reliability_falls_back_to_normal(self) -> None:
         """旧数据无 teacherReliability：按普通类判（不猜风险）。"""
@@ -330,7 +332,6 @@ class TestConfigLoading:
             assert cfg["calibrated_on"] == 0
         assert ic["n_max_prompts"] == 15
         assert ic["k_max_steps"] == 6
-        assert ic["min_abandonments"] == 1
         assert ia["min_abandonments"] == 1
 
     def test_cold_start_declared_uncalibrated(self, th) -> None:  # noqa: ANN001

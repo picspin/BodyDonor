@@ -78,9 +78,11 @@ rules:
     note: "M4 启用（学生模型 student-nnunet-v2-distill-20261109T062920Z 已出现）。聚合方式 = 参与比较类的 mean Dice（不是最差类）——校准依据（2026-11-11 实测，教师 vs 学生逐类 Dice，30 例）：419 对 mean 0.8560、p10 0.6986；case 级最差类聚合在 0.80 下 flag 24/30 例（无判别力，基本等于全审），均值聚合 flag 5/30 例（有判别力，flag 的正是分歧最大的 5 例）。阈值数值保持 0.80 初值不改——本次校准的是聚合方式，不是数值重算（source 保持 cold_start、calibrated_on 保持 0）。单图 QC 无学生 mask 时显式 skipped，不进 flags、不计入 enabled 分母。"
     threshold: 0.80   # 均值 Dice 判据（校准的是聚合方式：均值而非最差类；数值未变）
 
-  # ---- 交互收敛（M6-b：过程级，消费 provenance.interactionMetrics）----
-  # 任一交互类 numPrompts > n_max_prompts 或 convergenceSteps > k_max_steps
-  # （普通类）/ abandonedAttempts >= min_abandonments（高风险类）即 flag。
+  # ---- 交互收敛（M6-b：过程级，消费 proven.interactionMetrics）----
+  # 普通类：numPrompts > n_max_prompts 或 convergenceSteps > k_max_steps 即 flag；
+  # 高风险类（teacherReliability=low）只看 numPrompts > n_max_prompts
+  # （不看 convergenceSteps，该维度对高风险类无校准依据；abandonedAttempts
+  # 维度归 interaction_abandonment，同事件不双 flag）。
   # 阈值初值 cold_start 未校准（计划示例 N_max=15、K_max=6 仅供参考）：
   # interactionMetrics 采集始于 M6-a（2026-11-12），尚无回放语料可校准，
   # 初值按"正常交互 < 15 次提示 / 正常收敛 < 6 步"的量级假设取值，
@@ -90,10 +92,9 @@ rules:
     source: cold_start
     calibrated_on: 0
     calibrated_at: ""
-    note: "cold_start 未校准：M6-a 采集 2026-11-12 起，无回放语料；初值为量级假设，M6-f 决策回流后重算。两层逻辑：普通类（teacherReliability=high）看 numPrompts/convergenceSteps；高风险类（prostate + 39 低频名单，teacherReliability=low）不看 convergenceSteps，只看 numPrompts 或 abandonedAttempts。"
+    note: "cold_start 未校准：M6-a 采集 2026-11-12 起，无回放语料；初值为量级假设，M6-f 决策回流后重算。两层逻辑：普通类（teacherReliability=high）看 numPrompts/convergenceSteps；高风险类（prostate + 39 低频名单，teacherReliability=low）不看 convergenceSteps、不看 finalLocalDice，只看 numPrompts。abandonedAttempts 归 interaction_abandonment 规则。"
     n_max_prompts: 15   # 某类提示数上限（超过 = 迭代不收敛，人工介入）
-    k_max_steps: 6      # 某类草稿收敛步数上限（连续 2 步 ΔDice<τ 触发步数）
-    min_abandonments: 1 # 高风险类放弃次数下限（>=1 即 flag）
+    k_max_steps: 6      # 某类草稿收敛步数上限（连续 2 步 ΔDice<τ 触发步数，仅普通类）
 
   # ---- 交互放弃（M6-b：过程级，高 flag）----
   # 任一交互类 abandonedAttempts >= min_abandonments 即 flag：连交互式修正

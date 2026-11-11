@@ -10,12 +10,16 @@ interaction_metrics.py 模块 docstring），接入 qc_pipeline 的规则框架
 - interaction_abandonment：某类 abandonedAttempts >= min_abandonments
   即 flag（高 flag）。语义：连交互式修正都无法收敛。
 
-两层逻辑（任务书 3）：
-- 普通类（teacherReliability=="high"）：numPrompts/n_max、convergenceSteps/
-  k_max 判 flag；finalLocalDice 只作辅助信息进 detail，不作唯一判据。
+两层逻辑（任务书 3，规则各管一个维度）：
+- 普通类（teacherReliability=="high"）：interaction_convergence 看
+  numPrompts/n_max、convergenceSteps/k_max；finalLocalDice 只作辅助信息
+  进 detail，不作判据。
 - 高风险类（teacherReliability=="low"，prostate + 39 低频名单——M6-a
   build_metrics 已按 teacher_reliability() 打标记）：不看 finalLocalDice
-  （教师伪真值不可靠），只看 numPrompts/n_max 或 abandonedAttempts>=min。
+  （教师伪真值不可靠）、不看 convergenceSteps（该维度对高风险类无独立
+  校准依据）；interaction_convergence 对该类只看 numPrompts/n_max。
+- abandonedAttempts 维度归 interaction_abandonment（全类同判据，
+  abandonedAttempts >= min 即 flag）——同一放弃事件不双规则双 flag。
 
 诚实边界（铁律）：
 - 只读 provenance.interactionMetrics 标量字段，不读 nnInteractive 像素输出；
@@ -86,16 +90,15 @@ def rule_interaction_convergence(
     class_metrics：{类名: interactionMetrics 条目}（provenance.interactionMetrics）。
     返回 (flagged, score, detail)——qc.py rule_outputs 同形状。
 
+    两层逻辑（任务书 3，规则各管一个维度，同一事件不双 flag）：
     - 普通类：numPrompts > n_max_prompts 或 convergenceSteps > k_max_steps。
-    - 高风险类：只看 numPrompts > n_max_prompts 或 abandonedAttempts >=
-      min_abandonments（不看 convergenceSteps——放弃计数才是该类可信信号，
-      convergenceSteps 阈值对高风险类无独立校准依据；abandonment 规则另行覆盖
-      abandonedAttempts 维度，这里收敛 + 放弃双信号同查，任一命中即 flag）。
-    - finalLocalDice 不进判据，只进 worst/flagged 类的 detail（辅助信息）。
+    - 高风险类：只看 numPrompts > n_max_prompts——convergenceSteps 对该类
+      无独立校准依据（教师伪真值不可靠），不看；abandonedAttempts 维度归
+      interaction_abandonment 规则（全类同判据），本规则不重复查。
+    - finalLocalDice 不进判据，只进 detail（辅助信息）。
     """
     n_max = int(cfg.get("n_max_prompts", 15))
     k_max = int(cfg.get("k_max_steps", 6))
-    min_abandon = int(cfg.get("min_abandonments", 1))
 
     flagged_classes: list[str] = []
     worst_prompts = 0
@@ -108,11 +111,7 @@ def rule_interaction_convergence(
         is_int = isinstance(conv_steps, int) and not isinstance(conv_steps, bool)
         steps = conv_steps if is_int else 0
         high_risk = is_high_risk(entry, high_risk_classes)
-        hit = num_prompts > n_max
-        if high_risk:
-            hit = hit or _int_field(entry, "abandonedAttempts") >= min_abandon
-        else:
-            hit = hit or steps > k_max
+        hit = num_prompts > n_max or (not high_risk and steps > k_max)
         if hit:
             flagged_classes.append(cls)
         worst_prompts = max(worst_prompts, num_prompts)
