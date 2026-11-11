@@ -4,7 +4,7 @@ M6-b 交付：两条过程级 QC 规则接入 `qc_pipeline` 规则框架（rule_
 flags / QCReport），消费 `MaskVersion.provenance.interactionMetrics`（M6-a
 采集），附带 tracker 跨重启持久化（M6-a 遗留 2 收口）。
 
-基线：main `8004bd9`（36 ahead，未推，工作树干净）。本轮 6 提交，**未推**。
+基线：main `8004bd9`（36 ahead，未推，工作树干净）。本轮 10 提交，**未推**。
 
 注：任务书指向 `~/workspace/bodydonor/M6-PLAN.md` 的 M6-b 一节（v2），
 该文件在本机不存在（`~/workspace/bodydonor` 无此目录）；实施以任务书文本
@@ -221,8 +221,11 @@ test_interaction_metrics.py real_patch——M6-a 既有，非本轮引入，未�
 | `6843acb` | fix(m6b): 回放 e2e 三处接线修正（storage 根统一 / pure-auto seed / 互补性口径） |
 | `1b44b86` | feat(m6b): tracker 跨重启持久化——标量状态从 provenance 惰性恢复 |
 | `bd5e208` | fix(m6b): deep-review W1/W2/W3 修复（高风险兜底可达 + 恢复可观测 + 并发守卫） |
+| `2cdf623` | docs: M6-B-REPORT（规则实现/阈值/回放互补性/tracker 持久化/deep-reviewer findings/遗留） |
+| `f066395` | docs: M6-B-REPORT 测试计数同步（32 单测 + 46 新增/追加） |
+| `331b38d` | docs: M6-B-REPORT §5.1 全套 pytest 结果回填（555 collected 两批全绿 0 F/E） |
 
-main HEAD：`bd5e208`（43 ahead，未推，工作树干净）。
+main HEAD：`331b38d`（46 ahead，未推，工作树干净）。
 
 ---
 
