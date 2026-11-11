@@ -108,3 +108,38 @@ def test_probe_no_gpu_cpu(monkeypatch) -> None:  # noqa: ANN001
     d = probe(cuda_check_fn=lambda: (True, {}))
     assert d["backend"] == "cpu"
     assert d["candidate"] is None
+
+
+def test_main_output_writes_pure_json(tmp_path: Path) -> None:
+    """--output 落盘为纯 JSON（json.dump 直写，不走 shell 重定向）。
+
+    离线 sample 模式（不实跑 CUDA、不占 GPU 锁）；json.load 通过 +
+    锁日志（stderr）不混入文件。
+    """
+    import json
+
+    import gpu_probe
+
+    sample = tmp_path / "smi.csv"
+    sample.write_text(QUADRO_CSV, encoding="utf-8")
+    out = tmp_path / "nested" / "probe.json"
+    rc = gpu_probe.main(["--sample-file", str(sample), "--json", "--output", str(out)])
+    assert rc == 0
+    decision = json.loads(out.read_text(encoding="utf-8"))  # 纯 JSON 可解析
+    assert decision["backend"] == "cpu"  # 离线模式恒 cpu
+    assert decision["candidate"]["name"] == "Quadro RTX 5000"
+    assert decision["cuda_check"]["ran"] is False
+    # 逐字段完整（backend/candidate/cuda_check/reason）
+    assert "reason" in decision
+
+
+def test_main_output_missing_sample_exit_2(tmp_path: Path) -> None:
+    """--output 与不存在的 sample-file 并存时仍退出 2（不写文件）。"""
+    import gpu_probe
+
+    out = tmp_path / "probe.json"
+    rc = gpu_probe.main(
+        ["--sample-file", str(tmp_path / "no-such.csv"), "--output", str(out)]
+    )
+    assert rc == 2
+    assert not out.exists()

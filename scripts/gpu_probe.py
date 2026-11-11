@@ -15,10 +15,13 @@ Quadro RTX 5000（驱动 556.18，算力 7.5）判为 CPU-only。**本探针不�
     python scripts/gpu_probe.py [--python .venv-nninteractive/bin/python]
     python scripts/gpu_probe.py --sample-file tests/data/nvidia_smi_sample.csv
     python scripts/gpu_probe.py --json
+    python scripts/gpu_probe.py --json --output ~/m5-logs/gpu-probe.json
 
 - 默认 CUDA 验算用 --python 指定的解释器（须装 torch；缺省为当前 python）。
 - GPU 操作走 gpu_lock（interactive，wait=0）：批量任务占卡时直接报 CPU
   兜底（不排队）；--no-lock 跳过锁（仅离线/单机调试用）。
+- --output <path>：json.dump 直接写决策 JSON 文件（不走 shell 重定向——
+  gpu_lock 日志走 stderr，`> file 2>&1` 会把 [gpu_lock] 行混进 JSON）。
 - 退出码恒为 0（只要产出决策）；--sample-file 不存在时退出 2。
 """
 
@@ -221,6 +224,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sample-file", default=None, help="离线验证：录好的 nvidia-smi 输出")
     ap.add_argument("--json", action="store_true", help="只输出决策 JSON")
     ap.add_argument("--no-lock", action="store_true", help="跳过 GPU 锁（仅离线/单机调试）")
+    ap.add_argument(
+        "--output",
+        default=None,
+        help="决策 JSON 落盘路径（json.dump 直写，不走 shell 重定向）",
+    )
     args = ap.parse_args(argv)
 
     if args.sample_file is not None and not Path(args.sample_file).exists():
@@ -252,11 +260,7 @@ def main(argv: list[str] | None = None) -> int:
                 "cuda_check": {"ran": False, "ok": False, "error": "GPU 锁被占"},
                 "reason": "GPU 被批量推理/训练任务占用（锁），未实跑验算，CPU 兜底",
             }
-            print(
-                json.dumps(decision, ensure_ascii=False, indent=1)
-                if args.json
-                else _pretty(decision)
-            )
+            _emit(decision, args.json, args.output)
             return 0
     try:
         decision = probe(python_exe=args.python, sample_file=args.sample_file)
@@ -265,13 +269,22 @@ def main(argv: list[str] | None = None) -> int:
             lock.release()
     if lock_error is not None:
         decision["lock_note"] = lock_error
-    if args.json:
-        print(json.dumps(decision, ensure_ascii=False, indent=1))
-    else:
-        print(_pretty(decision))
-        if lock_error is not None:
-            print(f"lock_note: {lock_error}")
+    _emit(decision, args.json, args.output)
     return 0
+
+
+def _emit(decision: dict, as_json: bool, output: str | None) -> None:
+    """输出决策：--output 时 json.dump 直写文件（纯 JSON，锁日志走 stderr
+    不会混入）；否则 stdout（--json 纯 JSON 或可读文本）。"""
+    if output is not None:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(decision, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
+        )
+        print(f"决策 JSON 已写入：{out_path}", file=sys.stderr)
+        return
+    print(json.dumps(decision, ensure_ascii=False, indent=1) if as_json else _pretty(decision))
 
 
 def _pretty(decision: dict) -> str:

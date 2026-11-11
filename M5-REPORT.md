@@ -1,9 +1,10 @@
 # M5-REPORT — BodyDonor M5 立项迭代补丁交付报告
 
-> 日期：2026-11-11。M5 补丁 6 个提交（本地 main，未推）：`c2b2901` 审阅会话
+> 日期：2026-11-11。M5 补丁 7 个提交（本地 main，未推）：`c2b2901` 审阅会话
 > 状态模型 → `a431478` 传播 + 风险队列端点 → `dcd5cd2` niivue 审阅屏 →
 > `539ffe6` M5-e 血缘修正 → `0a292dd` GPU 探针 → `9353f6e` submit-nni
-> 基线自动解析 → 本报告。
+> 基线自动解析 → `d3baaa9` 本报告（首部笔误 6→7：实数 `git log c2b2901~1..d3baaa9`
+> 计数 7，2026-11-11 收尾修正）。
 > 依据：~/M5-PLAN.md（2026-11-09 用户定）、M4-REPORT.md §5.1 遗留、
 > LICENSES-THIRD-PARTY.md §8。非交互运行；全程未 push、未建 PR、未改
 > eval/holdout.txt、未改 M4 门禁结果。
