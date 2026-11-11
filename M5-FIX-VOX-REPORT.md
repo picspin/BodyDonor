@@ -128,9 +128,10 @@ sidecar prompts `[{x:0,y:0,z:0}]`；修正 mask 的 32 体素全在 x/y/z∈[0,3
   - 事件坐标路径（`m5CurrentVox` 事件坐标换算、体外返回 null、`pointerup`
     `(ev)` 形参）无自动化测试：仓库无 JS 测试基建（无 package.json / vitest /
     jest / playwright 配置，仅 `scripts/bench_*.py` 基准脚本），本次不新建
-    harness（超出范围），以浏览器 E2E 为覆盖依据。原计划的
-    `~/workspace/bodydonor/browser-test/run4-*/results.json` 在本机已不存在
-    （一次性实测记录，未入库），数字以本报告 §4 表格为准。
+    harness（超出范围），以浏览器 E2E 为覆盖依据。浏览器实测记录存于 Muse VM 的
+    `~/workspace/bodydonor/browser-test/run4-*/results.json`（5 轮全绿：point 8/8、
+    point2 8/8、bbox 7/7、bbox2 7/7、scribble 7/7，含截图；不在 WSL2 仓库内，
+    故 WSL2 侧无法直接读到），数字以本报告 §4 表格为准。
 - bug 2（submit-nni 版本文件名）见下节。
 
 ## 7. bug 2：submit-nni 版本文件名
