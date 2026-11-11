@@ -553,3 +553,37 @@ class TestReviewSubmitNni:
                 },
             )
         assert r.status_code == 422
+
+    def test_submit_nni_resolves_baseline_version(self, committed_series) -> None:  # noqa: ANN001
+        """未带 baselineTeacherVersion 时，后端查最新 MaskVersion 版本号补上。"""
+        sid, storage, key, mask_key, settings = committed_series
+        img = nib.load(str(storage.root / key))
+        self._write_correction(storage, key, img)
+        with client() as c:
+            # 先 save 一次，建 v1（manual）作为修正所基于的显示基线
+            r0 = c.post(
+                f"/review/{sid}/save",
+                json={"deleted_classes": [], "drawing_nifti": None},
+            )
+            assert r0.status_code == 200 and r0.json()["version"] == 1
+            r = c.post(
+                f"/review/{sid}/submit-nni",
+                json={
+                    "target_label": 1,
+                    "prompts": [
+                        {
+                            "type": "point",
+                            "x": 2,
+                            "y": 2,
+                            "z": 10,
+                            "include": True,
+                            "class": "label-1",
+                        }
+                    ],
+                    "acceptedClasses": ["label-1"],
+                    "sessionId": "sess-base",
+                    # baselineTeacherVersion 不带：后端自动解析
+                },
+            )
+        assert r.status_code == 200
+        assert r.json()["provenance"]["baselineTeacherVersion"] == 1

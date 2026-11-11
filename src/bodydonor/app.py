@@ -1249,6 +1249,17 @@ def review_submit_nni(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
         provenance = build_provenance(session_id, baseline, prompts, accepted)
     except (TypeError, ValueError) as e:
         raise HTTPException(status_code=422, detail=f"提交 payload 非法：{e}") from None
+    if baseline is None:
+        # M5-e：前端未带基线版本时，后端按 M4 口径查最新 MaskVersion 版本号
+        # （修正所基于的显示基线；查不到记 null + 原因，不猜数字）。
+        from .nninteractive_backend import _lookup_baseline_teacher_version
+
+        baseline, baseline_reason = _lookup_baseline_teacher_version(
+            st.root / row.storage_key, settings
+        )
+        provenance["baselineTeacherVersion"] = baseline
+        if baseline is None:
+            provenance["baselineTeacherVersionReason"] = baseline_reason
 
     series_dir = "/".join(row.storage_key.split("/")[:2])
     corr_dir = st.root / series_dir / "nninteractive-correction"
