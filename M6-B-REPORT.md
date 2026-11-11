@@ -191,7 +191,17 @@ M6-a 遗留 2（tracker 是进程内存缓冲，重启后草稿历史丢失）�
 
 ### 5.1 全套 pytest 结果
 
-（待后台任务完成后填写：collected / passed / failed / 耗时）
+全套 555 collected，**全绿（0 failed / 0 error）**。分两批跑（单次全套超
+后台时限，38% 处被停一次后拆批重跑；两批合起来 = 全套无遗漏）：
+
+| 批次 | 文件 | 结果 |
+| --- | --- | --- |
+| Batch 1（M6-b 受影响 + 许可门禁） | test_qc_interaction.py、test_qc_interaction_e2e.py、test_interaction_metrics.py、test_qc.py、test_qc_api.py、test_distill_license_gate.py | exit=0、100%、0 F/E（含真实推理 e2e：回放 2 条 + 跨重启 1 条 + Blocker 验收链路） |
+| Batch 2（其余全量回归） | tests/ 其余全部（--ignore 上批 6 个） | exit=0、100%、0 F/E（476 tests，含 test_m6e_wiring 真实 mask 回归） |
+
+注：pyproject addopts=-q 无尾行 summary，以 exit code + 点数 + 0 F/E 为准。
+另见一条既有 deprecation warning（class-scoped fixture as instance method，
+test_interaction_metrics.py real_patch——M6-a 既有，非本轮引入，未动）。
 
 ### 5.2 许可门禁负测试
 
