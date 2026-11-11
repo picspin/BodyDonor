@@ -131,22 +131,34 @@ TestCorrectSubmitE2E 的真实链路——correct→abandon→correct→submit H
 ### 3.3 互补性数字（任务 7b）
 
 真实回放 1 case（nifti-685473f2，48³ patch，交互 case 占比 1/1），落盘
-`m6b_complementarity.json`（tmp）：
+`m6b_complementarity.json`（tmp）。
 
-| 口径 | 规则集合 |
+**新口径（干净三向对照）**：两边都是全 thresholds，唯一变量是两过程规则
+开/关（内存深拷贝副本把 `interaction_convergence` / `interaction_abandonment`
+`enabled` 置 False，不改 config 文件）：
+
+| 组 | 规则集合 |
 | --- | --- |
-| 过程级 flag（最小 thresholds，只开两过程规则） | `interaction_abandonment` |
-| 结果级 flag（全 thresholds） | `boundary_smoothness`, `interaction_abandonment` |
-| 重叠 | 1（`interaction_abandonment`） |
-| 仅结果级 | 1（`boundary_smoothness`） |
-| 仅过程级 | 0（规则名级；最小 thresholds 是全 thresholds 子集，集合差恒空——口径见下） |
+| 全开（全 thresholds） | `boundary_smoothness`, `interaction_abandonment` |
+| 关两过程规则（其余同全开） | `boundary_smoothness` |
+| overlap（两边都有） | 1（`boundary_smoothness`） |
+| only_process（只在全开时出现） | 1（`interaction_abandonment`） |
+| only_result（关过程规则后仍出现的非过程规则 flag） | 1（`boundary_smoothness`） |
 
-**可度量互补性**：结果级 flag 集合里既有过过程级 flag（重叠 ≥1）又有过程
-级不覆盖的维度（`boundary_smoothness`——边界体素/体积比的体素统计，过程
-信号不覆盖；48³ 合成 patch 边界/体积比超冷启动阈值 1.2 的正常结果）。两类
-规则各提供对方没有的信号，**非完全重叠**。互补来自：abandonment 是事件级
-过程信号（结果级规则看不到放弃事件），boundary_smoothness 是体素级统计
-（过程级规则不看像素）。
+only_result 与 overlap 可重合：同一结果级 flag（`boundary_smoothness`）既被
+两边共享、又在过程规则关闭后独立出现——按规则类别计数，不做集合差（集合差
+在两阈值互为超集时恒空，同旧口径的假象）。
+
+**结论（按新口径）**：过程规则的增量贡献可度量——关掉后丢
+`interaction_abandonment`（事件级过程信号，结果级规则看不到放弃事件）、留
+`boundary_smoothness`（体素级统计，过程级规则不看像素；48³ 合成 patch
+边界/体积比超冷启动阈值 1.2 的正常结果）。两类规则各提供对方没有的信号，
+**非完全重叠**。
+
+旧口径（并列保留，另一口径不得与新表混用）：「最小 thresholds（只开两过程
+规则）vs 全 thresholds」——后者是前者超集，集合差恒空，only_result 数字
+无意义；过程级 flag（`interaction_abandonment`）与重叠 1 的数字与新表一致，
+仅作对照。
 
 ### 3.4 样本量（任务 7c，M6-f DecisionTrace 未建）
 
