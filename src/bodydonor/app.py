@@ -909,7 +909,7 @@ def review_save(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
                     payload = _Path(tmp_name).read_bytes()
                 finally:
                     _Path(tmp_name).unlink(missing_ok=True)
-                key = mask_key.replace("image.nii.gz", f"mask_v{version}.nii.gz")
+                key = (row.storage_key or "").replace("image.nii.gz", f"mask_v{version}.nii.gz")
                 st.save(key, payload)
                 save_source = str(body.get("source", "manual"))
                 if save_source not in ("manual", "human"):
@@ -1196,7 +1196,7 @@ def review_propagate(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
                     payload = _Path(tmp_name).read_bytes()
                 finally:
                     _Path(tmp_name).unlink(missing_ok=True)
-                key = mask_key.replace("image.nii.gz", f"mask_v{version}.nii.gz")
+                key = (row.storage_key or "").replace("image.nii.gz", f"mask_v{version}.nii.gz")
                 st.save(key, payload)
                 s.add(
                     MaskVersion(
@@ -1428,7 +1428,7 @@ def review_submit_nni(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
                     payload = _Path(tmp_name).read_bytes()
                 finally:
                     _Path(tmp_name).unlink(missing_ok=True)
-                key = mask_key.replace("image.nii.gz", f"mask_v{version}.nii.gz")
+                key = (row.storage_key or "").replace("image.nii.gz", f"mask_v{version}.nii.gz")
                 st.save(key, payload)
                 s.add(
                     MaskVersion(
