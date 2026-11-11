@@ -20,10 +20,29 @@ from . import __version__
 from .agent_context import scan_for_phi
 from .config import Settings, load_settings
 from .db import init_db
+from .interaction_metrics import InteractionTracker, load_teacher_eval
 from .license_registry import LicenseRegistry
 from .storage import Job, LocalFsStorage, SqliteJobsQueue
 
 settings: Settings = load_settings()
+
+# M6-a：交互轨迹采集缓冲（进程内按 series；重启后草稿历史丢失，指标退化为
+# 空 dict 不造假重建——interaction_metrics 模块 docstring 诚实边界）
+_interaction_trackers: dict[str, InteractionTracker] = {}
+_teacher_eval_counts: dict[str, int] | None | bool = False  # False=未加载, None=加载失败
+
+
+def _interaction_tracker(series_id: str) -> InteractionTracker:
+    """该 series 的 tracker（惰性创建）。"""
+    return _interaction_trackers.setdefault(series_id, InteractionTracker())
+
+
+def _teacher_case_counts() -> dict[str, int] | None:
+    """教师评估 per_class_case_count（惰性加载一次；缺失记 None 不重试）。"""
+    global _teacher_eval_counts
+    if _teacher_eval_counts is False:
+        _teacher_eval_counts = load_teacher_eval()
+    return _teacher_eval_counts  # type: ignore[return-value]
 
 
 @asynccontextmanager
@@ -1049,17 +1068,17 @@ def review_nninteractive_correct(series_id: str, body: dict[str, Any]) -> JSONRe
                     ) from None
             elif ptype == "bbox":
                 bb = p.get("bbox")
-                if not isinstance(bb, list) or len(bb) != 3 or any(
-                    not isinstance(ax, list) or len(ax) != 2 for ax in bb
+                if (
+                    not isinstance(bb, list)
+                    or len(bb) != 3
+                    or any(not isinstance(ax, list) or len(ax) != 2 for ax in bb)
                 ):
                     raise HTTPException(
                         status_code=422,
                         detail=f"prompts[{i}] bbox 须为 [[x0,x1],[y0,y1],[z0,z1]]",
                     )
                 try:
-                    prompts.append(
-                        {"type": "bbox", "bbox": [[float(v) for v in ax] for ax in bb]}
-                    )
+                    prompts.append({"type": "bbox", "bbox": [[float(v) for v in ax] for ax in bb]})
                 except (TypeError, ValueError):
                     raise HTTPException(
                         status_code=422, detail=f"prompts[{i}] bbox 数值非法"
@@ -1143,6 +1162,28 @@ def review_nninteractive_correct(series_id: str, body: dict[str, Any]) -> JSONRe
         raise HTTPException(status_code=409, detail=str(e)) from None
     except NnInteractiveError as e:
         raise HTTPException(status_code=422, detail=str(e)) from None
+
+    # M6-a 轨迹采集：本次草稿落 tracker，上一版草稿仍在内存时直接算该步
+    # delta（不重跑推理、不从事后落盘产物重建——M6-PLAN v2 实现要点）。
+    # 采集失败不挡修正主流程（指标是过程信号，不是结果门禁）。
+    m6a_target_label = int(body.get("target_label", 1))
+    n_target = result.n_target_voxels
+    if n_target is not None and n_target > 0:
+        try:
+            corr_path = out_dir / "correction_mask.nii.gz"
+            import numpy as np
+
+            # 草稿 mask 由 correct_image 落盘（affine 守卫 runner 内已做）；
+            # 这里只读回进 tracker。采集失败不挡修正主流程。
+            with _nifti_from_bytes(corr_path.read_bytes()) as draft_img:
+                draft_arr = np.asarray(draft_img.dataobj)
+            tracker = _interaction_tracker(series_id)
+            delta = tracker.record_draft(str(m6a_target_label), draft_arr, len(prompts))
+            result.step_delta_dice = delta
+        except (OSError, ValueError, KeyError) as e:
+            result.step_delta_dice = None
+            result.step_delta_error = f"{type(e).__name__}: {e}"
+
     return JSONResponse(result.to_dict())
 
 
@@ -1383,6 +1424,9 @@ def review_submit_nni(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
         if baseline is None:
             provenance["baselineTeacherVersionReason"] = baseline_reason
 
+    # M6-a：provenance.interactionMetrics 在下方 mask_key/产物路径解析后构建
+    # （finalLocalDice 需要教师基线 mask 与本次修正产物）。
+
     series_dir = "/".join(row.storage_key.split("/")[:2])
     corr_dir = st.root / series_dir / "nninteractive-correction"
     sidecar_path = corr_dir / "correction_source.json"
@@ -1450,6 +1494,45 @@ def review_submit_nni(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
     from . import db
     from .models import MaskVersion
 
+    # M6-a：provenance.interactionMetrics（该类条目；tracker 无数据时空 dict
+    # 不造假——重启后草稿历史丢失，见 interaction_metrics docstring）。
+    # finalLocalDice = 合并产物 vs 教师基线（结果级，带 teacherReliability
+    # 标记）；基线 mask 可读时才算，否则 null（不猜数字）。
+    tracker = _interaction_trackers.get(series_id)
+    class_name = accepted[0] if accepted else str(target_label)
+    final_local_dice = None
+    if tracker is not None and class_name in tracker.drafts:
+        try:
+            if st.exists(mask_key):
+                from .interaction_metrics import dice_binary
+
+                with (
+                    _nifti_from_bytes(st.load(img_key)) as img,
+                    _nifti_from_bytes(st.load(mask_key)) as base_mask,
+                    _nifti_from_bytes(corr_mask_path.read_bytes()) as corr,
+                ):
+                    assert_affine_match(img, base_mask, label="m6a finalLocalDice base")
+                    assert_affine_match(img, corr, label="m6a finalLocalDice corr")
+                    base_arr = np.asarray(base_mask.dataobj) == target_label
+                    corr_arr2 = np.asarray(corr.dataobj) > 0
+                    merged = base_arr.copy()
+                    merged[corr_arr2] = True
+                # vs 教师基线（结果级 Dice；草稿内容 = 基线 ∪ 本次修正体素）
+                final_local_dice = dice_binary(base_arr, merged)
+        except (OSError, ValueError, KeyError) as e:
+            final_local_dice = None
+            provenance["interactionMetricsError"] = f"{type(e).__name__}: {e}"
+    if tracker is not None and (class_name in tracker.drafts or class_name in tracker.abandoned):
+        provenance["interactionMetrics"] = {
+            class_name: tracker.build_metrics(
+                class_name,
+                final_local_dice=final_local_dice,
+                per_class_case_count=_teacher_case_counts(),
+            )
+        }
+    else:
+        provenance["interactionMetrics"] = {}
+
     engine = db._engine(settings.database.url)
     try:
         with db.write_lock, engine.connect() as conn:
@@ -1502,4 +1585,31 @@ def review_submit_nni(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
         "target_label": target_label,
         "n_corrected_voxels": n_corr,
         "provenance": provenance,
+    }
+
+
+@app.post("/review/{series_id}/abandon-draft")
+def review_abandon_draft(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """放弃本类草稿（M5-b「越改越差 → 放弃」）→ M6-a abandonedAttempts +1。
+
+    body: {target_label: int, reason?: str}
+    - tracker 草稿序列清空（回 teacher，与 DraftStore.discard 同语义）、
+      放弃计数 +1；下次 submit 时 interactionMetrics.abandonedAttempts
+      反映累计放弃次数。
+    - tracker 无该类草稿时也记放弃（草稿已被清过的重复放弃同样计数——
+      语义：放弃事件本身是过程信号）。
+    """
+    try:
+        target_label = int(body.get("target_label"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="target_label 须为 int") from None
+    if target_label <= 0:
+        raise HTTPException(status_code=422, detail="target_label 须 > 0")
+    tracker = _interaction_tracker(series_id)
+    class_name = str(body.get("class_name") or target_label)
+    attempts = tracker.record_abandoned(class_name)
+    return {
+        "series_id": series_id,
+        "class": class_name,
+        "abandonedAttempts": attempts,
     }

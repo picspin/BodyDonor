@@ -131,9 +131,7 @@ class InteractionTracker:
     abandoned: dict[str, int] = field(default_factory=dict)
     prompt_counts: dict[str, int] = field(default_factory=dict)
 
-    def record_draft(
-        self, cls: str, draft: np.ndarray, n_prompts: int
-    ) -> float | None:
+    def record_draft(self, cls: str, draft: np.ndarray, n_prompts: int) -> float | None:
         """记录一步新草稿；有前驱草稿时返回该步 ΔDice（无前驱返回 None）。"""
         seq = self.drafts.setdefault(cls, [])
         delta: float | None = None

@@ -97,6 +97,10 @@ class CorrectionResult:
     license: str = ""
     n_target_voxels: int = 0
     prompts: list[dict[str, Any]] = field(default_factory=list)
+    # M6-a 轨迹采集（调用方填写）：本步草稿 vs 上一版草稿的 ΔDice（草稿间
+    # 语义，绝不用教师 mask 当伪真值）；None = 首步（无前驱草稿）或未采集。
+    step_delta_dice: float | None = None
+    step_delta_error: str | None = None  # 采集失败原因（不挡主流程）
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -113,6 +117,8 @@ class CorrectionResult:
             "peak_vram_nvidia_smi_mb": self.peak_vram_nvidia_smi_mb,
             "n_target_voxels": self.n_target_voxels,
             "prompts": list(self.prompts),
+            "step_delta_dice": self.step_delta_dice,
+            "step_delta_error": self.step_delta_error,
         }
 
 
