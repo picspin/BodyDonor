@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import nibabel as nib
@@ -56,8 +57,6 @@ def committed_series(tmp_path, settings, monkeypatch, isolate_db_url):  # noqa: 
     mask_arr[20:28, 20:28, 20:28] = 2
     mask = nib.Nifti1Image(mask_arr, img.affine)
     mask_key = key.replace("image.nii.gz", "mask.nii.gz")
-    import tempfile
-
     with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
         tmp_name = tf.name
     try:
@@ -207,8 +206,6 @@ class TestReviewSave:
         bad_affine = img.affine.copy()
         bad_affine[0, 3] += 7.0
         bad_mask = nib.Nifti1Image(np.zeros(img.shape, dtype=np.uint8), bad_affine)
-        import tempfile
-
         with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
             tmp_name = tf.name
         try:
@@ -233,8 +230,6 @@ class TestReviewSave:
         draw_arr = np.zeros(img.shape, dtype=np.uint8)
         draw_arr[5:15, 5:15, 5:15] = 1  # 擦掉 label-1 区域
         draw = nib.Nifti1Image(draw_arr, img.affine)
-        import tempfile
-
         with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
             tmp_name = tf.name
         try:
@@ -280,8 +275,6 @@ class TestReviewSave:
             draw_arr = np.zeros(img.shape, dtype=np.uint8)
             draw_arr[5:15, 5:6, z] = 1
             draw = nib.Nifti1Image(draw_arr, img.affine)
-            import tempfile
-
             with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
                 tmp_name = tf.name
             try:
@@ -373,6 +366,76 @@ class TestReviewPropagate:
         arr = np.asarray(img.dataobj)
         assert int((arr[:, :, 15] == 1).sum()) == 100
         assert int((arr[:, :, 14] == 1).sum()) == 100
+
+    def test_propagate_second_call_includes_first_correction(self, committed_series) -> None:  # noqa: ANN001
+        """连续两次 propagate：第二次以最新 MaskVersion 为基底，第一次传播保留。
+
+        第一次 propagate（slice 14 → z=15）落 mask_v1.nii.gz 后，第二次传播
+        （slice 15 → z=16）必须从 mask_v1（含 z=15 体素）取本层形态——若仍回
+        原始 mask.nii.gz，z=15 为空、第二次传播 0 体素被 422 拒（读路径回归测试）。
+        """
+        sid, storage, key, mask_key, settings = committed_series
+        with client() as c:
+            r1 = c.post(
+                f"/review/{sid}/propagate",
+                json={"slice": 14, "class_label": 1, "radius": 1},
+            )
+            assert r1.status_code == 200
+            v1 = r1.json()["version"]
+            assert v1 == 1
+            assert r1.json()["key"].endswith("mask_v1.nii.gz")
+
+            r2 = c.post(
+                f"/review/{sid}/propagate",
+                json={"slice": 15, "class_label": 1, "radius": 1},
+            )
+            assert r2.status_code == 200
+            v2 = r2.json()["version"]
+            assert v2 == 2
+            assert r2.json()["key"].endswith("mask_v2.nii.gz")
+            assert r2.json()["propagated_voxels"] == 100
+            assert r2.json()["per_slice"] == {"16": 100}
+
+        # 第二次 mask：第一次传播位置（z=15）与第二次（z=16）的体素都在
+        img_v2 = nib.load(str(storage.root / r2.json()["key"]))
+        arr2 = np.asarray(img_v2.dataobj)
+        assert int((arr2[:, :, 15] == 1).sum()) == 100  # 第一次传播仍在
+        assert int((arr2[:, :, 16] == 1).sum()) == 100  # 第二次传播已应用
+        assert int((arr2[:, :, 14] == 1).sum()) == 100  # 源层不受第二次影响
+        # 原始 mask.nii.gz 未被覆盖（写路径规则；z=15 仍为空）
+        orig = np.asarray(nib.load(str(storage.root / mask_key)).dataobj)
+        assert int((orig[:, :, 15] == 1).sum()) == 0
+        assert int((orig[:, :, 16] == 1).sum()) == 0
+
+        # 历史行未改写：v1/v2 的 storage_key 仍指向 mask_v{N}.nii.gz
+        from sqlalchemy import select
+
+        from bodydonor import db
+        from bodydonor.models import MaskVersion
+
+        engine = db._engine(settings.database.url)
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy.orm import Session
+
+                s = Session(conn)
+                rows = (
+                    s.execute(
+                        select(MaskVersion)
+                        .where(MaskVersion.series_id == sid)
+                        .order_by(MaskVersion.version)
+                    )
+                    .scalars()
+                    .all()
+                )
+                s.close()
+        finally:
+            engine.dispose()
+        assert [r.version for r in rows] == [1, 2]
+        assert [r.storage_key for r in rows] == [
+            key.replace("image.nii.gz", "mask_v1.nii.gz"),
+            key.replace("image.nii.gz", "mask_v2.nii.gz"),
+        ]
 
     def test_propagate_zero_refuses_empty_version(self, committed_series) -> None:  # noqa: ANN001
         sid, storage, key, mask_key, settings = committed_series
@@ -478,8 +541,6 @@ class TestReviewPageM5:
         for x0, x1, y0, y1, z in voxels:
             corr_arr[x0:x1, y0:y1, z] = 1
         corr = nib.Nifti1Image(corr_arr, img.affine)
-        import tempfile
-
         with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
             tmp_name = tf.name
         try:
