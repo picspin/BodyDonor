@@ -42,9 +42,7 @@ def env(tmp_path: Path):
     nnunet_results = data_dir / "nnUNet_results" / DATASET_DIR / "fold_0"
     (nnunet_raw).mkdir(parents=True)
     (nnunet_results).mkdir(parents=True)
-    (nnunet_raw / "dataset.json").write_text(
-        json.dumps({"labels": LABELS}), encoding="utf-8"
-    )
+    (nnunet_raw / "dataset.json").write_text(json.dumps({"labels": LABELS}), encoding="utf-8")
     (nnunet_results / "checkpoint_final.pth").write_bytes(b"stub")
     url = f"sqlite:///{tmp_path / 'student_pred.db'}"
     init_db(url)
@@ -94,8 +92,7 @@ def _seed_prediction(settings, case_id: str, values: tuple[int, ...]) -> Path:
 def test_load_found_returns_mask_and_classes(env):
     """找到：mask_arr 是预测单标签体 numpy、classes 是 dataset.json 值->类名。"""
     weights_key = str(
-        env.resolved_data_dir / "nnUNet_results" / DATASET_DIR / "fold_0"
-        / "checkpoint_final.pth"
+        env.resolved_data_dir / "nnUNet_results" / DATASET_DIR / "fold_0" / "checkpoint_final.pth"
     )
     _seed_model_version(env, weights_key)
     _seed_prediction(env, "s0001", values=(1, 6, 15))
@@ -104,9 +101,7 @@ def test_load_found_returns_mask_and_classes(env):
     assert isinstance(sp, StudentPrediction)
     assert sp.case_id == "s0001"
     assert sp.classes == {1: "spleen", 6: "liver", 15: "prostate"}
-    np.testing.assert_array_equal(
-        sp.mask_arr[1, 1, 1], 1
-    )  # 值 1（spleen）体素真读回
+    np.testing.assert_array_equal(sp.mask_arr[1, 1, 1], 1)  # 值 1（spleen）体素真读回
     assert set(np.unique(sp.mask_arr)) == {0, 1, 6, 15}
     assert sp.model_version_id == "mv-student-test"
     assert sp.weights_key == weights_key
@@ -116,8 +111,7 @@ def test_load_found_returns_mask_and_classes(env):
 def test_load_missing_case_raises(env):
     """缺失 case：无预测文件 → StudentPredictionError（不返回假数据）。"""
     weights_key = str(
-        env.resolved_data_dir / "nnUNet_results" / DATASET_DIR / "fold_0"
-        / "checkpoint_final.pth"
+        env.resolved_data_dir / "nnUNet_results" / DATASET_DIR / "fold_0" / "checkpoint_final.pth"
     )
     _seed_model_version(env, weights_key)
     with pytest.raises(StudentPredictionError, match="无学生预测文件"):
@@ -127,8 +121,7 @@ def test_load_missing_case_raises(env):
 def test_load_no_passed_model_version_raises(env):
     """无 gate_status=passed 的 ModelVersion → StudentPredictionError。"""
     weights_key = str(
-        env.resolved_data_dir / "nnUNet_results" / DATASET_DIR / "fold_0"
-        / "checkpoint_final.pth"
+        env.resolved_data_dir / "nnUNet_results" / DATASET_DIR / "fold_0" / "checkpoint_final.pth"
     )
     _seed_model_version(env, weights_key, gate_status="pending")
     with pytest.raises(StudentPredictionError, match="gate_status=passed"):
@@ -147,8 +140,7 @@ def test_load_empty_labels_raises(env):
     raw = env.resolved_data_dir / "nnUNet_raw" / DATASET_DIR
     (raw / "dataset.json").write_text(json.dumps({"labels": {}}), encoding="utf-8")
     weights_key = str(
-        env.resolved_data_dir / "nnUNet_results" / DATASET_DIR / "fold_0"
-        / "checkpoint_final.pth"
+        env.resolved_data_dir / "nnUNet_results" / DATASET_DIR / "fold_0" / "checkpoint_final.pth"
     )
     _seed_model_version(env, weights_key)
     _seed_prediction(env, "s0001", values=(1,))

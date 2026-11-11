@@ -54,9 +54,7 @@ def _resolve_dataset_json(weights_key: str) -> Path:
     单一事实来源（学生 15 类 = 该文件 labels，评估与规则同源）。
     """
     parts = Path(weights_key).parts
-    dataset_dir = next(
-        (i for i, p in enumerate(parts) if p.startswith("Dataset")), None
-    )
+    dataset_dir = next((i for i, p in enumerate(parts) if p.startswith("Dataset")), None)
     if dataset_dir is None:
         raise StudentPredictionError(
             f"weights_key 无法定位 Dataset 目录（期望 nnUNet_results/Dataset*/…）: {weights_key}"
@@ -104,12 +102,16 @@ def load_student_prediction(
         with engine.connect() as conn:
             s = Session(conn)
             try:
-                mv = s.execute(
-                    select(ModelVersion)
-                    .where(ModelVersion.gate_status == "passed")
-                    .order_by(ModelVersion.created_at.desc())
-                    .limit(1)
-                ).scalars().first()
+                mv = (
+                    s.execute(
+                        select(ModelVersion)
+                        .where(ModelVersion.gate_status == "passed")
+                        .order_by(ModelVersion.created_at.desc())
+                        .limit(1)
+                    )
+                    .scalars()
+                    .first()
+                )
             finally:
                 s.close()
     finally:
@@ -122,19 +124,14 @@ def load_student_prediction(
 
     dataset_json = _resolve_dataset_json(mv.weights_key)
     doc = _json.loads(dataset_json.read_text(encoding="utf-8"))
-    classes = {
-        int(v): k for k, v in doc.get("labels", {}).items() if k != "background"
-    }
+    classes = {int(v): k for k, v in doc.get("labels", {}).items() if k != "background"}
     if not classes:
         raise StudentPredictionError(f"dataset.json labels 为空: {dataset_json}")
 
-    pred_path = (
-        settings.resolved_data_dir / "student_holdout" / "pred" / f"{case_id}.nii.gz"
-    )
+    pred_path = settings.resolved_data_dir / "student_holdout" / "pred" / f"{case_id}.nii.gz"
     if not pred_path.exists():
         raise StudentPredictionError(
-            f"case 无学生预测文件: {pred_path}"
-            "（预测产物只覆盖 M4 学生评估的 hold-out 30 例）"
+            f"case 无学生预测文件: {pred_path}（预测产物只覆盖 M4 学生评估的 hold-out 30 例）"
         )
 
     import nibabel as nib
