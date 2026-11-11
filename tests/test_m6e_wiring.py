@@ -225,6 +225,26 @@ def _baseline_flagged_cases() -> set[str]:
     return {"s0209", "amos_0005", "s0338", "amos_0006", "amos_0016"}
 
 
+def _real_products_available() -> bool:
+    """419 对回归依赖的真实产物是否齐全（缺失时 skip 不 fail）。
+
+    教师产物（downloads/amos22_subset、downloads/ct_lite/ts_out、
+    ts_class_map.json）+ 学生预测（student_holdout/pred/dataset.json）。
+    """
+    data = Path.home() / "data/BodyDonor"
+    paths = [
+        data / "downloads/amos22_subset",
+        data / "downloads/ct_lite/ts_class_map.json",
+        data / "downloads/ct_lite/ts_out",
+        data / "student_holdout/pred/dataset.json",
+    ]
+    return all(p.exists() for p in paths)
+
+
+@pytest.mark.skipif(
+    not _real_products_available(),
+    reason="~/data/BodyDonor 真实产物缺失（回归依赖 30 例 hold-out 教师+学生 mask）",
+)
 def test_regression_419_pairs_flag_baseline() -> None:
     """30 例 hold-out 真跑 run_qc（教师 vs 学生），flag 集合对比离线评估 5 例。
 
