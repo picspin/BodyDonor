@@ -9,9 +9,12 @@
 
 - **任务 JSON**（stdin，UTF-8）：`{image_nii, prompts, target_label, device,
   output_dir, job_id}`。prompts 为列表：`{"type": "point", "x": .., "y": ..,
-  "z": .., "include": true|false}`（正/负点）或
+  "z": .., "include": true|false}`（正/负点）、
   `{"type": "bbox", "bbox": [[x0,x1],[y0,y1],[z0,z1]]}`（2D bbox：一维须为
-  [d, d+1] 表示单一切片，上游限制）。
+  [d, d+1] 表示单一切片，上游限制）或
+  `{"type": "scribble", "points": [[x,y,z], ...]}`（点轨迹；runner 侧转成
+  与原图同形状的 uint8 mask 数组后调 add_scribble_interaction——上游 API
+  入参是 scribble mask 图，不是点列表）。
 - **结果 JSON**（stdout，UTF-8，**纯 JSON**——日志一律走 stderr，不混入）：
   `{status, exit_code, mask_path, wall_seconds, load_seconds, inference_seconds,
   peak_vram_mb, error}`。status ∈ ok | error；peak_vram_mb 不可用时（CPU 模式 /
@@ -160,8 +163,19 @@ def _validate_prompts(prompts: Any) -> tuple[list[dict[str, Any]], str]:
                 if len(axis) != 2 or axis[1] < axis[0]:
                     return [], f"prompts[{i}] bbox 每维须为 [lo,hi] 且 hi>=lo（单切片维用 [d,d+1]）"
             out.append({"type": "bbox", "bbox": norm})
+        elif ptype == "scribble":
+            pts = p.get("points")
+            if not isinstance(pts, list) or not pts:
+                return [], f"prompts[{i}] scribble 须为非空 points 列表"
+            norm_pts: list[tuple[float, float, float]] = []
+            for j, pt in enumerate(pts):
+                try:
+                    norm_pts.append((float(pt[0]), float(pt[1]), float(pt[2])))
+                except (KeyError, TypeError, ValueError, IndexError):
+                    return [], f"prompts[{i}] scribble points[{j}] 须为 [x,y,z] 数值三元组"
+            out.append({"type": "scribble", "points": norm_pts})
         else:
-            return [], f"prompts[{i}] type 须为 point|bbox，收到 {ptype!r}"
+            return [], f"prompts[{i}] type 须为 point|bbox|scribble，收到 {ptype!r}"
     return out, ""
 
 
@@ -211,6 +225,28 @@ def _count_target_voxels(mask_arr):
 
     arr = np.asarray(mask_arr)
     return int((arr > 0).sum()) if arr.size else 0
+
+
+def _scribble_to_mask(points: list[tuple[float, float, float]], shape: tuple[int, ...]):
+    """scribble 点轨迹 → 与原图同形状的 uint8 mask 数组（add_scribble_interaction 入参）。
+
+    上游 API 事实（nnInteractive 2.6.0 inference_session.add_scribble_interaction）：
+    入参是 scribble mask 图（np.ndarray，形状须匹配 interaction_bbox 尺寸；
+    interaction_bbox=None 时 = 原图 (x,y,z)），不是点列表。这里把点轨迹栅格化：
+    每个落点写 1（前端 pointermove 采到的轨迹点本身即涂鸦笔画，不做插值——
+    悬停采样密度即笔画密度，与前端记录语义一致）。
+
+    坐标按 round 取整后写 mask（上游 add_point_interaction 同 round 语义）；
+    越界点丢弃（不 clip——前端只可能采到视口内体素，越界即脏数据）。
+    """
+    import numpy as np
+
+    mask = np.zeros(shape, dtype=np.uint8)
+    for x, y, z in points:
+        xi, yi, zi = round(x), round(y), round(z)
+        if 0 <= xi < shape[0] and 0 <= yi < shape[1] and 0 <= zi < shape[2]:
+            mask[xi, yi, zi] = 1
+    return mask
 
 def run_task(task_json: dict[str, Any]) -> dict[str, Any]:
     """执行单个 nnInteractive 修正任务，返回结果 JSON（dict）。"""
@@ -287,9 +323,23 @@ def run_task(task_json: dict[str, Any]) -> dict[str, Any]:
             if p["type"] == "point":
                 session.add_point_interaction(p["xyz"], include_interaction=p["include"])
                 _log(f"[nni_runner] point {p['xyz']} include={p['include']}")
+            elif p["type"] == "bbox":
+                # 上游签名 add_bbox_interaction(bbox_coords, include_interaction,
+                # run_prediction=True, ...)：include_interaction 无默认值，缺参
+                # TypeError（2026-11-11 实测核实源码）；bbox 提示恒为正向 → include=True。
+                session.add_bbox_interaction(p["bbox"], include_interaction=True)
+                _log(f"[nni_runner] bbox {p['bbox']} include=True")
             else:
-                session.add_bbox_interaction(p["bbox"])
-                _log(f"[nni_runner] bbox {p['bbox']}")
+                scribble_mask = _scribble_to_mask(p["points"], img_arr.shape)
+                n_scribble = int(scribble_mask.sum())
+                # 上游签名 add_scribble_interaction(scribble_image, include_interaction=True,
+                # ..., interaction_bbox=None)：入参是 scribble mask 图（形状=原图 (x,y,z)），
+                # interaction_bbox=None 时须匹配 original_image_shape[1:]。
+                session.add_scribble_interaction(scribble_mask, include_interaction=True)
+                _log(
+                    f"[nni_runner] scribble {len(p['points'])} 点 → "
+                    f"mask {n_scribble} 体素 include=True"
+                )
     except Exception as e:  # noqa: BLE001
         exit_code = 1
         error = f"{type(e).__name__}: {e}"

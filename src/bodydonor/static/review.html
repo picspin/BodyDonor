@@ -782,18 +782,18 @@ function m5ScheduleInference(lv) {
 }
 async function m5RunInference(lv) {
   const prompts = m5.promptsByClass.get(lv) || [];
-  const points = prompts.filter((p) => p.type === "point");
-  if (!points.length) return;
-  // 提示合并：同类同向 ±1 体素去重（与后端 merge_prompts 同口径）
+  if (!prompts.length) return;
+  // 提示合并：同类同向 point ±1 体素去重（与后端 merge_prompts 同口径）；
+  // bbox / scribble 不合并（形状语义不同），全量随请求发送。
   const merged = [];
-  for (const p of points) {
-    const dup = merged.some((q) => q.include === p.include
+  const seenPoints = [];
+  for (const p of prompts) {
+    if (p.type !== "point") { merged.push(p); continue; }
+    const dup = seenPoints.some((q) => q.include === p.include
       && Math.abs(q.x - p.x) <= 1 && Math.abs(q.y - p.y) <= 1 && Math.abs(q.z - p.z) <= 1);
-    if (!dup) merged.push(p);
+    if (!dup) { seenPoints.push(p); merged.push(p); }
   }
-  const pos = merged.find((p) => p.include);
-  const neg = merged.find((p) => !p.include);
-  if (!pos) return;
+  if (!merged.length) return;
   const version = ++m5.inferSeq;
   m5.inferPending = true;
   updateModeBadge();
@@ -802,8 +802,11 @@ async function m5RunInference(lv) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        point: { x: pos.x, y: pos.y, z: pos.z },
-        negative_point: neg ? { x: neg.x, y: neg.y, z: neg.z } : undefined,
+        prompts: merged.map((p) => p.type === "bbox"
+          ? { type: "bbox", bbox: p.bbox }
+          : p.type === "scribble"
+            ? { type: "scribble", points: p.points }
+            : { type: "point", x: p.x, y: p.y, z: p.z, include: p.include }),
         target_label: lv,
       }),
     });
@@ -883,14 +886,12 @@ axialBox.addEventListener("pointerup", () => {
     m5ScheduleInference(lv);
   } else if (m5.mode === "bbox" && dragStart) {
     m5AddPrompt(lv, { type: "bbox", bbox: [[Math.min(dragStart.x, vox.x), Math.max(dragStart.x, vox.x) + 1], [Math.min(dragStart.y, vox.y), Math.max(dragStart.y, vox.y) + 1], [Math.min(dragStart.z, vox.z), Math.max(dragStart.z, vox.z) + 1]] });
-    if (!m5.bboxNoteShown) { m5.bboxNoteShown = true; toast("包围框提示已记录（可重放）；当前后端仅支持点提示，框提示随提交 payload 保存，M5-e 接 bbox 推理"); }
-    renderDraftList();
-    updateModeBadge();
+    if (!m5.bboxNoteShown) { m5.bboxNoteShown = true; toast("包围框提示已记录并触发推理（2D 框：同切片维 [d,d+1]）"); }
+    m5ScheduleInference(lv);
   } else if (m5.mode === "scribble" && scribblePts && scribblePts.length) {
     m5AddPrompt(lv, { type: "scribble", points: scribblePts.map((p) => [p.x, p.y, p.z]) });
-    if (!m5.bboxNoteShown) { m5.bboxNoteShown = true; toast("涂鸦提示已记录（可重放）；当前后端仅支持点提示，涂鸦随提交 payload 保存，M5-e 接 scribble 推理"); }
-    renderDraftList();
-    updateModeBadge();
+    if (!m5.bboxNoteShown) { m5.bboxNoteShown = true; toast("涂鸦提示已记录并触发推理"); }
+    m5ScheduleInference(lv);
   }
   dragStart = null;
   scribblePts = null;

@@ -370,8 +370,15 @@ class TestReviewPageM5:
         missing = [m for m in self.M5_MARKERS if m not in r.text]
         assert not missing, f"review.html 缺 M5 标记：{missing}"
 
-
-class TestReviewSubmitNni:
+    def test_review_page_prompts_contract(self) -> None:
+        """前端发全量 prompts（point/bbox/scribble），不再发旧 point/negative_point。"""
+        with client() as c:
+            r = c.get("/review")
+        assert r.status_code == 200
+        assert "prompts: merged.map" in r.text  # m5RunInference 发 prompts 列表
+        assert "negative_point" not in r.text  # 旧字段已不再发送
+        # 旧"仅支持点提示" toast 已改（接通后不再提示）
+        assert "当前后端仅支持点提示" not in r.text
     """M5-e 提交端点：修正 mask 合并进基线 → MaskVersion(source=nninteractive_guided)。"""
 
     def _write_correction(  # noqa: ANN001
@@ -587,3 +594,109 @@ class TestReviewSubmitNni:
             )
         assert r.status_code == 200
         assert r.json()["provenance"]["baselineTeacherVersion"] == 1
+
+
+class TestNninteractiveCorrectPrompts:
+    """M5-e 后接线：/nninteractive-correct 接 prompts 列表（point/bbox/scribble）。
+
+    mock correct_image（真实推理见 tests/test_nninteractive_backend.py + 真机
+    CPU 小 patch 验证脚本）；本类只测端点契约：三种 prompt 的 JSON 校验、
+    全量透传、旧 point/negative_point 兼容。
+    """
+
+    def _patch_endpoint(self, monkeypatch, captured) -> None:  # noqa: ANN001
+        from bodydonor.nninteractive_backend import CorrectionResult
+
+        def fake_correct(image_path, out_dir, prompts, **kwargs):
+            captured["prompts"] = prompts
+            captured["kwargs"] = kwargs
+            return CorrectionResult(
+                job_id=kwargs.get("job_id") or "nni-test",
+                image_path=str(image_path),
+                mask_path=str(out_dir / "correction_mask.nii.gz"),
+                sidecar_path=str(out_dir / "correction_source.json"),
+                n_target_voxels=8,
+                prompts=prompts,
+            )
+
+        # 端点函数体内 from .nninteractive_backend import correct_image——
+        # import 发生在调用时，patch 源模块属性即可
+        import bodydonor.nninteractive_backend as nni_backend
+
+        monkeypatch.setattr(nni_backend, "correct_image", fake_correct)
+
+    def test_prompts_list_passthrough(self, committed_series, monkeypatch) -> None:  # noqa: ANN001
+        sid, storage, key, mask_key, settings = committed_series
+        captured: dict = {}
+        self._patch_endpoint(monkeypatch, captured)
+        with client() as c:
+            r = c.post(
+                f"/review/{sid}/nninteractive-correct",
+                json={
+                    "prompts": [
+                        {"type": "point", "x": 10, "y": 10, "z": 10, "include": True},
+                        {"type": "point", "x": 6, "y": 6, "z": 6, "include": False},
+                        {"type": "bbox", "bbox": [[8, 12], [8, 12], [10, 11]]},
+                        {"type": "scribble", "points": [[9, 9, 10], [10, 10, 10]]},
+                    ],
+                    "target_label": 1,
+                },
+            )
+        assert r.status_code == 200
+        assert len(captured["prompts"]) == 4
+        by_type = {p["type"] for p in captured["prompts"]}
+        assert by_type == {"point", "bbox", "scribble"}
+        assert captured["prompts"][1]["include"] is False
+        assert captured["prompts"][2]["bbox"] == [[8.0, 12.0], [8.0, 12.0], [10.0, 11.0]]
+        assert captured["prompts"][3]["points"] == [[9.0, 9.0, 10.0], [10.0, 10.0, 10.0]]
+
+    def test_prompts_bad_type_422(self, committed_series, monkeypatch) -> None:  # noqa: ANN001
+        sid, storage, key, mask_key, settings = committed_series
+        captured: dict = {}
+        self._patch_endpoint(monkeypatch, captured)
+        with client() as c:
+            r = c.post(
+                f"/review/{sid}/nninteractive-correct",
+                json={"prompts": [{"type": "lasso", "points": [[1, 2, 3]]}]},
+            )
+        assert r.status_code == 422
+
+    def test_prompts_bbox_bad_shape_422(self, committed_series, monkeypatch) -> None:  # noqa: ANN001
+        sid, storage, key, mask_key, settings = committed_series
+        captured: dict = {}
+        self._patch_endpoint(monkeypatch, captured)
+        with client() as c:
+            r = c.post(
+                f"/review/{sid}/nninteractive-correct",
+                json={"prompts": [{"type": "bbox", "bbox": [[8, 12], [8, 12]]}]},
+            )
+        assert r.status_code == 422
+
+    def test_prompts_scribble_empty_422(self, committed_series, monkeypatch) -> None:  # noqa: ANN001
+        sid, storage, key, mask_key, settings = committed_series
+        captured: dict = {}
+        self._patch_endpoint(monkeypatch, captured)
+        with client() as c:
+            r = c.post(
+                f"/review/{sid}/nninteractive-correct",
+                json={"prompts": [{"type": "scribble", "points": []}]},
+            )
+        assert r.status_code == 422
+
+    def test_old_point_contract_still_works(self, committed_series, monkeypatch) -> None:  # noqa: ANN001
+        sid, storage, key, mask_key, settings = committed_series
+        captured: dict = {}
+        self._patch_endpoint(monkeypatch, captured)
+        with client() as c:
+            r = c.post(
+                f"/review/{sid}/nninteractive-correct",
+                json={
+                    "point": {"x": 10, "y": 10, "z": 10},
+                    "negative_point": {"x": 6, "y": 6, "z": 6},
+                    "target_label": 1,
+                },
+            )
+        assert r.status_code == 200
+        assert len(captured["prompts"]) == 2
+        assert captured["prompts"][0]["include"] is True
+        assert captured["prompts"][1]["include"] is False

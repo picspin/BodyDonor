@@ -947,16 +947,20 @@ def review_save(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
 
 @app.post("/review/{series_id}/nninteractive-correct")
 def review_nninteractive_correct(series_id: str, body: dict[str, Any]) -> JSONResponse:
-    """nnInteractive 交互修正（M4 阶段 3）：点/框提示 → 修正 mask → sidecar 落盘。
+    """nnInteractive 交互修正（M4 阶段 3 + M5-e 后接线）：point/bbox/scribble → 修正 mask。
 
-    body: {point: {x,y,z}, negative_point?: {x,y,z}, target_label?, device?, job_id?}
-    （与 CLI 同一后端函数 correct_image；prompt 形式先只接 point，bbox 走 CLI。）
+    body 两种形式：
+    - 新（M5-e 后）：{prompts: [...], target_label?, device?, job_id?}，prompts 为
+      {type: point, x,y,z, include} | {type: bbox, bbox: [[x0,x1],[y0,y1],[z0,z1]]} |
+      {type: scribble, points: [[x,y,z],...]} 的列表（与 runner 契约一致）。
+    - 旧（M4 兼容保留）：{point: {x,y,z}, negative_point?: {x,y,z}, ...}
+      （与 CLI 同一后端函数 correct_image。）
     - GPU 忙（批量推理/训练持锁）→ 409 + 清晰错误，不排队不重试
     - 修正产物落 series 目录 nninteractive-correction/ + sidecar JSON
       （source=nninteractive_guided 规范名 v2，绝不建 MaskVersion 行——
-      source 列 String(16) 放不下 20 字符，蒸馏门禁以 sidecar 为事实源；
+      蒸馏门禁以 sidecar 为事实源；
       provenance={sessionId, baselineTeacherVersion, prompts, acceptedClasses}）
-    - 同步跑推理的取舍：单次交互修正秒级~分钟级，M4 本阶段 API 只接线、
+    - 同步跑推理的取舍：单次交互修正秒级~分钟级，API 只接线、
       不做异步队列（队列后置；长推理不适合同步时由调用方用 CLI）
     """
     from .nninteractive_backend import (
@@ -975,37 +979,109 @@ def review_nninteractive_correct(series_id: str, body: dict[str, Any]) -> JSONRe
     if not image_path.exists():
         raise HTTPException(status_code=422, detail=f"原图文件缺失：{row.storage_key}")
 
-    point = body.get("point")
-    if not isinstance(point, dict):
-        raise HTTPException(status_code=422, detail="body.point 必须是 {x,y,z} 对象")
-    try:
-        prompts = [
-            {
-                "type": "point",
-                "x": float(point["x"]),
-                "y": float(point["y"]),
-                "z": float(point["z"]),
-                "include": True,
-            }
-        ]
-    except (KeyError, TypeError, ValueError):
-        raise HTTPException(status_code=422, detail="point 须含数值 x/y/z") from None
-    neg = body.get("negative_point")
-    if neg is not None:
-        if not isinstance(neg, dict):
-            raise HTTPException(status_code=422, detail="negative_point 须为 {x,y,z} 对象")
+    raw_prompts = body.get("prompts")
+    if raw_prompts is not None:
+        # 新契约：prompts 列表（point/bbox/scribble），沿用 runner 的 JSON 风格。
+        if not isinstance(raw_prompts, list) or not raw_prompts:
+            raise HTTPException(status_code=422, detail="prompts 须为非空列表")
+        prompts: list[dict[str, Any]] = []
+        for i, p in enumerate(raw_prompts):
+            if not isinstance(p, dict):
+                raise HTTPException(status_code=422, detail=f"prompts[{i}] 须为对象")
+            ptype = p.get("type")
+            if ptype == "point":
+                try:
+                    prompts.append(
+                        {
+                            "type": "point",
+                            "x": float(p["x"]),
+                            "y": float(p["y"]),
+                            "z": float(p["z"]),
+                            "include": bool(p.get("include", True)),
+                        }
+                    )
+                except (KeyError, TypeError, ValueError):
+                    raise HTTPException(
+                        status_code=422, detail=f"prompts[{i}] point 须含数值 x/y/z"
+                    ) from None
+            elif ptype == "bbox":
+                bb = p.get("bbox")
+                if not isinstance(bb, list) or len(bb) != 3 or any(
+                    not isinstance(ax, list) or len(ax) != 2 for ax in bb
+                ):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"prompts[{i}] bbox 须为 [[x0,x1],[y0,y1],[z0,z1]]",
+                    )
+                try:
+                    prompts.append(
+                        {"type": "bbox", "bbox": [[float(v) for v in ax] for ax in bb]}
+                    )
+                except (TypeError, ValueError):
+                    raise HTTPException(
+                        status_code=422, detail=f"prompts[{i}] bbox 数值非法"
+                    ) from None
+            elif ptype == "scribble":
+                pts = p.get("points")
+                if not isinstance(pts, list) or not pts:
+                    raise HTTPException(
+                        status_code=422, detail=f"prompts[{i}] scribble 须为非空 points 列表"
+                    )
+                try:
+                    prompts.append(
+                        {
+                            "type": "scribble",
+                            "points": [[float(v[0]), float(v[1]), float(v[2])] for v in pts],
+                        }
+                    )
+                except (KeyError, TypeError, ValueError, IndexError):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"prompts[{i}] scribble points 须为 [x,y,z] 数值三元组",
+                    ) from None
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"prompts[{i}] type 须为 point|bbox|scribble，收到 {ptype!r}",
+                )
+    else:
+        # 旧契约（M4 兼容保留）：point + negative_point。
+        point = body.get("point")
+        if not isinstance(point, dict):
+            raise HTTPException(
+                status_code=422,
+                detail="body 须含 prompts 列表，或（旧契约）point {x,y,z} 对象",
+            )
         try:
-            prompts.append(
+            prompts = [
                 {
                     "type": "point",
-                    "x": float(neg["x"]),
-                    "y": float(neg["y"]),
-                    "z": float(neg["z"]),
-                    "include": False,
+                    "x": float(point["x"]),
+                    "y": float(point["y"]),
+                    "z": float(point["z"]),
+                    "include": True,
                 }
-            )
+            ]
         except (KeyError, TypeError, ValueError):
-            raise HTTPException(status_code=422, detail="negative_point 须含数值 x/y/z") from None
+            raise HTTPException(status_code=422, detail="point 须含数值 x/y/z") from None
+        neg = body.get("negative_point")
+        if neg is not None:
+            if not isinstance(neg, dict):
+                raise HTTPException(status_code=422, detail="negative_point 须为 {x,y,z} 对象")
+            try:
+                prompts.append(
+                    {
+                        "type": "point",
+                        "x": float(neg["x"]),
+                        "y": float(neg["y"]),
+                        "z": float(neg["z"]),
+                        "include": False,
+                    }
+                )
+            except (KeyError, TypeError, ValueError):
+                raise HTTPException(
+                    status_code=422, detail="negative_point 须含数值 x/y/z"
+                ) from None
 
     series_dir = "/".join(row.storage_key.split("/")[:2])
     out_dir = st.root / series_dir / "nninteractive-correction"

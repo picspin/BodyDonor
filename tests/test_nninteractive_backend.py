@@ -430,3 +430,168 @@ class TestApiEndpoint:
             assert resp.status_code in (404, 422)
         finally:
             app_module.settings = orig_settings
+
+
+class TestScribbleToMask:
+    """runner 纯函数：scribble 点轨迹 → 与原图同形状的 uint8 mask（上游 API 入参）。"""
+
+    def test_points_rasterize_to_mask(self) -> None:
+        from bodydonor.nni_runner import _scribble_to_mask
+
+        mask = _scribble_to_mask([(1.2, 2.6, 3.0), (4.0, 5.0, 6.0)], (8, 8, 8))
+        assert mask.shape == (8, 8, 8)
+        assert mask.dtype == np.uint8
+        # round(1.2)=1, round(2.6)=3（上游 add_point_interaction 同 round 语义）
+        assert mask[1, 3, 3] == 1
+        assert mask[4, 5, 6] == 1
+        assert int(mask.sum()) == 2
+
+    def test_out_of_bounds_points_dropped(self) -> None:
+        from bodydonor.nni_runner import _scribble_to_mask
+
+        mask = _scribble_to_mask([(0, 0, 0), (-1, 0, 0), (8, 0, 0), (5, 5, 5)], (8, 8, 8))
+        assert int(mask.sum()) == 2
+        assert mask[0, 0, 0] == 1
+        assert mask[5, 5, 5] == 1
+
+    def test_empty_points_zero_mask(self) -> None:
+        from bodydonor.nni_runner import _scribble_to_mask
+
+        mask = _scribble_to_mask([], (4, 4, 4))
+        assert int(mask.sum()) == 0
+        assert mask.shape == (4, 4, 4)
+
+
+class TestRunnerValidatePromptsScribble:
+    """_validate_prompts scribble 分支（runner 不信任 stdin 输入）。"""
+
+    def test_scribble_valid(self) -> None:
+        from bodydonor.nni_runner import _validate_prompts
+
+        out, err = _validate_prompts(
+            [{"type": "scribble", "points": [[1, 2, 3], [4.5, 5.5, 6.5]]}]
+        )
+        assert err == ""
+        assert out == [{"type": "scribble", "points": [(1.0, 2.0, 3.0), (4.5, 5.5, 6.5)]}]
+
+    def test_scribble_empty_rejected(self) -> None:
+        from bodydonor.nni_runner import _validate_prompts
+
+        out, err = _validate_prompts([{"type": "scribble", "points": []}])
+        assert out == []
+        assert "非空" in err
+
+    def test_scribble_bad_point_rejected(self) -> None:
+        from bodydonor.nni_runner import _validate_prompts
+
+        out, err = _validate_prompts([{"type": "scribble", "points": [[1, 2]]}])
+        assert out == []
+        assert "prompts[0] scribble points[0]" in err
+
+    def test_unknown_type_lists_scribble(self) -> None:
+        from bodydonor.nni_runner import _validate_prompts
+
+        out, err = _validate_prompts([{"type": "lasso", "points": [[1, 2, 3]]}])
+        assert out == []
+        assert "point|bbox|scribble" in err
+
+    def test_bbox_still_valid(self) -> None:
+        from bodydonor.nni_runner import _validate_prompts
+
+        out, err = _validate_prompts([{"type": "bbox", "bbox": [[8, 12], [8, 12], [10, 11]]}])
+        assert err == ""
+        assert out == [{"type": "bbox", "bbox": [[8.0, 12.0], [8.0, 12.0], [10.0, 11.0]]}]
+
+
+class TestBboxScribbleRealRun:
+    """bbox / scribble 提示真实小输入验证（M4 阶段 3 同款 CPU 48^3 patch）。
+
+    真实推理、无 mock；全程实测数字。case 文件缺失则跳过（同 TestRunnerContractCpu）。
+    上游 API 核实（nnInteractive 2.6.0 inference_session.py，2026-11-11）：
+    - add_bbox_interaction(bbox_coords, include_interaction, run_prediction=True,
+      override_capability_checks=False)——include_interaction 无默认值，缺参 TypeError；
+    - add_scribble_interaction(scribble_image, include_interaction=True, ...,
+      interaction_bbox=None)——入参是 scribble mask 图（形状须匹配
+      original_image_shape[1:]），不是点列表。
+    本 checkpoint（legacy metadata inference_session_class.json）：
+    scribble=True / bbox2d=True / bbox3d=False（_legacy_default_capability）。
+    """
+
+    @pytest.fixture(scope="class")
+    def real_patch(self) -> Path:
+        src = (
+            Path.home() / "data" / "BodyDonor" / "downloads" / "amos22_subset"
+            / "train" / "imagesTr" / "amos_0004.nii.gz"
+        )
+        if not src.exists():
+            pytest.skip(f"真实 case 缺失：{src}")
+        import tempfile
+
+        dst = Path(tempfile.mkdtemp(prefix="nni-patch-")) / "amos_0004_patch48.nii.gz"
+        return _make_small_patch(src, dst)
+
+    def test_bbox_prompt_real_run_cpu(self, real_patch: Path, tmp_path: Path) -> None:
+        """bbox 提示真实跑通（CPU 小 patch）：include=True 修正 → mask 落盘。
+
+        修复前：runner 旧调用 session.add_bbox_interaction(p["bbox"]) 缺
+        include_interaction 参数 → TypeError，bbox 分支从未真实跑通；
+        修复后 include=True（bbox 提示恒为正向）。
+        """
+        from bodydonor.nninteractive_backend import correct_image
+
+        out_dir = tmp_path / "nni-bbox-out"
+        result = correct_image(
+            real_patch,
+            out_dir,
+            # 2D bbox：z 维 [d, d+1]（单切片；bbox3d 本 checkpoint 不支持），
+            # x/y 覆盖 patch 中心肝区
+            [{"type": "bbox", "bbox": [[20.0, 28.0], [20.0, 28.0], [24.0, 25.0]]}],
+            device="cpu",
+            target_label=1,
+            job_id="nni-bbox-verify-amos0004",
+        )
+        assert result.mask_path and Path(result.mask_path).exists()
+        sidecar = json.loads(Path(result.sidecar_path).read_text(encoding="utf-8"))
+        assert sidecar["source"] == "nninteractive_guided"
+        assert sidecar["prompts"] == [
+            {"type": "bbox", "bbox": [[20.0, 28.0], [20.0, 28.0], [24.0, 25.0]]}
+        ]
+        prov = sidecar["provenance"]
+        assert prov["prompts"] == sidecar["prompts"]  # 全量三类提示之一（可重放）
+        import nibabel as _nib
+
+        assert sidecar["n_target_voxels"] == int(
+            (np.asarray(_nib.load(result.mask_path).dataobj) > 0).sum()
+        )
+        # 实测数字（报报告用）
+        print(f"bbox run: load={result.load_seconds}s infer={result.inference_seconds}s "
+              f"n_target_voxels={sidecar['n_target_voxels']}")
+
+    def test_scribble_prompt_real_run_cpu(self, real_patch: Path, tmp_path: Path) -> None:
+        """scribble 提示真实跑通（CPU 小 patch）：点轨迹 → mask 数组 → add_scribble_interaction。"""
+        from bodydonor.nninteractive_backend import correct_image
+
+        out_dir = tmp_path / "nni-scribble-out"
+        # 点轨迹：patch 中心附近一条短笔画（z=24 单切片内，与 bbox 同区域语义）
+        stroke = [[float(x), 24.0, 24.0] for x in range(20, 29)]
+        result = correct_image(
+            real_patch,
+            out_dir,
+            [{"type": "scribble", "points": stroke}],
+            device="cpu",
+            target_label=1,
+            job_id="nni-scribble-verify-amos0004",
+        )
+        assert result.mask_path and Path(result.mask_path).exists()
+        sidecar = json.loads(Path(result.sidecar_path).read_text(encoding="utf-8"))
+        assert sidecar["source"] == "nninteractive_guided"
+        assert sidecar["prompts"] == [{"type": "scribble", "points": stroke}]
+        prov = sidecar["provenance"]
+        assert prov["prompts"] == sidecar["prompts"]
+        import nibabel as _nib
+
+        assert sidecar["n_target_voxels"] == int(
+            (np.asarray(_nib.load(result.mask_path).dataobj) > 0).sum()
+        )
+        print(f"scribble run: load={result.load_seconds}s infer={result.inference_seconds}s "
+              f"n_target_voxels={sidecar['n_target_voxels']} stroke_voxels={len(stroke)}")
