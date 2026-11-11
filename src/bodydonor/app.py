@@ -239,9 +239,7 @@ def ingest_selector(outcome_id: str) -> JSONResponse:
         {
             "outcome_id": outcome_id,
             "candidates": [c.to_report() for c in outcome.candidates],
-            "default_selected": [
-                c.series_id for c in outcome.candidates if not c.excluded
-            ],
+            "default_selected": [c.series_id for c in outcome.candidates if not c.excluded],
         }
     )
 
@@ -249,6 +247,7 @@ def ingest_selector(outcome_id: str) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # M2：本体映射端点（三态查询 / 消歧写回 / 逃生通道）
 # ---------------------------------------------------------------------------
+
 
 @app.get("/ontology/resolve")
 def ontology_resolve(label: str = Query(..., description="NL 标签")) -> JSONResponse:
@@ -272,9 +271,7 @@ def ontology_disambiguate(
         chosen = svc.disambiguate(label, totalseg_class)
     except OntologyError as e:
         raise HTTPException(status_code=422, detail=str(e)) from None
-    return JSONResponse(
-        {"written_back": True, "entry": chosen.to_dict(), "version": svc.version}
-    )
+    return JSONResponse({"written_back": True, "entry": chosen.to_dict(), "version": svc.version})
 
 
 @app.get("/ontology/escape-hatch")
@@ -380,6 +377,7 @@ def monitor_pipeline_set(stage: str, status: str = Query("running")) -> dict[str
 # M3：QC 端点（阶段 4 评分 / 阶段 5 抽检任务 / 抽检决策回流）
 # ---------------------------------------------------------------------------
 
+
 @app.post("/qc/series/{series_id}")
 def qc_run_series(series_id: str) -> JSONResponse:
     """阶段 4（自动质控）：对最新 MaskVersion 评分并落 QCReport。"""
@@ -409,9 +407,7 @@ def qc_review_tasks_create(
     """阶段 5（人工抽检）：混合采样生成 ReviewTask（flagged 70% / clean 30%）。"""
     from .qc_pipeline import generate_review_tasks
 
-    out = generate_review_tasks(
-        settings, batch_size=batch_size if batch_size > 0 else None
-    )
+    out = generate_review_tasks(settings, batch_size=batch_size if batch_size > 0 else None)
     return JSONResponse(out)
 
 
@@ -429,38 +425,37 @@ def qc_review_tasks_list(status: str = Query("pending")) -> dict[str, Any]:
             from sqlalchemy.orm import Session
 
             s = Session(conn)
-            rows = (
-                s.execute(
-                    select(ReviewTask, QCReport, MaskVersion)
-                    .join(QCReport, ReviewTask.qc_report_id == QCReport.qc_report_id)
-                    .join(
-                        MaskVersion,
-                        QCReport.mask_version_id == MaskVersion.mask_version_id,
-                    )
-                    .where(ReviewTask.status == status)
-                    .order_by(ReviewTask.created_at.desc())
-                    .limit(50)
+            rows = s.execute(
+                select(ReviewTask, QCReport, MaskVersion)
+                .join(QCReport, ReviewTask.qc_report_id == QCReport.qc_report_id)
+                .join(
+                    MaskVersion,
+                    QCReport.mask_version_id == MaskVersion.mask_version_id,
                 )
-                .all()
-            )
+                .where(ReviewTask.status == status)
+                .order_by(ReviewTask.created_at.desc())
+                .limit(50)
+            ).all()
             s.close()
     finally:
         engine.dispose()
     tasks = []
     for rt, qc, mv in rows:
-        tasks.append({
-            "review_task_id": rt.review_task_id,
-            "series_id": rt.series_id,
-            "mask_version_id": qc.mask_version_id,
-            "mask_version": mv.version,
-            "mask_source": mv.source,
-            "qc_report_id": qc.qc_report_id,
-            "overall_score": qc.overall_score,
-            "qc_flags": qc.flags,
-            "qc_passed": qc.passed,
-            "status": rt.status,
-            "notes": rt.notes,
-        })
+        tasks.append(
+            {
+                "review_task_id": rt.review_task_id,
+                "series_id": rt.series_id,
+                "mask_version_id": qc.mask_version_id,
+                "mask_version": mv.version,
+                "mask_source": mv.source,
+                "qc_report_id": qc.qc_report_id,
+                "overall_score": qc.overall_score,
+                "qc_flags": qc.flags,
+                "qc_passed": qc.passed,
+                "status": rt.status,
+                "notes": rt.notes,
+            }
+        )
     return {"status": status, "tasks": tasks}
 
 
@@ -491,9 +486,7 @@ def qc_review_task_decision(
             s = Session(conn)
             try:
                 rt = s.execute(
-                    select(ReviewTask).where(
-                        ReviewTask.review_task_id == review_task_id[:60]
-                    )
+                    select(ReviewTask).where(ReviewTask.review_task_id == review_task_id[:60])
                 ).scalar_one_or_none()
                 if rt is None:
                     raise HTTPException(
@@ -625,8 +618,7 @@ def review_meta(series_id: str) -> dict[str, Any]:
         row.storage_key.replace("image.nii.gz", "combined_mask.nii.gz")
     )
     has_mask = has_combined or (
-        bool(row.storage_key)
-        and st.exists(row.storage_key.replace("image.nii.gz", "mask.nii.gz"))
+        bool(row.storage_key) and st.exists(row.storage_key.replace("image.nii.gz", "mask.nii.gz"))
     )
     out: dict[str, Any] = {
         "series_id": row.series_id,
@@ -656,8 +648,7 @@ def review_meta(series_id: str) -> dict[str, Any]:
                 doc = _json.loads(bytes(st.load(sidecar_key)))
                 out["correction_source"] = doc.get("source", "nninteractive_guided")
                 out["correction_license_notice"] = (
-                    "本序列含 nnInteractive 修正产物（CC BY-NC-SA 4.0）："
-                    "不进商用蒸馏训练集"
+                    "本序列含 nnInteractive 修正产物（CC BY-NC-SA 4.0）：不进商用蒸馏训练集"
                 )
             except Exception:  # noqa: BLE001 — sidecar 损坏不挡 meta
                 pass
@@ -801,8 +792,10 @@ def review_seg_meta(series_id: str) -> list[dict[str, Any]]:
         arr = np.asarray(img.dataobj)
         # 有 labels.json：列全部类别（labels.json 类别数与列表一致——协议契约）；
         # 无 labels.json（旧版 mask）：只列非空 label
-        classes = sorted(label_names) if label_names else sorted(
-            set(int(v) for v in np.unique(arr)) - {0}
+        classes = (
+            sorted(label_names)
+            if label_names
+            else sorted(set(int(v) for v in np.unique(arr)) - {0})
         )
     return [
         {
@@ -870,9 +863,7 @@ def review_save(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
             if drawing:
                 # 画笔粗修：非零体素从 mask 中删除
                 with _nifti_from_bytes(bytes(bytearray(drawing))) as draw_img:
-                    assert_affine_match(
-                        img, draw_img, label=f"review_save drawing {series_id}"
-                    )
+                    assert_affine_match(img, draw_img, label=f"review_save drawing {series_id}")
                     draw_arr = np.asarray(draw_img.dataobj)
                 arr[draw_arr > 0] = 0
     except AffineMismatchError as e:
@@ -937,6 +928,7 @@ def review_save(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
 # M4 阶段 3：nnInteractive 交互修正端点（与 CLI nninteractive-correct 同一后端）
 # ---------------------------------------------------------------------------
 
+
 @app.post("/review/{series_id}/nninteractive-correct")
 def review_nninteractive_correct(series_id: str, body: dict[str, Any]) -> JSONResponse:
     """nnInteractive 交互修正（M4 阶段 3）：点/框提示 → 修正 mask → sidecar 落盘。
@@ -971,13 +963,15 @@ def review_nninteractive_correct(series_id: str, body: dict[str, Any]) -> JSONRe
     if not isinstance(point, dict):
         raise HTTPException(status_code=422, detail="body.point 必须是 {x,y,z} 对象")
     try:
-        prompts = [{
-            "type": "point",
-            "x": float(point["x"]),
-            "y": float(point["y"]),
-            "z": float(point["z"]),
-            "include": True,
-        }]
+        prompts = [
+            {
+                "type": "point",
+                "x": float(point["x"]),
+                "y": float(point["y"]),
+                "z": float(point["z"]),
+                "include": True,
+            }
+        ]
     except (KeyError, TypeError, ValueError):
         raise HTTPException(status_code=422, detail="point 须含数值 x/y/z") from None
     neg = body.get("negative_point")
@@ -985,13 +979,15 @@ def review_nninteractive_correct(series_id: str, body: dict[str, Any]) -> JSONRe
         if not isinstance(neg, dict):
             raise HTTPException(status_code=422, detail="negative_point 须为 {x,y,z} 对象")
         try:
-            prompts.append({
-                "type": "point",
-                "x": float(neg["x"]),
-                "y": float(neg["y"]),
-                "z": float(neg["z"]),
-                "include": False,
-            })
+            prompts.append(
+                {
+                    "type": "point",
+                    "x": float(neg["x"]),
+                    "y": float(neg["y"]),
+                    "z": float(neg["z"]),
+                    "include": False,
+                }
+            )
         except (KeyError, TypeError, ValueError):
             raise HTTPException(status_code=422, detail="negative_point 须含数值 x/y/z") from None
 
@@ -1013,3 +1009,182 @@ def review_nninteractive_correct(series_id: str, body: dict[str, Any]) -> JSONRe
     except NnInteractiveError as e:
         raise HTTPException(status_code=422, detail=str(e)) from None
     return JSONResponse(result.to_dict())
+
+
+# ---------------------------------------------------------------------------
+# M5：修正传播 + 异常驱动队列
+# ---------------------------------------------------------------------------
+
+
+@app.post("/review/{series_id}/propagate")
+def review_propagate(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """把 z 层上某类的当前形态传播到相邻层（M5-PLAN §3.1，最优先）。
+
+    body: {slice: int, class_label: int, radius?: int = 1}
+    - 修正源 = 该层该类的现有体素（前端先画笔修正本层、再点传播）。
+    - 只写相邻层背景体素、不越类（review_session.propagate_correction）。
+    - 写回新 MaskVersion source=manual（画笔修正语义；nninteractive_guided
+      20 字符是 M5-e 的事，列宽未改前不写该来源）。
+    - affine 守卫同 review_save；0 传播时拒绝建空版本（422）。
+    """
+    import nibabel as nib
+    import numpy as np
+
+    from .review_session import propagate_correction
+
+    row = _series_row(series_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
+    st = _get_storage()
+    img_key = row.storage_key
+    mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
+    if not mask_key or not st.exists(mask_key):
+        raise HTTPException(status_code=422, detail="no mask to correct")
+    try:
+        z = int(body.get("slice"))
+        label = int(body.get("class_label"))
+        radius = int(body.get("radius", 1))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=422, detail="body 须含整数 slice / class_label（radius 可选）"
+        ) from None
+    if radius < 0 or radius > 5:
+        raise HTTPException(status_code=422, detail="radius 须在 0..5")
+
+    from .nifti_geom import AffineMismatchError, assert_affine_match
+
+    try:
+        with (
+            _nifti_from_bytes(st.load(img_key)) as img,
+            _nifti_from_bytes(st.load(mask_key)) as mask,
+        ):
+            assert_affine_match(img, mask, label=f"review_propagate {series_id}")
+            affine = mask.affine
+            arr = np.asarray(mask.dataobj).astype(np.int32)
+            new_arr, total, per_slice = propagate_correction(arr, z, label, radius)
+    except AffineMismatchError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    if total == 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"slice {z} 上 label {label} 无可传播体素（本层无该类或相邻层投影全被占）",
+        )
+
+    from sqlalchemy import select
+
+    from . import db
+    from .models import MaskVersion
+
+    engine = db._engine(settings.database.url)
+    try:
+        with db.write_lock, engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            s = Session(conn)
+            try:
+                last = (
+                    s.execute(
+                        select(MaskVersion.version)
+                        .where(MaskVersion.series_id == series_id[:60])
+                        .order_by(MaskVersion.version.desc())
+                        .limit(1)
+                    )
+                    .scalars()
+                    .first()
+                )
+                version = (last or 0) + 1
+                import tempfile
+
+                with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
+                    tmp_name = tf.name
+                try:
+                    nib.save(nib.Nifti1Image(new_arr, affine), tmp_name)
+                    payload = _Path(tmp_name).read_bytes()
+                finally:
+                    _Path(tmp_name).unlink(missing_ok=True)
+                key = mask_key.replace("image.nii.gz", f"mask_v{version}.nii.gz")
+                st.save(key, payload)
+                s.add(
+                    MaskVersion(
+                        mask_version_id=f"mv-{uuid.uuid4().hex[:8]}",
+                        series_id=series_id[:60],
+                        version=version,
+                        source="manual",
+                        storage_key=key,
+                        created_by="review-ui-propagate",
+                    )
+                )
+                s.commit()
+            finally:
+                s.close()
+    finally:
+        engine.dispose()
+    return {
+        "version": version,
+        "source": "manual",
+        "key": key,
+        "slice": z,
+        "class_label": label,
+        "radius": radius,
+        "propagated_voxels": total,
+        "per_slice": {str(k): v for k, v in per_slice.items()},
+    }
+
+
+@app.get("/review/{series_id}/risk-queue")
+def review_risk_queue(series_id: str) -> dict[str, Any]:
+    """异常驱动队列（M5-PLAN §3.3）：逐类 Dice + 多教师一致性 flag → 审阅顺序。
+
+    数据源 = eval/student_holdout_results.json（summary.per_class_dice，
+    M4 实测）+ eval/student_teacher_consistency.json（below_080_classes，
+    阶段 5）。运行产物不入仓：文件缺失 → 503 + 清晰原因，不编造数据。
+    """
+    import json
+
+    from .review_session import risk_queue
+
+    row = _series_row(series_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
+    repo_root = _Path(__file__).resolve().parents[2]
+    holdout_path = repo_root / "eval" / "student_holdout_results.json"
+    if not holdout_path.exists():
+        raise HTTPException(
+            status_code=503,
+            detail="学生 hold-out 结果缺失（eval/student_holdout_results.json 不存在）："
+            "先跑 eval/evaluate_student_holdout.py，风险队列不编造 Dice",
+        )
+    try:
+        holdout = json.loads(holdout_path.read_text(encoding="utf-8"))
+        per_class = (holdout.get("summary") or {}).get("per_class_dice") or (
+            holdout.get("gate") or {}
+        ).get("per_class_dice")
+        if not isinstance(per_class, dict) or not per_class:
+            raise ValueError("per_class_dice 缺失或为空")
+    except (ValueError, OSError) as e:
+        raise HTTPException(status_code=503, detail=f"学生 hold-out 结果不可读：{e}") from None
+    flagged: list[str] = []
+    consistency_path = repo_root / "eval" / "student_teacher_consistency.json"
+    if consistency_path.exists():
+        try:
+            flagged = list(
+                json.loads(consistency_path.read_text(encoding="utf-8")).get(
+                    "below_080_classes", []
+                )
+            )
+        except (ValueError, OSError):
+            flagged = []
+    return {
+        "series_id": series_id,
+        "queue": risk_queue({k: float(v) for k, v in per_class.items()}, flagged),
+        "sources": {
+            "per_class_dice": "eval/student_holdout_results.json（M4 实测，15 类）",
+            "consistency_flags": (
+                "eval/student_teacher_consistency.json below_080_classes（阶段 5）"
+                if consistency_path.exists()
+                else "缺失：仅按 Dice 排序"
+            ),
+        },
+    }
