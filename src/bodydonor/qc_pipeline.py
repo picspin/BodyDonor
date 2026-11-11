@@ -67,6 +67,12 @@ def qc_series(
     生产 case 一律如此——预测产物只覆盖 hold-out 30 例）→ 显式 skipped
     {"skipped": "no student mask"}，不进 flags、不计入 enabled 分母（M4 已定
     语义不变）。case_id 不给 → 同样 skipped，不硬造映射。
+
+    M6-b 接线：最新 MaskVersion 的 provenance.interactionMetrics（M6-a 采集，
+    有 nnInteractive 交互的 case 才非空）传给 run_qc，过程级规则
+    interaction_convergence / interaction_abandonment 在生产路径真跑。
+    无 provenance / 空 interactionMetrics（纯自动 case）→ run_qc 内显式
+    skipped "no interaction metrics"（不进 flags、不计入 enabled 分母）。
     """
     import numpy as np
 
@@ -87,6 +93,11 @@ def qc_series(
         engine.dispose()
     if mv is None:
         raise QCOrchestrationError(f"unknown series or no mask version: {series_id}")
+
+    # ---- M6-b：provenance.interactionMetrics（M6-a 采集；纯自动 case 为空）----
+    prov = mv.provenance if isinstance(mv.provenance, dict) else {}
+    interaction_metrics = prov.get("interactionMetrics")
+    interaction_metrics = interaction_metrics if isinstance(interaction_metrics, dict) else {}
 
     # ---- M6-e：学生 mask 可选路径（case_id 给出才查，缺失不造假）----
     student_mask_arr = None
@@ -145,6 +156,7 @@ def qc_series(
         # 不计入 enabled 分母，M4 已定语义）
         student_mask_arr=student_mask_arr,
         student_classes=student_classes,
+        interaction_metrics=interaction_metrics,
     )
     # QCReport 落库（单一写入纪律）
     engine = db._engine(url)

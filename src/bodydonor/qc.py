@@ -42,6 +42,12 @@ from typing import Any
 import yaml
 
 from .config import Settings
+from .qc_interaction import (
+    RULE_INTERACTION_ABANDONMENT,
+    RULE_INTERACTION_CONVERGENCE,
+    rule_interaction_abandonment,
+    rule_interaction_convergence,
+)
 
 QC_THRESHOLDS_PATH = Path(__file__).resolve().parents[2] / "config" / "qc_thresholds.yaml"
 
@@ -53,6 +59,9 @@ RULE_BOUNDARY_SMOOTHNESS = "boundary_smoothness"
 RULE_HU_DISTRIBUTION = "hu_distribution"
 RULE_MULTI_TEACHER = "multi_teacher_consistency"
 RULE_LEFT_RIGHT = "left_right_symmetry"
+# M6-b 过程级规则（provenance.interactionMetrics；qc_interaction.py 本体）：
+# RULE_INTERACTION_CONVERGENCE / RULE_INTERACTION_ABANDONMENT 自 qc_interaction
+# 导入（上方），yaml rules.* 同名
 
 # 恒开检查（不占 config 槽位；一票否决）
 RULE_EMPTY_MASK = "empty_mask"
@@ -427,6 +436,7 @@ def run_qc(
     thresholds: dict[str, Any] | None = None,
     student_mask_arr: Any = None,
     student_classes: dict[int, str] | None = None,
+    interaction_metrics: dict[str, dict[str, Any]] | None = None,
 ) -> QCResult:
     """对一张 mask 评分（proposal §7 全部规则）。
 
@@ -436,6 +446,10 @@ def run_qc(
     - multi_teacher_consistency（M4 启用）：仅当 student_mask_arr 给出才真跑；
       enabled 但没给 → rule_scores 记 skipped（不进 flags、不计入 enabled
       分母，与 disabled 规则同处理）
+    - interaction_convergence / interaction_abandonment（M6-b 过程级）：
+      仅当 interaction_metrics 非空 dict（provenance.interactionMetrics，
+      有 nnInteractive 交互）才真跑；enabled 但无/空 → 显式 skipped（不进
+      flags、不计入 enabled 分母，与 disabled 规则同处理，纯自动 case 不造假）
     """
     import numpy as np
 
@@ -589,6 +603,35 @@ def run_qc(
             rule_scores[RULE_MULTI_TEACHER] = {"skipped": "no student mask"}
     else:
         rule_scores[RULE_MULTI_TEACHER] = {"skipped": "disabled"}
+
+    # interaction_convergence / interaction_abandonment（M6-b 过程级）：
+    # enabled 且 interaction_metrics 非空 → 真跑；enabled 但无/空 → 显式
+    # skipped（纯自动 case 不造假，不进 flags、不计入 enabled 分母）
+    interaction_cfg = th.get("rules", {}).get(RULE_INTERACTION_CONVERGENCE, {})
+    convergence_enabled = interaction_cfg.get("enabled", False)
+    abandonment_cfg = th.get("rules", {}).get(RULE_INTERACTION_ABANDONMENT, {})
+    abandonment_enabled = abandonment_cfg.get("enabled", False)
+    has_interaction = bool(interaction_metrics)
+    if convergence_enabled:
+        if has_interaction:
+            flagged, score, detail = rule_interaction_convergence(
+                interaction_metrics, interaction_cfg
+            )
+            rule_outputs.append((RULE_INTERACTION_CONVERGENCE, flagged, score, detail))
+        else:
+            rule_scores[RULE_INTERACTION_CONVERGENCE] = {"skipped": "no interaction metrics"}
+    else:
+        rule_scores[RULE_INTERACTION_CONVERGENCE] = {"skipped": "disabled"}
+    if abandonment_enabled:
+        if has_interaction:
+            flagged, score, detail = rule_interaction_abandonment(
+                interaction_metrics, abandonment_cfg
+            )
+            rule_outputs.append((RULE_INTERACTION_ABANDONMENT, flagged, score, detail))
+        else:
+            rule_scores[RULE_INTERACTION_ABANDONMENT] = {"skipped": "no interaction metrics"}
+    else:
+        rule_scores[RULE_INTERACTION_ABANDONMENT] = {"skipped": "disabled"}
 
     # ---- 汇总 ----
     hard_flags = set(th.get("overall", {}).get("hard_flag_rules", []))
