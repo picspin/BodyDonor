@@ -337,4 +337,100 @@ review.html 的实际数据流，2026-11-12 实测。
 
 ---
 
-（M6-a 一节完。）
+## 3. M6-e + M6-a 收尾审查（deep-reviewer 子代理）
+
+> 2026-11-12 审查会话执行。范围：`git log e6357f6..HEAD`（12 提交：学生预测
+> 读取入口 load_student_prediction、qc_series 学生 mask 接线 + 419 对回归、
+> interaction_metrics 模块 + 采集接线 + 26+4 项单测 + 回放脚本 + 报告）。
+> 审查 agent：`.claude/agents/deep-reviewer.md`（只读，tools 仅
+> Read/Grep/Glob，Write/Edit 企图被 PreToolUse hook 阻断）。本节只记录，
+> 未修任何代码。
+
+### 3.1 findings 摘要（2 blocker / 2 warning / 1 nit）
+
+**Blocker（均经审查会话逐条核实成立）**
+
+1. **tracker key 前端不一致**（`src/bodydonor/static/review.html:812-816`
+   + `src/bodydonor/app.py:1184`）：nninteractive-correct 请求体只发
+   `prompts` + `target_label`，无 `class_name`；后端缺省回退
+   `label-{N}`。而 submit-nni 端 `app.py:1506` 用 `accepted[0]`
+   （前端 `m5ClassName(lv)` 的语义类名，review.html:955）查 tracker——
+   两边 key 对不上，**生产浏览器流程 interactionMetrics 落 `{}`、
+   finalLocalDice 为 null**。e8aeecb "tracker key 三端统一"只在后端代码
+   内成立，前端 correct 请求未对齐；单测（TestSubmitNniPersistence）
+   直调 tracker 绕过 HTTP 路径，回放脚本直调 tracker 同样绕过，故未暴露。
+   修复建议：correct 请求补 `class_name: m5ClassName(lv)` + 端到端测试
+   （前端实际 payload 形状 → correct → submit-nni → 断言
+   interactionMetrics 非空）。**等定夺再修。**
+2. **abandon-draft 端点无前端调用方**（`src/bodydonor/app.py:1595`）：
+   review.html 无任何 abandon fetch——生产路径 abandonedAttempts 恒为 0。
+   注：报告 §2.9 遗留 1 已显式声明此遗留（M6-b 消费时接线），属"已知且
+   已记录"的 blocker，非新发现。**等定夺再修（即 §2.9 遗留 1 的接线）。**
+
+**Warning（3 条）**
+
+1. **flag 数断言首分支冗余**（tests/test_m6e_wiring.py:269）：审查员认为
+   `len(flagged) == len(holdout) or abs(...) <= 1` 首分支使全 30 例 flag
+   直接通过。审查会话核实：**下游 symmetric_difference 断言（:273-276，
+   diff>2 即 fail）兜底**——全 flag 时 diff=25 仍 fail，非漏洞，实为
+   冗余断言（首分支可删，行为不变）。严重性降级。
+2. **419 对回归无 skipif**（tests/test_m6e_wiring.py:228）：依赖
+   `~/data/BodyDonor` 真实产物，无 pytest.mark.skipif/importorskip；
+   产物缺失时以 fail（误报回归）呈现而非 skip。核实成立。
+3. **回归实跑核实**：审查员只读环境未运行 30 例真实 mask 回归；本轮
+   审查会话全套 pytest 实跑已覆盖（见 §3.3），flag 集合与 mean 断言
+   通过（exit 0，无 F/E）。
+
+**Nit（1 条）**
+
+1. **round(4) 后算 convergenceSteps**（`src/bodydonor/interaction_metrics.py:168-171`）：
+   perStepDeltaDice 先 round(…,4) 再由 convergence_steps 判 <τ，阈值边界
+   （恰 0.01 附近）可能与原始值判定不同。核实成立，可接受精度差；建议
+   docstring 注明或在舍入前判定。**等定夺再修。**
+
+### 3.2 SubagentStop hook 表现（post-review-to-pr.sh）
+
+- **实测**：hook 以 `hook_success` 触发，exit 0，duration 87ms，输出
+  `post-review-to-pr: SKIP — no ```findings block in reviewer output`。
+- **与预期失败点不同**：任务预期"当前 main 无 open PR，PR 查找步干净
+  失败"（脚本第 4 步）；实测在第 2 步（findings 块解析）就 SKIP——
+  background 子代理的最终输出在 hook 收到的 transcript_path（父会话
+  jsonl）里以 task-result 呈现，不是 assistant text block，脚本的
+  findings 正则解析不到（父会话 transcript 实测 findings 块 0 个；
+  子代理自身 transcript 里 1 个、正则可命中）。未走到 PR 查找步
+  （`gh pr list --head main` 返回 `[]`，无 open PR，与预期一致）。
+- **如实记录**：hook 本身行为正确（无 PR 场景不投递、exit 0 不阻断）；
+  偏差根因是 background 子代理形态与 hook 解析假设（同步子代理、最终
+  消息即 assistant text block）不匹配。**hook 未修、未绕过**（任务 2
+  要求）；修法（读 task 输出文件或改同步调用）等定夺。
+
+### 3.3 最终验证数字（审查会话实测，2026-11-12）
+
+- **全套 pytest：506 passed, 0 failed**（单次全量跑，
+  `.venv/bin/python -m pytest -q`，exit 0；进度 dots 506/0 F/E，与
+  `pytest --co` 收集数 506 一致；summary 行被输出捕获截断，数字以
+  dots 计数 + exit code 为准，与 §2.8 的 506 吻合）
+- **ruff check src tests scripts eval alembic config：全绿**
+  （All checks passed!）
+- **ruff format --check**：全仓 61 文件既有不齐（与本轮无关，未动）；
+  本 diff 9 文件中 7 个已格式化，`src/bodydonor/student_pred.py` 与
+  `tests/test_student_pred.py`（前轮 af2e5b4/26aef88 文件）format 不齐
+  ——记为 nit，本轮不修。
+- 独立抽查：`distill_data.py` REJECTED_SOURCES 含 `nninteractive_guided`
+  （本 diff 未动）；蒸馏与 qc_pipeline 均不消费 interactionMetrics；
+  `git diff e6357f6..HEAD` 对 distill*/eval/holdout.txt 为空——许可边界
+  与门禁产物未动，与 §1.8/§2.7 自查一致。
+
+### 3.4 审查遗留（待定夺，本轮不修）
+
+1. Blocker 1（tracker key 前端补 class_name + 端到端测试）
+2. Blocker 2 = §2.9 遗留 1（前端 abandon-draft fetch 接线）
+3. Warning 1（test_m6e_wiring.py:269 首分支删除——冗余断言）
+4. Warning 2（419 回归补 skipif/importorskip）
+5. Nit 1（interaction_metrics convergence 判定基于原始值再舍入）
+6. format 两条（student_pred.py / test_student_pred.py）
+7. hook 对 background 子代理的 findings 解析（改读 task 输出文件或同步调用）
+
+---
+
+（审查一节完。）
