@@ -116,3 +116,78 @@ sidecar prompts `[{x:0,y:0,z:0}]`；修正 mask 的 32 体素全在 x/y/z∈[0,3
 - `m5CurrentVox(ev)` 的事件坐标路径依赖 `canvasPos2frac` 与 `uiData.dpr` 两个
   niivue 0.53.1 内部成员；升级 niivue 大版本时需复核。
 - bug 2（submit-nni 版本文件名）见下节。
+
+## 7. bug 2：submit-nni 版本文件名
+
+- 日期：2026-11-11；系列：`nifti-b63b1d93`（amos_0004）
+- 提交：见 §8（fix + 报告各一 commit，本地 main、未推）
+- 验证：真实 API 提交 + 真实 GPU 推理（nninteractive-correct），无 mock
+
+### 7.1 问题
+
+`src/bodydonor/app.py` 3 处（912 / 1199 / 1431 行）写版本文件 key 用
+
+```python
+key = mask_key.replace("image.nii.gz", f"mask_v{version}.nii.gz")
+```
+
+但 `mask_key` 本身来自 `row.storage_key.replace("image.nii.gz", "mask.nii.gz")`
+（app.py:842/1132/1369），值已是 `amos_0004/nifti-b63b1d93/mask.nii.gz`，不含
+`"image.nii.gz"` —— 第二次 replace 是 no-op，`key` 恒等于 `mask.nii.gz`，每次
+提交都覆盖同一个文件。DB 实证：该 series 的 v1–v9 共 9 行 MaskVersion 全指同一
+storage_key `amos_0004/nifti-b63b1d93/mask.nii.gz`（v1–5 teacher、v6–9 manual）。
+
+### 7.2 修复内容
+
+3 处一致改为从 `row.storage_key`（image 路径）派生版本 key：
+
+```python
+key = (row.storage_key or "").replace("image.nii.gz", f"mask_v{version}.nii.gz")
+```
+
+| 位置 | 端点/函数 | 改后 key（version=10 例） |
+|---|---|---|
+| app.py:912 | `POST /review/{series_id}/save`（review_save） | `amos_0004/nifti-b63b1d93/mask_v10.nii.gz` |
+| app.py:1199 | `POST /review/{series_id}/propagate`（review_propagate） | 同上式 |
+| app.py:1431 | `POST /review/{series_id}/submit-nni`（review_submit_nni） | 同上式 |
+
+未动 `review.html`（bug 1 已修）、eval/holdout.txt、M4 门禁、蒸馏门禁与数据；
+未迁移历史行（v1–v9 原样保留，见 §7.4）。
+
+### 7.3 验证（真实提交，两轮）
+
+流程：每轮先 `POST /review/nifti-b63b1d93/nninteractive-correct`（point 提示
+(139,307,38) include=true，target_label=1，真实 GPU 推理），再
+`POST /review/nifti-b63b1d93/submit-nni`（同 prompts + `class: "label-1"`，
+acceptedClasses=["label-1"]，sessionId 区分轮次，baselineTeacherVersion=null）。
+
+| 轮次 | version | storage_key | md5 | 字节 | 推理 |
+|---|---|---|---|---|---|
+| sess-1 | 10 | `amos_0004/nifti-b63b1d93/mask_v10.nii.gz` | `98baa831909deded8de4d9ef9e7d6812` | 754786 | 11.37s / 2979 体素 |
+| sess-2 | 11 | `amos_0004/nifti-b63b1d93/mask_v11.nii.gz` | `42fa264f4fe83c8ddf6ef42b45df8945` | 754777 | 11.47s / 2977 体素 |
+
+- 连续两次提交生成两个不同的 storage_key、两个不同的磁盘文件、内容不同
+  （md5 与字节数各异）—— no-op 修复生效。
+- 旧行核对：v1–v9 的 storage_key 均保持 `amos_0004/nifti-b63b1d93/mask.nii.gz`
+  语义不变，历史行未被改写；本修法不需要迁移历史行。
+- 过程注记：首轮 submit 被 422 拒一次——provenance 的 prompts 须经
+  `validate_prompt` 校验，每条提示须带非空 `class` 字段（review_session.py:86），
+  补 `"class": "label-1"` 后通过。`nninteractive-correct` 端点无此要求（与
+  runner 契约一致），仅 submit-nni 的 provenance 重放校验要求。
+- uvicorn 重启：PID 223000 → 231261，同一命令（`--host 0.0.0.0 --port 8000`），
+  `/health` 返回 `{"status":"ok","version":"0.1.0"}`。
+
+### 7.4 清理与复核（已做）
+
+- 删除测试产生的 MaskVersion v10、v11 两行（`deleted rows: 2`），未动其他行。
+- 删除 `mask_v10.nii.gz`、`mask_v11.nii.gz` 与 `nninteractive-correction/` 目录。
+- `mask.nii.gz` 未被提交覆盖（两次提交都写 v10/v11 新文件），md5
+  `2b228392bac46a21a039e598149a961d`、753545 字节，与基线一致（/tmp 快照未启用恢复）。
+- DB 复核：MaskVersion 回到 v1–v9、总数 10 行；ModelVersion `gate_status=passed`；
+  alembic `b8e21c4a7f05` 不变。
+- nnInteractive 修正产物未进蒸馏训练集（未动 distill 门禁与数据）。
+
+### 7.5 测试与提交
+
+- pytest 全套：**464 passed**，exit 0（`.venv/bin/python -m pytest`，189.10s）。
+- ruff：`ruff check src tests scripts eval alembic config` **All checks passed**，exit 0。
