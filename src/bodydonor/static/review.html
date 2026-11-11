@@ -401,7 +401,9 @@ function currentSliceMM() {
 }
 
 function syncSlidersFromVox() {
-  const [x, y, z] = nvAxial.scene.vox ?? [0, 0, 0];
+  // niivue 0.53.1 没有 scene.vox；十字线是 fractional 坐标 crosshairPos，
+  // 体素坐标 = frac2vox(crosshairPos)，与 niivue 内部 onLocationChange 同式。
+  const [x, y, z] = nvAxial.frac2vox(nvAxial.scene.crosshairPos);
   const dims = nvAxial.volumes[0].dims;  // [4, x, y, z]
   $("slice-slider").max = String(dims[3] - 1);
   $("slice-slider").value = String(z);
@@ -414,7 +416,10 @@ $("slice-slider").addEventListener("input", (ev) => {
   for (const nv of [nvAxial, nvCoronal, nvSagittal]) {
     if (!nv) continue;
     const mm = nv.volumes[0].matRAS[13] + z * nv.volumes[0].hdr.pixDims[3];
-    nv.scene.vox = [nv.scene.vox?.[0] ?? 0, nv.scene.vox?.[1] ?? 0, z];
+    // scene.vox 不存在（赋值是空操作）；用体素空间移动十字线改切片，
+    // 内部即 frac2vox(crosshairPos) + clamp + vox2frac 回写。
+    const cur = nv.frac2vox(nv.scene.crosshairPos);
+    nv.moveCrosshairInVox(0, 0, z - cur[2]);
   }
   syncSlidersFromVox();
 });
@@ -834,7 +839,9 @@ let dragStart = null;      // bbox 起点 vox
 let scribblePts = null;    // 涂鸦轨迹
 function m5CurrentVox() {
   if (!nvAxial) return null;
-  const [x, y, z] = nvAxial.scene.vox ?? [0, 0, 0];
+  // niivue 0.53.1 没有 scene.vox；crosshairPos 是 fractional 坐标 [0,1]，
+  // frac2vox() 按 round(frac*dims-0.5) 换算为体素索引（niivue 内部同式）。
+  const [x, y, z] = nvAxial.frac2vox(nvAxial.scene.crosshairPos);
   return { x, y, z };
 }
 function m5PickClass() {
