@@ -99,7 +99,6 @@ def load_student_prediction(
     engine = db._engine(url)
     try:
         from sqlalchemy import select
-
         from sqlalchemy.orm import Session
 
         with engine.connect() as conn:
