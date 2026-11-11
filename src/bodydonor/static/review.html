@@ -606,6 +606,7 @@ $("btn-save").addEventListener("click", async () => {
       body: JSON.stringify({
         deleted_classes: deletedClasses,
         drawing_nifti: drawingBytes ? Array.from(drawingBytes) : null,
+        source: "human",  // M5-e：画笔修正规范来源（与 nninteractive_guided 可分别统计）
       }),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
@@ -915,20 +916,34 @@ $("btn-propagate").addEventListener("click", async () => {
   }
 });
 
-// M5-b 提交审阅：provenance payload（M5-e 接入后建 MaskVersion 行）
-$("btn-submit-nni").addEventListener("click", () => {
+// M5-b/M5-e 提交审阅：每类调一次 submit-nni，建 MaskVersion(source=nninteractive_guided)
+$("btn-submit-nni").addEventListener("click", async () => {
   const accepted = [...m5.drafts.entries()].filter(([, s]) => s === "accepted").map(([lv]) => lv);
   if (!accepted.length) { toast("无已确认的类可提交（先点「确认本类」）", "err"); return; }
-  const prompts = [];
-  accepted.forEach((lv) => prompts.push(...(m5.promptsByClass.get(lv) || [])));
-  const provenance = {
-    sessionId: m5.sessionId,
-    baselineTeacherVersion: null,  // 本页 meta 未带基线版本，M5-e 从 MaskVersion 查
-    prompts,
-    acceptedClasses: accepted.map((lv) => m5ClassName(lv)),
-  };
-  console.log("[M5-b] submit provenance:", JSON.stringify(provenance));
-  toast(`已确认 ${accepted.length} 类、${prompts.length} 条提示（payload 见控制台；M5-e 接入后建 MaskVersion source=nninteractive_guided）`, "ok");
+  let done = 0;
+  for (const lv of accepted) {
+    const prompts = m5.promptsByClass.get(lv) || [];
+    try {
+      const r = await fetch(`/review/${encodeURIComponent(SERIES_ID)}/submit-nni`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target_label: lv,
+          prompts,
+          acceptedClasses: [m5ClassName(lv)],
+          sessionId: m5.sessionId,
+          baselineTeacherVersion: null,  // 本页 meta 未带基线版本，后端不猜，记 null
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+      const out = await r.json();
+      done++;
+      toast(`${m5ClassName(lv)} 已提交为 MaskVersion v${out.version}（nninteractive_guided，${out.n_corrected_voxels} 体素；刷新后成为新基线）`, "ok");
+    } catch (e) {
+      toast(`${m5ClassName(lv)} 提交失败：${e.message}`, "err");
+    }
+  }
+  if (done) { renderDraftList(); updateModeBadge(); }
 });
 
 // 未提交切病例确认框（离开页面时）

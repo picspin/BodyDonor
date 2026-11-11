@@ -821,9 +821,14 @@ def review_seg_meta(series_id: str) -> list[dict[str, Any]]:
 def review_save(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
     """人工修正写回（M2 粒度：整类删除 + 画笔粗修）-> 新 MaskVersion。
 
-    body: {deleted_classes: [class,...], drawing_nifti: [bytes] | null}
+    body: {deleted_classes: [class,...], drawing_nifti: [bytes] | null,
+           source?: "manual" | "human", provenance?: dict | null}
     - 整类删除：deleted_classes 里的 label 体素清零（走 assert_affine_match 守卫）
     - 画笔粗修：drawing_nifti 非零体素从 mask 中删除（粗修擦除）
+    - source（M5-e）：默认 "manual"（legacy 画笔值，兼容旧调用）；前端画笔
+      保存传 "human"（M5 规范画笔修正，与 nninteractive_guided 可分别统计）。
+      nninteractive_guided 不接受本端点写（走 submit-nni）。
+    - provenance（M5-e）：可选血缘 dict，存 MaskVersion.provenance 列。
     写回前 affine 守卫（mask 与原图不一致 raise AffineMismatchError，禁止静默重采样）。
     """
     import nibabel as nib
@@ -906,14 +911,25 @@ def review_save(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
                     _Path(tmp_name).unlink(missing_ok=True)
                 key = mask_key.replace("image.nii.gz", f"mask_v{version}.nii.gz")
                 st.save(key, payload)
+                save_source = str(body.get("source", "manual"))
+                if save_source not in ("manual", "human"):
+                    raise HTTPException(
+                        status_code=422,
+                        detail="review_save 只接受 source=manual|human；"
+                        "nninteractive_guided 走 /review/{series_id}/submit-nni",
+                    )
+                provenance = body.get("provenance")
+                if provenance is not None and not isinstance(provenance, dict):
+                    raise HTTPException(status_code=422, detail="provenance 须为 dict 或 null")
                 s.add(
                     MaskVersion(
                         mask_version_id=f"mv-{uuid.uuid4().hex[:8]}",
                         series_id=series_id[:60],
                         version=version,
-                        source="manual",
+                        source=save_source,
                         storage_key=key,
                         created_by="review-ui",
+                        provenance=provenance,
                     )
                 )
                 s.commit()
@@ -921,7 +937,7 @@ def review_save(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
                 s.close()
     finally:
         engine.dispose()
-    return {"version": version, "source": "manual", "key": key}
+    return {"version": version, "source": save_source, "key": key}
 
 
 # ---------------------------------------------------------------------------
@@ -1187,4 +1203,167 @@ def review_risk_queue(series_id: str) -> dict[str, Any]:
                 else "缺失：仅按 Dice 排序"
             ),
         },
+    }
+
+
+@app.post("/review/{series_id}/submit-nni")
+def review_submit_nni(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """提交已确认的 nnInteractive 修正 → 新 MaskVersion（M5-e）。
+
+    body: {target_label: int, prompts: [...], acceptedClasses: [name,...],
+           sessionId?: str, baselineTeacherVersion?: int | null}
+    - 修正 mask 取 series 目录 nninteractive-correction/correction_mask.nii.gz
+      （M4 correct_image 产物，二值 0/1）；sidecar correction_source.json 须
+      存在且 source=nninteractive_guided，否则 422（无修正产物不可提交）。
+    - 合并：correction>0 的体素写为 target_label（其余沿用基线 mask）。
+    - affine 守卫同 review_save；provenance 存 MaskVersion.provenance 列
+      （build_provenance 校验 prompts 可重放 + acceptedClasses 非空）。
+    - source=nninteractive_guided（20 字符，列宽 String(32)，迁移 e7f3a1c9d204）。
+      蒸馏门禁仍拒绝该来源（ontology/distill_data，不进商用蒸馏训练集）。
+    """
+    import json as _json
+
+    import nibabel as nib
+    import numpy as np
+
+    from .review_session import build_provenance
+
+    row = _series_row(series_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
+    st = _get_storage()
+    if not row.storage_key:
+        raise HTTPException(status_code=422, detail="series 无像素（commit 未落盘）")
+    try:
+        target_label = int(body.get("target_label"))
+        prompts = body.get("prompts") or []
+        accepted = body.get("acceptedClasses") or []
+        session_id = str(body.get("sessionId") or f"submit-{uuid.uuid4().hex[:8]}")
+        baseline = body.get("baselineTeacherVersion")
+        if baseline is not None:
+            baseline = int(baseline)
+        if target_label <= 0:
+            raise ValueError("target_label 须 > 0")
+        if not isinstance(prompts, list) or not isinstance(accepted, list):
+            raise ValueError("prompts / acceptedClasses 须为 list")
+        provenance = build_provenance(session_id, baseline, prompts, accepted)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"提交 payload 非法：{e}") from None
+
+    series_dir = "/".join(row.storage_key.split("/")[:2])
+    corr_dir = st.root / series_dir / "nninteractive-correction"
+    sidecar_path = corr_dir / "correction_source.json"
+    corr_mask_path = corr_dir / "correction_mask.nii.gz"
+    if not sidecar_path.exists() or not corr_mask_path.exists():
+        raise HTTPException(
+            status_code=422,
+            detail="无 nnInteractive 修正产物（nninteractive-correction/ 缺失）："
+            "先跑点/框提示修正再提交",
+        )
+    try:
+        sidecar = _json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"修正 sidecar 不可读：{e}") from None
+    if sidecar.get("source") != "nninteractive_guided":
+        raise HTTPException(
+            status_code=422,
+            detail=f"修正 sidecar source={sidecar.get('source')!r} 不是 nninteractive_guided",
+        )
+    if sidecar.get("target_label") is not None and int(sidecar["target_label"]) != target_label:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"sidecar target_label={sidecar['target_label']} 与提交 "
+                f"target_label={target_label} 不一致"
+            ),
+        )
+
+    img_key = row.storage_key
+    mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
+    if not mask_key or not st.exists(mask_key):
+        raise HTTPException(status_code=422, detail="no mask to correct")
+    from .nifti_geom import AffineMismatchError, assert_affine_match
+
+    try:
+        with (
+            _nifti_from_bytes(st.load(img_key)) as img,
+            _nifti_from_bytes(st.load(mask_key)) as mask,
+            _nifti_from_bytes(corr_mask_path.read_bytes()) as corr,
+        ):
+            assert_affine_match(img, mask, label=f"review_submit_nni {series_id}")
+            assert_affine_match(img, corr, label=f"review_submit_nni correction {series_id}")
+            affine = mask.affine
+            arr = np.asarray(mask.dataobj).astype(np.int32)
+            corr_arr = np.asarray(corr.dataobj)
+            n_corr = int((corr_arr > 0).sum())
+            if n_corr == 0:
+                raise ValueError("修正 mask 全空（无修正体素），拒绝提交空版本")
+            arr[corr_arr > 0] = target_label
+    except AffineMismatchError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    provenance["targetLabel"] = target_label
+    provenance["correctionSidecar"] = (
+        f"{series_dir}/nninteractive-correction/correction_source.json"
+    )
+
+    from sqlalchemy import select
+
+    from . import db
+    from .models import MaskVersion
+
+    engine = db._engine(settings.database.url)
+    try:
+        with db.write_lock, engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            s = Session(conn)
+            try:
+                last = (
+                    s.execute(
+                        select(MaskVersion.version)
+                        .where(MaskVersion.series_id == series_id[:60])
+                        .order_by(MaskVersion.version.desc())
+                        .limit(1)
+                    )
+                    .scalars()
+                    .first()
+                )
+                version = (last or 0) + 1
+                import tempfile
+
+                with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
+                    tmp_name = tf.name
+                try:
+                    nib.save(nib.Nifti1Image(arr, affine), tmp_name)
+                    payload = _Path(tmp_name).read_bytes()
+                finally:
+                    _Path(tmp_name).unlink(missing_ok=True)
+                key = mask_key.replace("image.nii.gz", f"mask_v{version}.nii.gz")
+                st.save(key, payload)
+                s.add(
+                    MaskVersion(
+                        mask_version_id=f"mv-{uuid.uuid4().hex[:8]}",
+                        series_id=series_id[:60],
+                        version=version,
+                        source="nninteractive_guided",
+                        storage_key=key,
+                        created_by="review-ui-submit-nni",
+                        provenance=provenance,
+                    )
+                )
+                s.commit()
+            finally:
+                s.close()
+    finally:
+        engine.dispose()
+    return {
+        "version": version,
+        "source": "nninteractive_guided",
+        "key": key,
+        "target_label": target_label,
+        "n_corrected_voxels": n_corr,
+        "provenance": provenance,
     }

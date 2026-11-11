@@ -369,3 +369,187 @@ class TestReviewPageM5:
         assert r.status_code == 200
         missing = [m for m in self.M5_MARKERS if m not in r.text]
         assert not missing, f"review.html 缺 M5 标记：{missing}"
+
+
+class TestReviewSubmitNni:
+    """M5-e 提交端点：修正 mask 合并进基线 → MaskVersion(source=nninteractive_guided)。"""
+
+    def _write_correction(  # noqa: ANN001
+        self, storage, key, img, target_label=1, voxels=((0, 4, 0, 4, 10),)
+    ) -> str:
+        """在 storage 写 nninteractive-correction/ 产物（二值修正 mask + sidecar）。"""
+        import json as _json
+
+        series_dir = "/".join(key.split("/")[:2])
+        corr_arr = np.zeros(img.shape, dtype=np.uint8)
+        for x0, x1, y0, y1, z in voxels:
+            corr_arr[x0:x1, y0:y1, z] = 1
+        corr = nib.Nifti1Image(corr_arr, img.affine)
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
+            tmp_name = tf.name
+        try:
+            nib.save(corr, tmp_name)
+            payload = Path(tmp_name).read_bytes()
+        finally:
+            Path(tmp_name).unlink(missing_ok=True)
+        storage.save(f"{series_dir}/nninteractive-correction/correction_mask.nii.gz", payload)
+        sidecar = {
+            "source": "nninteractive_guided",
+            "license": "CC BY-NC-SA 4.0",
+            "target_label": target_label,
+            "provenance": {
+                "sessionId": "sess-1",
+                "baselineTeacherVersion": None,
+                "prompts": [],
+                "acceptedClasses": [],
+            },
+        }
+        storage.save(
+            f"{series_dir}/nninteractive-correction/correction_source.json",
+            _json.dumps(sidecar).encode("utf-8"),
+        )
+        return series_dir
+
+    def test_submit_nni_creates_guided_version(self, committed_series) -> None:  # noqa: ANN001
+        sid, storage, key, mask_key, settings = committed_series
+        img = nib.load(str(storage.root / key))
+        self._write_correction(storage, key, img)  # 16 体素在 (0:4, 0:4, z=10)
+        with client() as c:
+            r = c.post(
+                f"/review/{sid}/submit-nni",
+                json={
+                    "target_label": 1,
+                    "prompts": [
+                        {
+                            "type": "point",
+                            "x": 2,
+                            "y": 2,
+                            "z": 10,
+                            "include": True,
+                            "class": "label-1",
+                        }
+                    ],
+                    "acceptedClasses": ["label-1"],
+                    "sessionId": "sess-test",
+                    "baselineTeacherVersion": None,
+                },
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["source"] == "nninteractive_guided"
+        assert body["n_corrected_voxels"] == 16
+        assert body["provenance"]["sessionId"] == "sess-test"
+        assert body["provenance"]["acceptedClasses"] == ["label-1"]
+        assert len(body["provenance"]["prompts"]) == 1
+        assert body["provenance"]["targetLabel"] == 1
+
+        from sqlalchemy import select
+
+        from bodydonor import db
+        from bodydonor.models import MaskVersion
+
+        engine = db._engine(settings.database.url)
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy.orm import Session
+
+                s = Session(conn)
+                mv = (
+                    s.execute(
+                        select(MaskVersion)
+                        .where(MaskVersion.series_id == sid)
+                        .order_by(MaskVersion.version.desc())
+                    )
+                    .scalars()
+                    .first()
+                )
+                s.close()
+        finally:
+            engine.dispose()
+        assert mv is not None and mv.source == "nninteractive_guided"
+        assert mv.provenance["prompts"][0]["x"] == 2  # prompts 可重放
+        merged = nib.load(str(storage.root / mv.storage_key))
+        arr = np.asarray(merged.dataobj)
+        assert int((arr[0:4, 0:4, 10] == 1).sum()) == 16  # 修正体素已合并
+        assert int((arr[5:15, 5:15, 10] == 1).sum()) == 100  # 基线 label-1 保留
+
+    def test_submit_nni_without_correction_422(self, committed_series) -> None:  # noqa: ANN001
+        sid, storage, key, mask_key, settings = committed_series
+        with client() as c:
+            r = c.post(
+                f"/review/{sid}/submit-nni",
+                json={
+                    "target_label": 1,
+                    "prompts": [
+                        {
+                            "type": "point",
+                            "x": 2,
+                            "y": 2,
+                            "z": 10,
+                            "include": True,
+                            "class": "label-1",
+                        }
+                    ],
+                    "acceptedClasses": ["label-1"],
+                },
+            )
+        assert r.status_code == 422
+
+    def test_submit_nni_target_mismatch_422(self, committed_series) -> None:  # noqa: ANN001
+        sid, storage, key, mask_key, settings = committed_series
+        img = nib.load(str(storage.root / key))
+        self._write_correction(storage, key, img, target_label=2)
+        with client() as c:
+            r = c.post(
+                f"/review/{sid}/submit-nni",
+                json={
+                    "target_label": 1,
+                    "prompts": [
+                        {
+                            "type": "point",
+                            "x": 2,
+                            "y": 2,
+                            "z": 10,
+                            "include": True,
+                            "class": "label-1",
+                        }
+                    ],
+                    "acceptedClasses": ["label-1"],
+                },
+            )
+        assert r.status_code == 422
+
+    def test_save_human_source_and_provenance(self, committed_series) -> None:  # noqa: ANN001
+        sid, storage, key, mask_key, settings = committed_series
+        with client() as c:
+            r = c.post(
+                f"/review/{sid}/save",
+                json={
+                    "deleted_classes": ["label-2"],
+                    "drawing_nifti": None,
+                    "source": "human",
+                    "provenance": {
+                        "sessionId": "s1",
+                        "baselineTeacherVersion": None,
+                        "prompts": [],
+                        "acceptedClasses": [],
+                    },
+                },
+            )
+        assert r.status_code == 200
+        assert r.json()["source"] == "human"
+
+    def test_save_rejects_guided_source(self, committed_series) -> None:  # noqa: ANN001
+        sid, storage, key, mask_key, settings = committed_series
+        with client() as c:
+            r = c.post(
+                f"/review/{sid}/save",
+                json={
+                    "deleted_classes": [],
+                    "drawing_nifti": None,
+                    "source": "nninteractive_guided",
+                },
+            )
+        assert r.status_code == 422

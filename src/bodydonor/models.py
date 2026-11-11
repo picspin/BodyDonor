@@ -53,6 +53,7 @@ class Base(DeclarativeBase):
 # Project / Case / Series
 # ---------------------------------------------------------------------------
 
+
 class Project(Base):
     """项目：病例的组织单位（proposal §4.1 项目与任务元数据）。"""
 
@@ -92,9 +93,7 @@ class Series(Base):
     __tablename__ = "series"
 
     series_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    case_id: Mapped[str] = mapped_column(
-        ForeignKey("cases.case_id"), nullable=False, index=True
-    )
+    case_id: Mapped[str] = mapped_column(ForeignKey("cases.case_id"), nullable=False, index=True)
     modality: Mapped[str | None] = mapped_column(String(16), nullable=True)
     num_slices: Mapped[int | None] = mapped_column(Integer, nullable=True)
     slice_thickness_mm: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -105,9 +104,7 @@ class Series(Base):
     # DICOM 来源序列 ingest 时从头提取，commit 时落库；export_seg 用它写真实
     # 源实例引用（ReferencedSOPInstanceUID），合成源实例降级为无 DICOM 来源
     # （如 NIfTI 输入）时的 fallback。结构见 ingest.extract_source_instances。
-    source_instances_json: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON, nullable=True
-    )
+    source_instances_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     case: Mapped[Case] = relationship(back_populates="series")
@@ -119,10 +116,18 @@ class Series(Base):
 # MaskVersion / QCReport / ReviewTask / ModelVersion
 # ---------------------------------------------------------------------------
 
+
 class MaskVersion(Base):
     """mask 版本：teacher 初版、student 重生成、人工修正各为一个版本。
 
-    source: 'teacher' | 'student' | 'manual'
+    source: 'teacher' | 'student' | 'manual'（legacy 画笔）| 'human'
+    （M5 规范画笔修正）| 'nninteractive_guided'（M5-e：人工提示引导的模型
+    输出，20 字符，列宽 String(32)）。
+    provenance（M5-e 新增，JSON nullable）：{sessionId,
+    baselineTeacherVersion, prompts[], acceptedClasses[]}（+ submit-nni
+    附加 targetLabel / correctionSidecar），prompts 可重放。
+    nnInteractive 修正产物绝不进商用蒸馏训练集（门禁见 ontology /
+    distill_data，与列宽无关）。
     """
 
     __tablename__ = "mask_versions"
@@ -132,11 +137,14 @@ class MaskVersion(Base):
     )
 
     mask_version_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    series_id: Mapped[str] = mapped_column(
-        ForeignKey("series.series_id"), nullable=False
-    )
+    series_id: Mapped[str] = mapped_column(ForeignKey("series.series_id"), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    source: Mapped[str] = mapped_column(String(16), nullable=False)  # teacher/student/manual
+    # M5-e：String(16) -> String(32)，装得下 20 字符的 nninteractive_guided
+    # （M4 遗留；迁移 e7f3a1c9d204）。
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    # M5-e：血缘（M5-PLAN §4）：{sessionId, baselineTeacherVersion,
+    # prompts[], acceptedClasses[]}；无血缘的老行 = NULL。
+    provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     model_version_id: Mapped[str | None] = mapped_column(
         ForeignKey("model_versions.model_version_id"), nullable=True
     )
@@ -145,9 +153,7 @@ class MaskVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     series: Mapped[Series] = relationship(back_populates="mask_versions")
-    model_version: Mapped[ModelVersion | None] = relationship(
-        back_populates="mask_versions"
-    )
+    model_version: Mapped[ModelVersion | None] = relationship(back_populates="mask_versions")
     qc_reports: Mapped[list[QCReport]] = relationship(back_populates="mask_version")
 
 
@@ -183,9 +189,7 @@ class ReviewTask(Base):
     __table_args__ = (Index("ix_review_tasks_status", "status"),)
 
     review_task_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    qc_report_id: Mapped[str] = mapped_column(
-        ForeignKey("qc_reports.qc_report_id"), nullable=False
-    )
+    qc_report_id: Mapped[str] = mapped_column(ForeignKey("qc_reports.qc_report_id"), nullable=False)
     series_id: Mapped[str] = mapped_column(ForeignKey("series.series_id"), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     assignee: Mapped[str | None] = mapped_column(String(64), nullable=True)  # Q10: role 预留
@@ -195,9 +199,7 @@ class ReviewTask(Base):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, onupdate=utcnow
-    )
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, onupdate=utcnow)
 
     qc_report: Mapped[QCReport] = relationship(back_populates="review_tasks")
     series: Mapped[Series] = relationship(back_populates="review_tasks")
@@ -230,6 +232,7 @@ class ModelVersion(Base):
 # LicenseState / UsageLedger（计数基础，M1 起强制执行）
 # ---------------------------------------------------------------------------
 
+
 class LicenseState(Base):
     """无 License 试用限制的计数状态（proposal §13：每年 200 例 / 每月 20 例，先到者为准）。
 
@@ -252,9 +255,7 @@ class LicenseState(Base):
     trial_yearly_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     trial_monthly_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, onupdate=utcnow
-    )
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, onupdate=utcnow)
 
 
 class UsageLedger(Base):
@@ -265,9 +266,7 @@ class UsageLedger(Base):
 
     __tablename__ = "usage_ledger"
     __table_args__ = (
-        UniqueConstraint(
-            "fingerprint_hash", "period", "case_id", name="uq_usage_fp_period_case"
-        ),
+        UniqueConstraint("fingerprint_hash", "period", "case_id", name="uq_usage_fp_period_case"),
         Index("ix_usage_ledger_fp_period", "fingerprint_hash", "period"),
     )
 

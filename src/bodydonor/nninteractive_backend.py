@@ -18,13 +18,17 @@
 - **许可约束（LICENSES-THIRD-PARTY.md §2.2 / §8.3）**：修正产物 sidecar JSON
   必须带 source="nninteractive_guided" + license="CC BY-NC-SA 4.0"
   （权重传染标记）；蒸馏训练集门禁（distill_data.REJECTED_SOURCES / ontology.
-  mask_allowed_in_distill_training）拒绝该来源。MaskVersion.source 列是
-  String(16)，20 字符的 nninteractive_guided 塞不进去——修正产物**不建
-  MaskVersion 行**，来源事实以 sidecar JSON 为准（distill_data.
-  read_teacher_provenance 同一约定：旁挂 source.json 是来源事实源）。
+  mask_allowed_in_distill_training）拒绝该来源。M4 时 MaskVersion.source 列
+  是 String(16)，20 字符塞不进，故修正产物不建行、来源事实以 sidecar JSON
+  为准；M5-e 列宽已改 String(32)（迁移 e7f3a1c9d204），提交走
+  app.review_submit_nni 建行（sidecar 仍是来源事实源之一）。
   历史字符串 manual-correction-nninteractive（29 字符，阶段 2a sidecar 用过）
   与 nninteractive 是 legacy 别名：永不再由新代码写出，但门禁拒绝清单保留
   （删拒绝是安全倒退）。
+- **M5-e**：MaskVersion.source 列宽已改为 String(32)（迁移 e7f3a1c9d204），
+  修正产物提交走 app.review_submit_nni 建 MaskVersion 行
+  （source=nninteractive_guided + provenance 列）；本后端仍只写 sidecar，
+  不直接建行（提交时合并修正 mask 进基线 mask 是端点职责）。
 - **provenance（可追溯，用户 2026-11-09 三态决定）**：每个修正产物的 sidecar
   JSON 必须含 provenance={sessionId, baselineTeacherVersion, prompts[],
   acceptedClasses[]}——sessionId 每次修正运行新生成 uuid；baselineTeacherVersion
@@ -238,8 +242,14 @@ def correct_image(
 
     try:
         return _run_locked(
-            image_path, output_dir, prompts, device=device, target_label=target_label,
-            job_id=job_id, model_dir=model_dir, lock=lock,
+            image_path,
+            output_dir,
+            prompts,
+            device=device,
+            target_label=target_label,
+            job_id=job_id,
+            model_dir=model_dir,
+            lock=lock,
             idle_seconds=DEFAULT_IDLE_SECONDS if lock is not None else 0,
             session_id=session_id,
             baseline_teacher_version=baseline_teacher_version,
@@ -314,7 +324,7 @@ def _run_locked(
     except subprocess.TimeoutExpired as e:
         raise NnInteractiveError(
             f"nnInteractive runner 超时（>{NNI_RUNNER_TIMEOUT_SECONDS}s）："
-            f"stderr[-1000:]={ (e.stderr or '')[-1000:]!r}"
+            f"stderr[-1000:]={(e.stderr or '')[-1000:]!r}"
         ) from None
     finally:
         poll_stop.set()
@@ -395,9 +405,7 @@ def _run_locked(
         },
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
-    sidecar_path.write_text(
-        json.dumps(sidecar, ensure_ascii=False, indent=1), encoding="utf-8"
-    )
+    sidecar_path.write_text(json.dumps(sidecar, ensure_ascii=False, indent=1), encoding="utf-8")
 
     return CorrectionResult(
         job_id=job_id,
