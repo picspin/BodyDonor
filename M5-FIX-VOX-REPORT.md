@@ -285,3 +285,45 @@ slice 14→15、slice 15→16 各 100 体素）：断言第二次传播以 `mask
   正确，仅多余连接开销，非阻塞。
 - `m5CurrentVox(ev)`（review.html 前端体素回显）无自动化测试——仓库无 JS 测试
   基建，报告 §6 已记为接受的残留。
+
+## 8. 收尾总结
+
+### 8.1 提交清单
+
+`git log db2d45b..HEAD` 共 10 个提交（本地 main、未推）：
+
+| 提交 | 内容 |
+|---|---|
+| `713e354` | bug 1 修复：scene.vox 改 crosshairPos + frac2vox |
+| `10340e4` | pointerdown 提示按事件坐标换算 |
+| `c014902` | bug 1 报告 |
+| `3433632` | bug 2 写路径 key 改从 row.storage_key 派生，3 处 no-op 修复 |
+| `f337988` | bug 2 报告 §7 |
+| `9cac2d6` | 读路径回归修复：最新 MaskVersion 优先 |
+| `657d10d` | 报告 §7.6 |
+| `f792316` | 报告 §6 订正 |
+| `0c73d90` | propagate 回归测试补齐 |
+| `d36af8a` | 报告收尾 |
+
+### 8.2 deep-reviewer 三轮审查
+
+三轮均由 Claude Code 派 deep-reviewer 子代理，只读审 diff：
+
+- 第一轮：3 Blocker（读路径回归）+ 4 warning + 2 nit。
+- 第二轮：0 Blocker、2 warning、4 nit。
+- 第三轮（终审）：findings 为空数组——无 blocker、无 warning。
+
+Blocker/Major 全部关闭，只剩已接受的 Minor（见 §7.6 末尾与 §6）。
+
+### 8.3 hook 表现
+
+- 三轮 headless 深审日志里均未出现 SubagentStop hook 输出。
+- 第三轮明确记录 PR 查找未出现（main 无 open PR，干净失败为预期）。
+
+未修、未绕。
+
+### 8.4 最终验证数字
+
+- 全套 pytest：**467 passed**、exit 0。
+- ruff：`ruff check src tests scripts eval alembic config` 全绿。
+- M4 门禁未动：`gate_status=passed`，eval/holdout.txt 未动。
