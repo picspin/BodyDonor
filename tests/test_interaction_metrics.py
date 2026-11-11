@@ -187,6 +187,27 @@ class TestInteractionTracker:
         assert m["convergenceSteps"] == 2
         assert m["perStepDeltaDice"] == [0.0, 0.0]
 
+    def test_metrics_convergence_judged_on_raw_delta(self) -> None:
+        """收敛判定用原始 ΔDice、round(4) 只做展示（N-1 修复回归）。
+
+        判定用例：delta = 10/1005 ≈ 0.0099502 —— 原始值 < τ(0.01)，但
+        round(…, 4) = 0.01 不 < τ。旧实现（先 round 再判）在该边界判为
+        未收敛；新实现按原始值判收敛。"""
+        t = InteractionTracker()
+        big = _cube((20, 20, 20), (0, 10, 0, 10, 0, 10))  # 1000 体素
+        sub1 = _cube((20, 20, 20), (0, 5, 0, 1, 0, 1))  # 5 体素 ⊆ big
+        sub2 = _cube((20, 20, 20), (10, 15, 0, 1, 0, 1))  # 5 体素，与 sub1 不相交
+        raw = dice_binary(big, sub1)
+        assert raw < TAU_CONVERGENCE  # 原始值低于阈值
+        assert round(raw, 4) >= TAU_CONVERGENCE  # 舍入后不低于阈值（边界用例成立）
+        t.record_draft("liver", big, 1)
+        t.record_draft("liver", sub1, 2)  # delta1 ≈ 0.00995（< τ，round 后 = 0.01）
+        t.record_draft("liver", sub2, 3)  # delta2 = 0.0（< τ）
+        m = t.build_metrics("liver")
+        # 连续 2 步原始 ΔDice < τ → 第 2 个 delta 触发（旧先舍入实现会得 None）
+        assert m["convergenceSteps"] == 2
+        assert m["perStepDeltaDice"] == [round(raw, 4), 0.0]
+
     def test_abandoned_attempts_counted_and_drafts_cleared(self) -> None:
         t = InteractionTracker()
         d1 = _cube((4, 4, 4), (0, 2, 0, 2, 0, 2))

@@ -164,12 +164,15 @@ class InteractionTracker:
 
         final_local_dice：调用方（submit 端点）用教师基线算出的 vs 教师
         结果级 Dice；tracker 不持教师 mask，None 时如实写 null。
+
+        收敛判定用原始 ΔDice（未舍入），round(4) 只做展示舍入——阈值边界
+        （恰 0.01 附近）的判定不因展示精度漂移。
         """
-        deltas = [round(d, 4) for d in self.per_step_delta_dice(cls)]
+        raw_deltas = self.per_step_delta_dice(cls)
         return {
             "numPrompts": self.prompt_counts.get(cls, 0),
-            "convergenceSteps": convergence_steps(deltas),
-            "perStepDeltaDice": deltas,
+            "convergenceSteps": convergence_steps(raw_deltas),
+            "perStepDeltaDice": [round(d, 4) for d in raw_deltas],
             "finalLocalDice": (
                 round(float(final_local_dice), 4) if final_local_dice is not None else None
             ),
