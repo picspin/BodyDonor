@@ -85,6 +85,39 @@
   .mode-row { display: flex; gap: 6px; }
   .mode-row button.active { border-color: var(--cyan); color: var(--cyan); }
 
+  /* M5：模式徽标 / 提示预览 / 草稿态 / 风险队列 */
+  .mode-badge {
+    position: absolute; right: 8px; top: 6px; font-size: 12px; color: var(--amber);
+    background: rgba(16,20,24,.85); padding: 1px 8px; pointer-events: none;
+    border: 1px solid var(--line);
+  }
+  .mode-badge.draft { color: var(--amber); border-color: var(--amber); }
+  .mode-badge.accepted { color: var(--cyan); border-color: var(--cyan); }
+  .prompt-preview {
+    position: absolute; font-size: 18px; font-weight: 700; pointer-events: none;
+    transform: translate(-50%, -50%); text-shadow: 0 0 3px #000;
+  }
+  .prompt-preview.pos { color: #5fa867; }
+  .prompt-preview.neg { color: #c75450; }
+  .prompt-preview.box { color: var(--cyan); }
+  .prompt-preview.scribble { color: var(--amber); }
+  .draft-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 13px; }
+  .draft-item .st-draft { color: var(--amber); }
+  .draft-item .st-accepted { color: var(--cyan); }
+  .draft-item.draft { border-left: 2px dashed var(--amber); padding-left: 6px; }
+  .draft-item.accepted { border-left: 2px solid var(--cyan); padding-left: 6px; }
+  .risk-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; cursor: pointer; }
+  .risk-item:hover { color: var(--amber); }
+  .risk-item .risk-high { color: var(--red); font-weight: 600; }
+  .risk-item .risk-medium { color: var(--amber); }
+  .risk-item .risk-low { color: var(--dim); }
+  .risk-item .dice { margin-left: auto; color: var(--cyan); font-variant-numeric: tabular-nums; }
+  @media (prefers-reduced-motion: no-preference) {
+    .risk-item.risk-pulse { animation: risk-pulse 1.2s ease-in-out infinite; }
+    @keyframes risk-pulse { 50% { background: rgba(217,164,65,.15); } }
+  }
+  .seg-item.current { outline: 1px solid var(--amber); }
+
   #toast {
     position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
     background: var(--panel); border: 1px solid var(--line); color: var(--text);
@@ -117,7 +150,7 @@
 
 <main>
   <div id="viewport-grid">
-    <div class="vp" id="vp-axial"><span class="label">轴位 Axial</span></div>
+    <div class="vp" id="vp-axial"><span class="label">轴位 Axial</span><span class="mode-badge" id="mode-badge">浏览 ·</span><span class="prompt-preview" id="prompt-preview" hidden>+</span></div>
     <div class="vp" id="vp-coronal"><span class="label">冠状 Coronal</span></div>
     <div class="vp" id="vp-sagittal"><span class="label">矢状 Sagittal</span></div>
     <div class="vp" id="vp-mip"><span class="label">MIP 最大密度投影</span></div>
@@ -146,9 +179,50 @@
         <button id="mode-erase" title="整类删除：点击 mask 关闭该类别">整类删除</button>
         <button id="mode-paint" title="画笔粗修：拖动擦除当前类">画笔粗修</button>
       </div>
+      <!-- M5-a：nnInteractive 提示模式（P/N/B/S 键切换；Esc 回浏览不清提示） -->
+      <div class="mode-row" style="margin-top:6px">
+        <button id="mode-prompt-pos" title="P：正向提示点 +">+ 正向 (P)</button>
+        <button id="mode-prompt-neg" title="N：负向提示点 -">− 负向 (N)</button>
+        <button id="mode-bbox" title="B：包围框 &amp;">&amp; 框 (B)</button>
+        <button id="mode-scribble" title="S：涂鸦 *">* 涂鸦 (S)</button>
+      </div>
+      <div class="row" style="margin-top:6px; color:var(--dim); font-size:12px">
+        <span id="prompt-hint">空格拖拽平移不落提示 · Esc 回浏览（提示保留）· 点击类别行选当前类</span>
+      </div>
+      <!-- M5 修正传播：本层 → 相邻层 -->
+      <div class="row" style="margin-top:8px">
+        <label>传播</label>
+        <select id="prop-radius" title="向相邻层传播半径">
+          <option value="1" selected>±1 层</option>
+          <option value="2">±2 层</option>
+        </select>
+        <button id="btn-propagate" title="把当前层当前类的形态传播到相邻层空白处">传播到相邻层</button>
+      </div>
+      <!-- M5-b：per-class 草稿 -->
+      <div class="row" style="margin-top:8px; color:var(--dim); font-size:12px"><span>会话草稿（每类独立）</span></div>
+      <div id="draft-list"><span style="color:var(--dim)">暂无草稿</span></div>
       <div class="row" style="margin-top:8px">
         <button id="btn-save" class="primary">保存修正（新 MaskVersion）</button>
+        <button id="btn-submit-nni" title="提交已确认类的 nnInteractive 修正（M5-e 建 MaskVersion 行）">提交审阅</button>
       </div>
+    </div>
+
+    <!-- M5 自适应渲染开关 -->
+    <div class="ctrl-group">
+      <h2>审阅模式</h2>
+      <div class="mode-row">
+        <button id="render-quick" title="弱化轮廓、强化类别色块（检测/定位任务默认）">快速定位</button>
+        <button id="render-fine" class="active" title="强化 GT 与预测边界差异，偏差区域脉动提示（边界关键任务默认）">精细边界</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="btn-strip" title="一键剥离：隐藏全部 overlay，只看原图">一键剥离 overlay</button>
+      </div>
+    </div>
+
+    <!-- M5 异常驱动队列 -->
+    <div class="ctrl-group">
+      <h2>优先审阅队列</h2>
+      <div id="risk-list"><span style="color:var(--dim)">加载中…</span></div>
     </div>
 
     <div class="ctrl-group">
@@ -289,6 +363,7 @@ async function loadSeries() {
       await loadSegMeta();
     }
     bindScrollSync();
+    if (typeof applyM5Defaults === "function") applyM5Defaults(meta);
     setHeader("ok", "已加载");
   } catch (e) {
     setHeader("err", `加载失败：${e.message}`);
@@ -432,7 +507,15 @@ function updateSegVisibility() {
       const st = segState.get(lv);
       const pal = st ? st.color : FALLBACK_PALETTE[i % FALLBACK_PALETTE.length];
       R[i] = pal[0]; G[i] = pal[1]; B[i] = pal[2];
-      A[i] = (st && st.visible) ? 0.6 : 0.0;  // 逐类可见性 = 每类 alpha
+      // M5-c：逐类 alpha = 渲染源 × 审阅模式；一键剥离时全 0
+      let alpha = 0.6;
+      if (typeof m5 !== "undefined") {
+        const src = m5.renderSourceByClass.get(lv) || "teacher";
+        const base = { teacher: 0.6, gt_human: 0.15, guided_draft: 0.25, guided_accepted: 0.6 }[src] ?? 0.6;
+        const scale = m5.stripped ? 0 : (m5.renderMode === "quick" ? 1.25 : 0.75);
+        alpha = Math.min(0.9, base * scale);
+      }
+      A[i] = (st && st.visible) ? alpha : 0.0;  // 逐类可见性 = 每类 alpha
     }
     // 构建完整 LUT（Uint8ClampedArray RGBA，按 label 值索引）：0.53.1 的
     // refreshLayers 需要已构建的 .lut（init 时 makeLabelLut 只在构造路径跑）
@@ -542,6 +625,375 @@ $("btn-reset").addEventListener("click", () => {
   }
   syncSlidersFromVox();
 });
+
+// ---- M5 审阅会话 -------------------------------------------------------------
+// 与 src/bodydonor/review_session.py 同语义（前端镜像，真相源在后端）：
+// M5-a 模式切换、M5-b per-class 草稿、M5-c 第三视觉态、M5-d 推理调度、
+// 自适应渲染开关、异常驱动队列、修正传播。
+// 诚实边界：niivue 0.53.1 的 colormapLabel LUT 按 label 值着色、无描边通道，
+// “虚线轮廓”在画布上表达为低透明填充 + 琥珀色 + 角标 + 类别行虚线边框，
+// 不是逐像素描边（见 M5-REPORT §3.3）。
+const m5 = {
+  mode: "browse",  // browse | prompt_pos | prompt_neg | bbox | scribble
+  spaceHeld: false,
+  currentClass: null,  // label_value（点类别行选定）
+  promptsByClass: new Map(),  // label_value -> [{type,x,y,z,include,class}]
+  drafts: new Map(),  // label_value -> "draft" | "accepted"
+  renderMode: "fine",  // fine | quick（CT/MRI 默认 fine，X-ray 默认 quick）
+  stripped: false,
+  renderSourceByClass: new Map(),  // label_value -> teacher | guided_draft | guided_accepted
+  inferSeq: 0,  // M5-d：推理 version，去重旧结果
+  inferPending: false,
+  sessionId: (crypto.randomUUID ? crypto.randomUUID() : `sess-${Date.now()}`),
+  bboxNoteShown: false,
+};
+const M5_MODE_LABEL = {
+  browse: "浏览 ·", prompt_pos: "正向提示 +", prompt_neg: "负向提示 −",
+  bbox: "包围框 &", scribble: "涂鸦 *",
+};
+const M5_MODE_BTN = {
+  browse: "mode-none", prompt_pos: "mode-prompt-pos", prompt_neg: "mode-prompt-neg",
+  bbox: "mode-bbox", scribble: "mode-scribble",
+};
+const M5_RENDER_ALPHA = { teacher: 0.6, gt_human: 0.15, guided_draft: 0.25, guided_accepted: 0.6 };
+
+function m5ClassName(lv) {
+  const st = segState.get(lv);
+  return st ? st.name : `label-${lv}`;
+}
+function m5PromptCount() {
+  let n = 0;
+  m5.promptsByClass.forEach((ps) => { n += ps.length; });
+  return n;
+}
+function updateModeBadge() {
+  const el = $("mode-badge");
+  if (!el) return;
+  let txt = M5_MODE_LABEL[m5.mode];
+  if (m5.currentClass != null) txt += ` ${m5ClassName(m5.currentClass)}`;
+  const n = m5PromptCount();
+  if (n) txt += ` · ${n} 提示`;
+  if (m5.inferPending) txt += " · 推理中…";
+  const hasDraft = [...m5.drafts.values()].includes("draft");
+  const hasAccepted = [...m5.drafts.values()].includes("accepted");
+  if (hasDraft) txt += " · nnInteractive · 未确认";
+  if (hasAccepted) txt += " · nnI ✓";
+  el.textContent = txt;
+  el.classList.toggle("draft", hasDraft);
+  el.classList.toggle("accepted", !hasDraft && hasAccepted);
+}
+function setM5Mode(m) {
+  m5.mode = m;
+  for (const [mode, id] of Object.entries(M5_MODE_BTN)) {
+    const b = $(id);
+    if (b) b.classList.toggle("active", mode === m);
+  }
+  if (m !== "browse" && nvAxial) nvAxial.setDrawingEnabled(false);
+  updateModeBadge();
+}
+$("mode-prompt-pos").addEventListener("click", () => setM5Mode("prompt_pos"));
+$("mode-prompt-neg").addEventListener("click", () => setM5Mode("prompt_neg"));
+$("mode-bbox").addEventListener("click", () => setM5Mode("bbox"));
+$("mode-scribble").addEventListener("click", () => setM5Mode("scribble"));
+$("mode-none").addEventListener("click", () => setM5Mode("browse"));
+$("mode-erase").addEventListener("click", () => setM5Mode("browse"));
+$("mode-paint").addEventListener("click", () => setM5Mode("browse"));
+
+// M5-a 键盘：P/N/B/S 切模式；Esc 回浏览不清提示；空格按住 = 平移（不落提示）
+window.addEventListener("keydown", (ev) => {
+  const tag = (ev.target?.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "select" || tag === "textarea") return;
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  const k = ev.key.toLowerCase();
+  if (k === " ") {
+    ev.preventDefault();
+    m5.spaceHeld = true;
+    return;
+  }
+  if (k === "escape") {
+    setM5Mode("browse");
+    toast("已回浏览模式（提示保留）");
+    return;
+  }
+  if (k === "p") setM5Mode("prompt_pos");
+  else if (k === "n") setM5Mode("prompt_neg");
+  else if (k === "b") setM5Mode("bbox");
+  else if (k === "s") setM5Mode("scribble");
+});
+window.addEventListener("keyup", (ev) => {
+  if (ev.key === " ") m5.spaceHeld = false;
+});
+
+// 类别行点选 = 当前类（高亮行）
+$("seg-list").addEventListener("click", (ev) => {
+  const row = ev.target.closest(".seg-item");
+  if (!row) return;
+  const cb = row.querySelector("input[type=checkbox]");
+  if (!cb) return;
+  m5.currentClass = parseInt(cb.dataset.class, 10);
+  document.querySelectorAll(".seg-item").forEach((r) => r.classList.remove("current"));
+  row.classList.add("current");
+  updateModeBadge();
+});
+
+// M5-b：草稿列表渲染
+function renderDraftList() {
+  const el = $("draft-list");
+  if (!el) return;
+  const rows = [];
+  m5.drafts.forEach((state, lv) => {
+    const n = (m5.promptsByClass.get(lv) || []).length;
+    rows.push(`<div class="draft-item ${state}">
+      <span>${m5ClassName(lv)}</span>
+      <span class="${state === "draft" ? "st-draft" : "st-accepted"}">${state === "draft" ? "草稿" : "已确认"}</span>
+      <span style="color:var(--dim)">${n} 提示</span>
+      <button data-discard="${lv}">放弃本类</button>
+      <button data-accept="${lv}" ${state === "accepted" ? "disabled" : ""}>确认本类</button>
+    </div>`);
+  });
+  el.innerHTML = rows.length ? rows.join("") : `<span style="color:var(--dim)">暂无草稿</span>`;
+  el.querySelectorAll("[data-discard]").forEach((b) => b.addEventListener("click", () => {
+    const lv = parseInt(b.dataset.discard, 10);
+    m5.drafts.delete(lv);
+    m5.promptsByClass.delete(lv);
+    m5.renderSourceByClass.set(lv, "teacher");
+    renderDraftList();
+    updateSegVisibility();
+    updateModeBadge();
+    toast(`${m5ClassName(lv)} 已放弃，回到 teacher（提示已清空）`);
+  }));
+  el.querySelectorAll("[data-accept]").forEach((b) => b.addEventListener("click", () => {
+    const lv = parseInt(b.dataset.accept, 10);
+    m5.drafts.set(lv, "accepted");
+    m5.renderSourceByClass.set(lv, "guided_accepted");
+    renderDraftList();
+    updateSegVisibility();
+    updateModeBadge();
+    toast(`${m5ClassName(lv)} 已确认（亮青实线 + nnI ✓）`);
+  }));
+}
+
+// M5-d：推理调度（前端镜像版）：version 去重 + 异步不锁 UI
+let m5InferTimer = null;
+function m5ScheduleInference(lv) {
+  clearTimeout(m5InferTimer);
+  m5InferTimer = setTimeout(() => m5RunInference(lv), 300);
+}
+async function m5RunInference(lv) {
+  const prompts = m5.promptsByClass.get(lv) || [];
+  const points = prompts.filter((p) => p.type === "point");
+  if (!points.length) return;
+  // 提示合并：同类同向 ±1 体素去重（与后端 merge_prompts 同口径）
+  const merged = [];
+  for (const p of points) {
+    const dup = merged.some((q) => q.include === p.include
+      && Math.abs(q.x - p.x) <= 1 && Math.abs(q.y - p.y) <= 1 && Math.abs(q.z - p.z) <= 1);
+    if (!dup) merged.push(p);
+  }
+  const pos = merged.find((p) => p.include);
+  const neg = merged.find((p) => !p.include);
+  if (!pos) return;
+  const version = ++m5.inferSeq;
+  m5.inferPending = true;
+  updateModeBadge();
+  try {
+    const r = await fetch(`/review/${encodeURIComponent(SERIES_ID)}/nninteractive-correct`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        point: { x: pos.x, y: pos.y, z: pos.z },
+        negative_point: neg ? { x: neg.x, y: neg.y, z: neg.z } : undefined,
+        target_label: lv,
+      }),
+    });
+    if (version !== m5.inferSeq) return;  // 旧 version 结果丢弃（快速连点不出错乱）
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const out = await r.json();
+    m5.drafts.set(lv, "draft");
+    m5.renderSourceByClass.set(lv, "guided_draft");
+    renderDraftList();
+    updateSegVisibility();
+    toast(`${m5ClassName(lv)} 草稿更新（虚线琥珀 + 低透明，nnInteractive · 未确认，${out.n_target_voxels ?? "?"} 体素）`, "ok");
+  } catch (e) {
+    if (version !== m5.inferSeq) return;
+    toast(`推理失败（提示已保留，可重试）：${e.message}`, "err");
+  } finally {
+    if (version === m5.inferSeq) m5.inferPending = false;
+    updateModeBadge();
+  }
+}
+
+// 轴位视口：点选 / 框选 / 涂鸦落提示（空格按住时不落；悬停只预览不推理）
+const axialBox = $("vp-axial");
+const previewEl = $("prompt-preview");
+let dragStart = null;      // bbox 起点 vox
+let scribblePts = null;    // 涂鸦轨迹
+function m5CurrentVox() {
+  if (!nvAxial) return null;
+  const [x, y, z] = nvAxial.scene.vox ?? [0, 0, 0];
+  return { x, y, z };
+}
+function m5PickClass() {
+  if (m5.currentClass != null) return m5.currentClass;
+  const first = [...segState.entries()].find(([, s]) => s.visible);
+  return first ? first[0] : null;
+}
+function m5AddPrompt(lv, prompt) {
+  const arr = m5.promptsByClass.get(lv) || [];
+  arr.push({ ...prompt, class: m5ClassName(lv) });
+  m5.promptsByClass.set(lv, arr);
+  if (!m5.drafts.has(lv)) m5.drafts.set(lv, "draft");
+  renderDraftList();
+  updateModeBadge();
+}
+axialBox.addEventListener("pointerdown", (ev) => {
+  if (m5.mode === "browse" || m5.spaceHeld) return;
+  const vox = m5CurrentVox();
+  if (!vox) return;
+  if (m5.mode === "bbox") dragStart = vox;
+  else if (m5.mode === "scribble") scribblePts = [vox];
+});
+axialBox.addEventListener("pointermove", (ev) => {
+  // 悬停预览提示落点（不触发推理）
+  if (previewEl) {
+    const rect = axialBox.getBoundingClientRect();
+    previewEl.style.left = `${ev.clientX - rect.left}px`;
+    previewEl.style.top = `${ev.clientY - rect.top}px`;
+    if (m5.mode === "prompt_pos") { previewEl.textContent = "+"; previewEl.className = "prompt-preview pos"; previewEl.hidden = false; }
+    else if (m5.mode === "prompt_neg") { previewEl.textContent = "−"; previewEl.className = "prompt-preview neg"; previewEl.hidden = false; }
+    else if (m5.mode === "bbox") { previewEl.textContent = "&"; previewEl.className = "prompt-preview box"; previewEl.hidden = false; }
+    else if (m5.mode === "scribble") { previewEl.textContent = "*"; previewEl.className = "prompt-preview scribble"; previewEl.hidden = false; }
+    else previewEl.hidden = true;
+  }
+  if (m5.mode === "scribble" && scribblePts) {
+    const vox = m5CurrentVox();
+    if (vox) scribblePts.push(vox);
+  }
+});
+axialBox.addEventListener("pointerleave", () => { if (previewEl) previewEl.hidden = true; });
+axialBox.addEventListener("pointerup", () => {
+  if (m5.mode === "browse" || m5.spaceHeld) { dragStart = null; scribblePts = null; return; }
+  const lv = m5PickClass();
+  if (lv == null) { toast("先在右侧类别行点选当前类", "err"); dragStart = null; scribblePts = null; return; }
+  const vox = m5CurrentVox();
+  if (!vox) return;
+  if (m5.mode === "prompt_pos" || m5.mode === "prompt_neg") {
+    m5AddPrompt(lv, { type: "point", x: vox.x, y: vox.y, z: vox.z, include: m5.mode === "prompt_pos" });
+    m5ScheduleInference(lv);
+  } else if (m5.mode === "bbox" && dragStart) {
+    m5AddPrompt(lv, { type: "bbox", bbox: [[Math.min(dragStart.x, vox.x), Math.max(dragStart.x, vox.x) + 1], [Math.min(dragStart.y, vox.y), Math.max(dragStart.y, vox.y) + 1], [Math.min(dragStart.z, vox.z), Math.max(dragStart.z, vox.z) + 1]] });
+    if (!m5.bboxNoteShown) { m5.bboxNoteShown = true; toast("包围框提示已记录（可重放）；当前后端仅支持点提示，框提示随提交 payload 保存，M5-e 接 bbox 推理"); }
+    renderDraftList();
+    updateModeBadge();
+  } else if (m5.mode === "scribble" && scribblePts && scribblePts.length) {
+    m5AddPrompt(lv, { type: "scribble", points: scribblePts.map((p) => [p.x, p.y, p.z]) });
+    if (!m5.bboxNoteShown) { m5.bboxNoteShown = true; toast("涂鸦提示已记录（可重放）；当前后端仅支持点提示，涂鸦随提交 payload 保存，M5-e 接 scribble 推理"); }
+    renderDraftList();
+    updateModeBadge();
+  }
+  dragStart = null;
+  scribblePts = null;
+});
+
+// M5 修正传播：当前层当前类 → 相邻层
+$("btn-propagate").addEventListener("click", async () => {
+  const vox = m5CurrentVox();
+  const lv = m5PickClass();
+  if (!vox || lv == null) { toast("传播需要当前切片与当前类", "err"); return; }
+  const radius = parseInt($("prop-radius").value, 10) || 1;
+  try {
+    const r = await fetch(`/review/${encodeURIComponent(SERIES_ID)}/propagate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slice: vox.z, class_label: lv, radius }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const out = await r.json();
+    toast(`已传播 ${out.propagated_voxels} 体素到相邻层（新版本 v${out.version}），刷新页面查看`, "ok");
+  } catch (e) {
+    toast(`传播失败：${e.message}`, "err");
+  }
+});
+
+// M5-b 提交审阅：provenance payload（M5-e 接入后建 MaskVersion 行）
+$("btn-submit-nni").addEventListener("click", () => {
+  const accepted = [...m5.drafts.entries()].filter(([, s]) => s === "accepted").map(([lv]) => lv);
+  if (!accepted.length) { toast("无已确认的类可提交（先点「确认本类」）", "err"); return; }
+  const prompts = [];
+  accepted.forEach((lv) => prompts.push(...(m5.promptsByClass.get(lv) || [])));
+  const provenance = {
+    sessionId: m5.sessionId,
+    baselineTeacherVersion: null,  // 本页 meta 未带基线版本，M5-e 从 MaskVersion 查
+    prompts,
+    acceptedClasses: accepted.map((lv) => m5ClassName(lv)),
+  };
+  console.log("[M5-b] submit provenance:", JSON.stringify(provenance));
+  toast(`已确认 ${accepted.length} 类、${prompts.length} 条提示（payload 见控制台；M5-e 接入后建 MaskVersion source=nninteractive_guided）`, "ok");
+});
+
+// 未提交切病例确认框（离开页面时）
+window.addEventListener("beforeunload", (ev) => {
+  if (m5.drafts.size) {
+    ev.preventDefault();
+    ev.returnValue = "";
+  }
+});
+
+// M5 自适应渲染开关
+function setRenderMode(m) {
+  m5.renderMode = m;
+  $("render-quick").classList.toggle("active", m === "quick");
+  $("render-fine").classList.toggle("active", m === "fine");
+  updateSegVisibility();
+}
+$("render-quick").addEventListener("click", () => { setRenderMode("quick"); toast("快速定位：弱化轮廓、强化类别色块"); });
+$("render-fine").addEventListener("click", () => { setRenderMode("fine"); toast("精细边界：强化 GT 与预测边界差异，偏差区域脉动提示"); });
+$("btn-strip").addEventListener("click", () => {
+  m5.stripped = !m5.stripped;
+  $("btn-strip").textContent = m5.stripped ? "恢复 overlay" : "一键剥离 overlay";
+  updateSegVisibility();
+  toast(m5.stripped ? "overlay 已剥离（只看原图）" : "overlay 已恢复");
+});
+
+// M5 异常驱动队列
+async function loadRiskQueue() {
+  const el = $("risk-list");
+  try {
+    const r = await fetch(`/review/${encodeURIComponent(SERIES_ID)}/risk-queue`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const body = await r.json();
+    el.innerHTML = body.queue.map((e) => `<div class="risk-item ${e.risk === "high" ? "risk-pulse" : ""}" data-class-name="${e.class}">
+      <span class="risk-${e.risk}">${e.risk === "high" ? "高" : e.risk === "medium" ? "中" : "低"}</span>
+      <span title="${e.reason}">${e.class}</span>
+      <span class="dice">${e.dice.toFixed(4)}</span>
+    </div>`).join("");
+    el.querySelectorAll(".risk-item").forEach((row) => row.addEventListener("click", () => {
+      const name = row.dataset.className;
+      const entry = [...segState.entries()].find(([, s]) => s.name === name);
+      if (!entry) { toast(`队列类 ${name} 不在本序列 mask 内`, "err"); return; }
+      setAllSeg(false);
+      const st = segState.get(entry[0]);
+      if (st) st.visible = true;
+      m5.currentClass = entry[0];
+      updateSegVisibility();
+      document.querySelectorAll("#seg-list input[type=checkbox]").forEach((cb) => {
+        cb.checked = parseInt(cb.dataset.class, 10) === entry[0];
+      });
+      updateModeBadge();
+      toast(`已聚焦 ${name}（仅显示该类）`);
+    }));
+  } catch (e) {
+    if (el) el.innerHTML = `<span style="color:var(--dim)">队列不可用：${e.message}（先跑学生 hold-out 评估）</span>`;
+  }
+}
+
+function applyM5Defaults(m) {
+  // 默认审阅模式（与后端 default_render_mode 同口径）：X-ray → quick，其余 fine
+  const mod = (m?.modality || "").toUpperCase();
+  setRenderMode(["XR", "X-RAY", "XRAY", "DX", "CR"].includes(mod) ? "quick" : "fine");
+  loadRiskQueue();
+  updateModeBadge();
+}
 
 loadSeries();
 </script>

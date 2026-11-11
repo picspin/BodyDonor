@@ -336,3 +336,36 @@ class TestReviewRiskQueue:
         with client() as c:
             r = c.get("/review/no-such-series/risk-queue")
         assert r.status_code == 404
+
+
+class TestReviewPageM5:
+    """M5 前端静态检查：只断言标记/文案存在于 served HTML，不谎称渲染实测。
+
+    真实渲染（niivue 画布、键盘交互）须浏览器实测，见 M5-REPORT §3.3。
+    """
+
+    M5_MARKERS = [
+        "mode-badge",  # M5-a 角落状态徽标
+        "mode-prompt-pos",
+        "mode-prompt-neg",
+        "mode-bbox",
+        "mode-scribble",
+        "prompt-preview",  # M5-a 悬停预览
+        "draft-list",  # M5-b per-class 草稿
+        "btn-submit-nni",
+        "nnInteractive · 未确认",  # M5-c 草稿角标
+        "nnI ✓",  # M5-c 确认角标
+        "render-quick",  # 自适应渲染开关
+        "render-fine",
+        "btn-strip",  # 一键剥离
+        "risk-list",  # 异常驱动队列面板
+        "btn-propagate",  # 修正传播
+        "applyM5Defaults",
+    ]
+
+    def test_review_page_contains_m5_markers(self) -> None:
+        with client() as c:
+            r = c.get("/review")
+        assert r.status_code == 200
+        missing = [m for m in self.M5_MARKERS if m not in r.text]
+        assert not missing, f"review.html 缺 M5 标记：{missing}"
