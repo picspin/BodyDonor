@@ -817,6 +817,46 @@ def review_seg_meta(series_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def _base_mask_key(series_id: str, row: Any, st: Any) -> str:
+    """修正端点的基底 mask key：最新 MaskVersion 的 storage_key 优先。
+
+    写路径自 3433632 起落 mask_v{N}.nii.gz、不再覆盖 mask.nii.gz，故读基底
+    必须取最新 MaskVersion（否则每次保存都以原始版为起点、上一次修正丢失）。
+    无 MaskVersion 记录时回退裸 mask.nii.gz（与 review_mask 回退语义一致），
+    两者都无 → ValueError（调用方报 422）。
+    """
+    from sqlalchemy import select
+
+    from . import db
+    from .models import MaskVersion
+
+    engine = db._engine(settings.database.url)
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            s = Session(conn)
+            mv = (
+                s.execute(
+                    select(MaskVersion)
+                    .where(MaskVersion.series_id == series_id[:60])
+                    .order_by(MaskVersion.version.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            s.close()
+    finally:
+        engine.dispose()
+    if mv is not None and mv.storage_key:
+        return mv.storage_key
+    mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
+    if mask_key:
+        return mask_key
+    raise ValueError("no mask to correct")
+
+
 @app.post("/review/{series_id}/save")
 def review_save(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
     """人工修正写回（M2 粒度：整类删除 + 画笔粗修）-> 新 MaskVersion。
@@ -839,8 +879,11 @@ def review_save(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
     st = _get_storage()
     img_key = row.storage_key
-    mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
-    if not mask_key or not st.exists(mask_key):
+    try:
+        mask_key = _base_mask_key(series_id, row, st)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    if not st.exists(mask_key):
         raise HTTPException(status_code=422, detail="no mask to correct")
 
     from .nifti_geom import AffineMismatchError, assert_affine_match
@@ -1129,8 +1172,11 @@ def review_propagate(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"unknown series: {series_id}")
     st = _get_storage()
     img_key = row.storage_key
-    mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
-    if not mask_key or not st.exists(mask_key):
+    try:
+        mask_key = _base_mask_key(series_id, row, st)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    if not st.exists(mask_key):
         raise HTTPException(status_code=422, detail="no mask to correct")
     try:
         z = int(body.get("slice"))
@@ -1366,8 +1412,11 @@ def review_submit_nni(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
         )
 
     img_key = row.storage_key
-    mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
-    if not mask_key or not st.exists(mask_key):
+    try:
+        mask_key = _base_mask_key(series_id, row, st)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    if not st.exists(mask_key):
         raise HTTPException(status_code=422, detail="no mask to correct")
     from .nifti_geom import AffineMismatchError, assert_affine_match
 

@@ -265,6 +265,92 @@ class TestReviewSave:
             )
         assert r.status_code == 422
 
+    def test_save_second_input_includes_first_correction(self, committed_series) -> None:  # noqa: ANN001
+        """连续两次保存：第二次以最新 MaskVersion 为基底，第一次修正保留。
+
+        写路径落 mask_v{N}.nii.gz 不覆盖 mask.nii.gz 后，读基底必须是最新
+        MaskVersion——否则第二次保存回到原始版、第一次修正丢失（回归测试）。
+        顺带覆盖版本文件 key 派生规则（mask_v{N}.nii.gz）。
+        """
+        sid, storage, key, mask_key, settings = committed_series
+        img = nib.load(str(storage.root / key))
+
+        def _drawing_bytes(z: int) -> list[int]:
+            """单层单行擦除画笔（z 层 x 5:15, y 5:6，擦掉 label-1 的一角）。"""
+            draw_arr = np.zeros(img.shape, dtype=np.uint8)
+            draw_arr[5:15, 5:6, z] = 1
+            draw = nib.Nifti1Image(draw_arr, img.affine)
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
+                tmp_name = tf.name
+            try:
+                nib.save(draw, tmp_name)
+                return list(Path(tmp_name).read_bytes())
+            finally:
+                Path(tmp_name).unlink(missing_ok=True)
+
+        with client() as c:
+            r1 = c.post(
+                f"/review/{sid}/save",
+                json={"deleted_classes": [], "drawing_nifti": _drawing_bytes(6)},
+            )
+            assert r1.status_code == 200
+            v1 = r1.json()["version"]
+            assert v1 == 1
+            assert r1.json()["key"].endswith("mask_v1.nii.gz")  # key 派生规则
+
+            r2 = c.post(
+                f"/review/{sid}/save",
+                json={"deleted_classes": [], "drawing_nifti": _drawing_bytes(7)},
+            )
+            assert r2.status_code == 200
+            v2 = r2.json()["version"]
+            assert v2 == 2
+            assert r2.json()["key"].endswith("mask_v2.nii.gz")
+
+        # 第二次 mask：第一次修正位置（z=6）与第二次（z=7）的体素都被擦除
+        img_v2 = nib.load(str(storage.root / r2.json()["key"]))
+        arr2 = np.asarray(img_v2.dataobj)
+        assert int(arr2[5:15, 5:6, 6].sum()) == 0  # 第一次修正仍在
+        assert int(arr2[5:15, 5:6, 7].sum()) == 0  # 第二次修正已应用
+        # 基线区域其余部分未受影响（label-1 每层 100 体素，擦掉 10）
+        assert int((arr2[:, :, 6] == 1).sum()) == 90
+        assert int((arr2[:, :, 7] == 1).sum()) == 90
+        # 原始 mask.nii.gz 未被覆盖（写路径规则）
+        orig = np.asarray(nib.load(str(storage.root / mask_key)).dataobj)
+        assert int((orig[:, :, 6] == 1).sum()) == 100
+
+        # 历史行未改写：v1 的 storage_key 仍指向 mask_v1.nii.gz
+        from sqlalchemy import select
+
+        from bodydonor import db
+        from bodydonor.models import MaskVersion
+
+        engine = db._engine(settings.database.url)
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy.orm import Session
+
+                s = Session(conn)
+                rows = (
+                    s.execute(
+                        select(MaskVersion)
+                        .where(MaskVersion.series_id == sid)
+                        .order_by(MaskVersion.version)
+                    )
+                    .scalars()
+                    .all()
+                )
+                s.close()
+        finally:
+            engine.dispose()
+        assert [r.version for r in rows] == [1, 2]
+        assert [r.storage_key for r in rows] == [
+            key.replace("image.nii.gz", "mask_v1.nii.gz"),
+            key.replace("image.nii.gz", "mask_v2.nii.gz"),
+        ]
+
 
 class TestReviewPropagate:
     """M5 修正传播端点：本层形态 → 相邻层空白处，不越类。"""
@@ -503,6 +589,68 @@ class TestReviewPageM5:
                 },
             )
         assert r.status_code == 422
+
+    def test_submit_nni_second_submit_includes_first_correction(self, committed_series) -> None:  # noqa: ANN001
+        """连续两次 submit-nni：第二次以最新 MaskVersion 为基底，第一次修正保留。
+
+        修正 mask A（z=10）先提交建 v1；再写修正 mask B（z=11）提交——第二次
+        合并必须基于 v1（含 A 的体素），否则 A 丢失（读路径回归测试）。
+        """
+        sid, storage, key, mask_key, settings = committed_series
+        img = nib.load(str(storage.root / key))
+        self._write_correction(storage, key, img, voxels=((0, 4, 0, 4, 10),))
+        with client() as c:
+            r1 = c.post(
+                f"/review/{sid}/submit-nni",
+                json={
+                    "target_label": 1,
+                    "prompts": [
+                        {
+                            "type": "point",
+                            "x": 2,
+                            "y": 2,
+                            "z": 10,
+                            "include": True,
+                            "class": "label-1",
+                        }
+                    ],
+                    "acceptedClasses": ["label-1"],
+                    "sessionId": "sess-acc-1",
+                },
+            )
+            assert r1.status_code == 200
+            v1 = r1.json()["version"]
+            assert v1 == 1
+
+            # 第二次修正产物：不同位置（z=11）
+            self._write_correction(storage, key, img, voxels=((0, 4, 0, 4, 11),))
+            r2 = c.post(
+                f"/review/{sid}/submit-nni",
+                json={
+                    "target_label": 1,
+                    "prompts": [
+                        {
+                            "type": "point",
+                            "x": 2,
+                            "y": 2,
+                            "z": 11,
+                            "include": True,
+                            "class": "label-1",
+                        }
+                    ],
+                    "acceptedClasses": ["label-1"],
+                    "sessionId": "sess-acc-2",
+                },
+            )
+            assert r2.status_code == 200
+            v2 = r2.json()["version"]
+            assert v2 == 2
+
+        merged = nib.load(str(storage.root / r2.json()["key"]))
+        arr = np.asarray(merged.dataobj)
+        assert int((arr[0:4, 0:4, 10] == 1).sum()) == 16  # 第一次修正保留
+        assert int((arr[0:4, 0:4, 11] == 1).sum()) == 16  # 第二次修正已应用
+        assert int((arr[5:15, 5:15, 10] == 1).sum()) == 100  # 基线 label-1 保留
 
     def test_submit_nni_target_mismatch_422(self, committed_series) -> None:  # noqa: ANN001
         sid, storage, key, mask_key, settings = committed_series
