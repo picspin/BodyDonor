@@ -837,10 +837,24 @@ const axialBox = $("vp-axial");
 const previewEl = $("prompt-preview");
 let dragStart = null;      // bbox 起点 vox
 let scribblePts = null;    // 涂鸦轨迹
-function m5CurrentVox() {
+function m5CurrentVox(ev) {
   if (!nvAxial) return null;
-  // niivue 0.53.1 没有 scene.vox；crosshairPos 是 fractional 坐标 [0,1]，
-  // frac2vox() 按 round(frac*dims-0.5) 换算为体素索引（niivue 内部同式）。
+  if (ev) {
+    // 指针事件坐标直接换算：pointerdown 先于 niivue 的 mousedown 触发，
+    // 此时 crosshairPos 还是上一次的位置，直接读会落后一次点击（bbox 起点/
+    // scribble 首点实测落在旧十字线处）。用 niivue 自身的 canvasPos2frac
+    //（入参 device px = CSS px × dpr，与其 touch 路径同式）再 frac2vox，
+    // 与 mouseClick 落十字线同源。
+    const canvas = axialBox.querySelector("canvas");
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = (nvAxial.uiData && nvAxial.uiData.dpr) || window.devicePixelRatio || 1;
+    const frac = nvAxial.canvasPos2frac([(ev.clientX - rect.left) * dpr, (ev.clientY - rect.top) * dpr]);
+    if (!frac || frac[0] < 0) return null;  // 点在体数据之外
+    const [x, y, z] = nvAxial.frac2vox(frac);
+    return { x, y, z };
+  }
+  // 无事件时读当前十字线（滑条/传播按钮等场景）。
   const [x, y, z] = nvAxial.frac2vox(nvAxial.scene.crosshairPos);
   return { x, y, z };
 }
@@ -859,7 +873,7 @@ function m5AddPrompt(lv, prompt) {
 }
 axialBox.addEventListener("pointerdown", (ev) => {
   if (m5.mode === "browse" || m5.spaceHeld) return;
-  const vox = m5CurrentVox();
+  const vox = m5CurrentVox(ev);
   if (!vox) return;
   if (m5.mode === "bbox") dragStart = vox;
   else if (m5.mode === "scribble") scribblePts = [vox];
@@ -877,16 +891,16 @@ axialBox.addEventListener("pointermove", (ev) => {
     else previewEl.hidden = true;
   }
   if (m5.mode === "scribble" && scribblePts) {
-    const vox = m5CurrentVox();
+    const vox = m5CurrentVox(ev);
     if (vox) scribblePts.push(vox);
   }
 });
 axialBox.addEventListener("pointerleave", () => { if (previewEl) previewEl.hidden = true; });
-axialBox.addEventListener("pointerup", () => {
+axialBox.addEventListener("pointerup", (ev) => {
   if (m5.mode === "browse" || m5.spaceHeld) { dragStart = null; scribblePts = null; return; }
   const lv = m5PickClass();
   if (lv == null) { toast("先在右侧类别行点选当前类", "err"); dragStart = null; scribblePts = null; return; }
-  const vox = m5CurrentVox();
+  const vox = m5CurrentVox(ev);
   if (!vox) return;
   if (m5.mode === "prompt_pos" || m5.mode === "prompt_neg") {
     m5AddPrompt(lv, { type: "point", x: vox.x, y: vox.y, z: vox.z, include: m5.mode === "prompt_pos" });
