@@ -44,7 +44,8 @@ sidecar prompts `[{x:0,y:0,z:0}]`；修正 mask 的 32 体素全在 x/y/z∈[0,3
   `pointerup` 三处传 `ev`；`pointerup` 补 `(ev)` 形参（初版漏写曾导致 `ev`
   未定义，提交前已修正并经 `node --check` 与浏览器重验确认）。
 
-其余逻辑未动；`app.py` 的 3 处 `mask_key.replace("image.nii.gz", …)` 留着别动（bug 2）。
+其余逻辑未动；`app.py` 的 3 处 `mask_key.replace("image.nii.gz", …)` 留着别动（bug 2，
+读路径问题后经 §7.6 修复）。
 
 ## 4. 浏览器实测（Chromium 149，`~/workspace/bodydonor/browser-test/`，脚本 `review-test-vox.mjs`）
 
@@ -115,6 +116,21 @@ sidecar prompts `[{x:0,y:0,z:0}]`；修正 mask 的 32 体素全在 x/y/z∈[0,3
 - `slice-pos` 文本只在滚轮/滑条时刷新，点击后不自动更新（既有行为，非本次范围）。
 - `m5CurrentVox(ev)` 的事件坐标路径依赖 `canvasPos2frac` 与 `uiData.dpr` 两个
   niivue 0.53.1 内部成员；升级 niivue 大版本时需复核。
+  - `uiData.dpr` 存在性已核实（读 vendored `src/bodydonor/static/niivue.umd.js`）：
+    构造器 `Object.defineProperty(this, "uiData", {...})` 初始化 20 个字段
+    （不含 dpr），但 `refreshLayers` 等路径每次赋值——
+    `forceDevicePixelRatio===0 ? uiData.dpr = window.devicePixelRatio||1 :
+    forceDevicePixelRatio<0 ? uiData.dpr = 1 : uiData.dpr = forceDevicePixelRatio`，
+    bundle 内 2 处、共 5 次 `uiData.dpr` 读取（含 mouseClick 路径
+    `e.x*this.uiData.dpr`）。页面默认 `forceDevicePixelRatio` 非负即会赋值；
+    `review.html:851` 另有 `window.devicePixelRatio` 回退兜底。浏览器 E2E 已证明
+    坐标换算正确（point/bbox/scribble 三轮真实浏览器验证均落在点击/拖拽处，§4）。
+  - 事件坐标路径（`m5CurrentVox` 事件坐标换算、体外返回 null、`pointerup`
+    `(ev)` 形参）无自动化测试：仓库无 JS 测试基建（无 package.json / vitest /
+    jest / playwright 配置，仅 `scripts/bench_*.py` 基准脚本），本次不新建
+    harness（超出范围），以浏览器 E2E 为覆盖依据。原计划的
+    `~/workspace/bodydonor/browser-test/run4-*/results.json` 在本机已不存在
+    （一次性实测记录，未入库），数字以本报告 §4 表格为准。
 - bug 2（submit-nni 版本文件名）见下节。
 
 ## 7. bug 2：submit-nni 版本文件名
@@ -181,8 +197,11 @@ acceptedClasses=["label-1"]，sessionId 区分轮次，baselineTeacherVersion=nu
 
 - 删除测试产生的 MaskVersion v10、v11 两行（`deleted rows: 2`），未动其他行。
 - 删除 `mask_v10.nii.gz`、`mask_v11.nii.gz` 与 `nninteractive-correction/` 目录。
-- `mask.nii.gz` 未被提交覆盖（两次提交都写 v10/v11 新文件），md5
-  `2b228392bac46a21a039e598149a961d`、753545 字节，与基线一致（/tmp 快照未启用恢复）。
+- `mask.nii.gz` md5 `2b228392bac46a21a039e598149a961d`、753545 字节，与基线一致
+  （两次提交都写 v10/v11 新文件，未覆盖裸文件；/tmp 快照未启用恢复）。
+  注意：本修法落下后 `mask.nii.gz` 语义随之改变——写路径不再覆盖它，它仅是
+  无 MaskVersion 记录时的回退文件；**读基底若仍指向它，v1–v11 的人工修正在
+  下一次保存时会全部丢失**，该读路径问题在 §7.6 修复。
 - DB 复核：MaskVersion 回到 v1–v9、总数 10 行；ModelVersion `gate_status=passed`；
   alembic `b8e21c4a7f05` 不变。
 - nnInteractive 修正产物未进蒸馏训练集（未动 distill 门禁与数据）。
@@ -191,3 +210,57 @@ acceptedClasses=["label-1"]，sessionId 区分轮次，baselineTeacherVersion=nu
 
 - pytest 全套：**464 passed**，exit 0（`.venv/bin/python -m pytest`，189.10s）。
 - ruff：`ruff check src tests scripts eval alembic config` **All checks passed**，exit 0。
+
+### 7.6 读路径回归修复（7.2 修法的第二层问题）
+
+- 日期：2026-11-11；系列：`nifti-b63b1d93`（amos_0004）
+- 提交：见 §8（本地 main、未推）
+- 验证：TestClient 回归测试 + 真实 API 两次 correct/submit + 真实 GPU 推理，无 mock
+
+**问题**：7.2 把写路径改为 `mask_v{N}.nii.gz` 后，`mask.nii.gz` 永远停留在原始
+版本；但 `review_save` / `review_propagate` / `review_submit_nni`（app.py
+842/1132/1369）仍从 `mask.nii.gz` 读基底——之后每次保存都以原始版为起点，
+上一次保存的人工修正全部丢失（7.3 的两次提交因 sidecar prompts 相同、修正区域
+相同，恰好掩盖了这一点）。
+
+**修法**：新增共享 helper `_base_mask_key(series_id, row, st)`——最新 MaskVersion
+的 storage_key 优先（复用各端点内查最新版本号的同一 query 语义，与
+`GET /review/{series_id}/mask.nii.gz` 的回退语义一致），无记录回退裸
+`mask.nii.gz`，两者都无 → 422。三处端点改用。不改写 v1–v9 历史行。
+
+**回归测试**（`tests/test_review_api.py`，TestClient 级）：
+
+- `test_save_second_input_includes_first_correction`：连续两次 save（不同 z 层
+  各擦 10 体素），断言第二次 mask 在第一次修正位置（z=6）与第二次（z=7）均无
+  体素、其余区域不受影响（每层 90/90）、`mask.nii.gz` 未被覆盖（z=6 仍 100）、
+  v1/v2 行 storage_key 逐一等于 `mask_v{N}.nii.gz`（覆盖版本文件 key 派生规则）。
+- `test_submit_nni_second_submit_includes_first_correction`：连续两次 submit-nni
+  （不同位置修正 mask），断言第二次合并后第一次修正体素（16）与第二次（16）
+  同时存在、基线 label-1 保留（100）。
+
+**真实 API 累积验证**（点 1 (174,297,71)→label 44、点 2 (110,230,51)→label 82，
+各 correct + submit，cpu 推理）：
+
+| 版本 | md5 | 字节 |
+|---|---|---|
+| mask.nii.gz（基底 v9 原始） | `2b228392bac46a21a039e598149a961d` | 753545 |
+| v10 | `0eab080fa9df768c78ceb7695fe0eba2` | 755050 |
+| v11 | `0c2e935535a0be0912c43bdf63a0d8f9` | 755294 |
+
+- 点 1 体素 (174,297,71)：v9=0 → v10=44 → **v11=44（第一次修正保留）**；
+  点 1 窗口 label 44 体素 v9=42 → v10=528 → v11=528。
+- 点 2 体素 (110,230,51)：v9=0 → v10=0 → **v11=82（第二次修正已应用）**；
+  点 2 窗口 label 82 体素 v9=146 → v10=146 → v11=285。
+- 全图 label 44 新增体素（相对 v9）：v10=38,995 → **v11 仍 38,995**；
+  label 82 新增（v11 vs v10）=189——修正累积成立。
+- 旧行核对：v1–v9 + 其他 series 共 10 行与 /tmp 快照字节级一致；
+  alembic `b8e21c4a7f05`、`gate_status=passed` 不变。
+
+**清理（已做）**：删 v10/v11 两行与 `mask_v10.nii.gz`、`mask_v11.nii.gz`、
+`nninteractive-correction/`；`mask.nii.gz` md5/字节数与基线一致（未恢复即一致）；
+DB MaskVersion 回到 10 行、与快照字节级一致；nnInteractive 修正产物未进蒸馏训练集。
+
+**全套验证**：pytest **466 passed**、exit 0（新增 2 测试）；`ruff check
+src/bodydonor/app.py tests/test_review_api.py` All checks passed、exit 0。
+uvicorn 重启（PID 231261 → 237991，同一命令），`/health` 返回
+`{"status":"ok","version":"0.1.0"}`。
