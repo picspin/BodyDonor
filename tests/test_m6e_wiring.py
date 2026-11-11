@@ -228,8 +228,14 @@ def _baseline_flagged_cases() -> set[str]:
 def _real_products_available() -> bool:
     """419 对回归依赖的真实产物是否齐全（缺失时 skip 不 fail）。
 
-    教师产物（downloads/amos22_subset、downloads/ct_lite/ts_out、
-    ts_class_map.json）+ 学生预测（student_holdout/pred/dataset.json）。
+    对照 test 真正的读取路径逐项探测：
+    - 教师：downloads/amos22_subset、downloads/ct_lite/ts_out（逐类拼接）、
+      downloads/ct_lite/ts_class_map.json（_teacher_volume_and_classes）
+    - 学生：student_holdout/pred/dataset.json（dataset_labels）+
+      eval/holdout.txt 各 case 的 pred/<case_id>.nii.gz
+      （load_student_prediction 的产物路径）；DB passed ModelVersion 的
+      weights_key 无法定位 nnUNet_raw/Dataset*/dataset.json 时同样缺失
+      （load_student_prediction 会 raise），逐 case 捕获转 skip 条件。
     """
     data = Path.home() / "data/BodyDonor"
     paths = [
@@ -238,7 +244,24 @@ def _real_products_available() -> bool:
         data / "downloads/ct_lite/ts_out",
         data / "student_holdout/pred/dataset.json",
     ]
-    return all(p.exists() for p in paths)
+    if not all(p.exists() for p in paths):
+        return False
+    holdout = [
+        line.split("\t")[0]
+        for line in (REPO / "eval" / "holdout.txt").read_text().splitlines()
+        if line.strip()
+    ]
+    # 学生预测：每个 hold-out case 的 pred 文件 + 类别表可解析（缺一即 skip）
+    from bodydonor.student_pred import StudentPredictionError, load_student_prediction
+
+    for case_id in holdout:
+        if not (data / "student_holdout/pred" / f"{case_id}.nii.gz").exists():
+            return False
+        try:
+            load_student_prediction(case_id)
+        except StudentPredictionError:
+            return False
+    return True
 
 
 @pytest.mark.skipif(
