@@ -114,7 +114,7 @@ TestCorrectSubmitE2E 的真实链路——correct→abandon→correct→submit H
 
 ### 3.2 合成边界 case（任务 7a 分支覆盖）
 
-- 单测（`tests/test_qc_interaction.py`，31 条，合成条目，不依赖推理）：
+- 单测（`tests/test_qc_interaction.py`，32 条，合成条目，不依赖推理）：
   两规则 × 普通/高风险 × numPrompts 上下界（15/16）× convergenceSteps
   上下界（6/7/99）× abandonedAttempts 0/1/2/3 × 纯自动 skipped × 阈值
   边界（恰 15/6 不 flag，16/7 flag）× finalLocalDice 不作判据 × 旧数据
@@ -151,7 +151,7 @@ TestCorrectSubmitE2E 的真实链路——correct→abandon→correct→submit H
 ### 3.4 样本量（任务 7c，M6-f DecisionTrace 未建）
 
 回放语料规模：**1 case**（真实全路径 48³ patch），交互 case 占比 1/1。
-合成边界 case：单测 31 条 + e2e 合成 5 条（分支覆盖用，不冒充真实会话）。
+合成边界 case：单测 32 条 + e2e 合成 5 条（分支覆盖用，不冒充真实会话）。
 样本量小本身是事实；DecisionTrace 未建（任务书：本轮只在报告里记，不造
 实体），冷启动阈值未经回放语料校准（§2）。
 
@@ -182,8 +182,9 @@ M6-a 遗留 2（tracker 是进程内存缓冲，重启后草稿历史丢失）�
 
 ## 5. 测试与静态检查
 
-- 新单测：`tests/test_qc_interaction.py` 31 条 + e2e 合成 5 条 +
-  真实回放 2 条 + 持久化单测 6 条 + 跨重启 e2e 1 条（新增/追加 45 条）。
+- 新单测：`tests/test_qc_interaction.py` 32 条（含 deep-review W1 修复后的
+  旧数据 prostate 兜底测试）+ e2e 7 条（合成 5 + 真实回放 2）+
+  持久化单测 6 条 + 跨重启 e2e 1 条（新增/追加 46 条）。
 - 全套 pytest：见 §5.1（后台跑，结果待填）。
 - `ruff check` + `ruff format`（本轮 8 个改动文件）全绿；`qc.py` 存在
   HEAD 既有的 format 漂移（非本轮行，未动——surgical changes）。
@@ -234,7 +235,7 @@ and steps > k_max)`）、skipped 与汇总循环互斥（无同 key 覆盖）、
 | 5 | Nit | qc_interaction.py:134 | abandonment 的 high_risk_classes 参数仅 detail 标注用 | 记遗留（签名对齐两规则同形，可接受设计） |
 
 **Blocker 关闭情况**：无 Blocker；3 Warning 全部修复（bd5e208），2 Nit 记
-遗留（§8.4/§8.5）。修复后快测子集（单测 31 + 合成 e2e 5 + 持久化 6）全绿。
+遗留（§8.4/§8.5）。修复后快测子集（单测 32 + 合成 e2e 5 + 持久化 6）全绿。
 
 ---
 
