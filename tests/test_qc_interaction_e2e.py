@@ -6,13 +6,15 @@
   直接调 qc_series 回放过程级规则。
 - 合成边界 case：qc_series 侧补 seed（手工 provenance，标注合成）覆盖
   真实链路造不出的分支（高风险类放弃 flag、纯自动 skipped 已有单测）。
-- 互补性：过程级 flag 集合 vs 结果级 QC flag 集合的重叠/互补数字。
+- 互补性：过程级 flag 集合 vs 结果级 QC flag 集合的重叠/互补数字（含干净
+  三向对照：全 thresholds vs 全 thresholds-两过程规则关）。
 - 真实 case（amos_0004 patch 源文件）缺失时 skip（与 TestCorrectSubmitE2E
   同条件），不 fail。
 """
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -279,6 +281,36 @@ class TestReplayRealPath:
             f"无可度量互补性（结果级无过程级不覆盖的维度）："
             f"process={sorted(flags)} result={sorted(result_flags)}"
         )
+
+        # ---- 干净三向对照（新口径）：两边都是全 thresholds，唯一变量是两
+        # 过程规则开/关。内存深拷贝副本，不改 config 文件。----
+        th_ro = copy.deepcopy(load_qc_thresholds())
+        for name in (RULE_INTERACTION_CONVERGENCE, RULE_INTERACTION_ABANDONMENT):
+            th_ro["rules"][name]["enabled"] = False
+        out_ro = qc_series(sid, settings, thresholds=th_ro)
+        result_only_flags = set(out_ro["flags"])
+        only_process = sorted(result_flags - result_only_flags)
+        # only_result（新口径）：关过程规则后仍出现的非过程规则 flag——结果
+        # 级规则不依赖过程规则独立 flag。与 overlap 可重合（同一结果级 flag
+        # 既被两边共享、又在过程规则关闭后独立出现），按规则类别计数
+        only_result2 = sorted(f for f in result_only_flags if f not in process_rule_set)
+        overlap2 = sorted(result_flags & result_only_flags)
+        # 过程规则的增量贡献：关掉后丢的 flag（abandonment 事件）与仍留的
+        # flag（boundary_smoothness 体素统计）——各 ≥1，两类规则非完全重叠
+        assert len(only_process) >= 1, (
+            f"过程规则无增量贡献（关掉后 flags 不变）：{sorted(result_flags)}"
+        )
+        assert RULE_INTERACTION_ABANDONMENT in only_process, (
+            f"only_process 应含 abandonment：{only_process}"
+        )
+        assert len(only_result2) >= 1, (
+            f"关过程规则后无结果级 flag 残留："
+            f"full={sorted(result_flags)} ro={sorted(result_only_flags)}"
+        )
+        assert "boundary_smoothness" in only_result2, (
+            f"only_result 应含 boundary_smoothness：{only_result2}"
+        )
+
         summary = {
             "case": sid,
             "process_flags_min_thresholds": sorted(flags),
@@ -287,6 +319,11 @@ class TestReplayRealPath:
             "only_result": only_result,
             "n_process_flagged": n_process,
             "n_result_only_flagged": n_result_only,
+            # ---- 新口径：全 thresholds vs 全 thresholds-两过程规则关 ----
+            "result_only_flags": sorted(result_only_flags),
+            "only_process": only_process,
+            "only_result_clean": only_result2,
+            "overlap_clean": overlap2,
         }
         (tmp_path / "m6b_complementarity.json").write_text(
             json.dumps(summary, indent=1, ensure_ascii=False), encoding="utf-8"
