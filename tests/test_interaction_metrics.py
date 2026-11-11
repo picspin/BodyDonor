@@ -231,3 +231,304 @@ class TestInteractionTracker:
             "teacherReliability": "high",
             "abandonedAttempts": 0,
         }
+
+
+class TestSubmitNniPersistence:
+    """M6-a 持久化端到端：tracker 采集 → submit-nni → provenance.interactionMetrics
+    持久化到 MaskVersion（DB roundtrip），sidecar 可查。"""
+
+    @pytest.fixture
+    def committed_series(self, request, tmp_path, settings, monkeypatch, isolate_db_url):  # noqa: ANN001
+        """同 test_review_api.committed_series：commit 合成序列 + 落多类 mask。
+        tracker 清空注册为 finalizer（进程级 _interaction_trackers 不跨测试泄漏）。"""
+        import tempfile
+
+        import nibabel as nib
+        from fastapi.testclient import TestClient  # noqa: F401
+        from tests.factories import make_nifti
+
+        from bodydonor import app as app_module
+        from bodydonor import db
+        from bodydonor.models import Series
+        from bodydonor.pipeline import commit, scan
+        from bodydonor.storage import LocalFsStorage
+
+        request.addfinalizer(app_module._interaction_trackers.clear)
+
+        from bodydonor import app as app_module
+
+        path = make_nifti(tmp_path / "img.nii.gz", shape=(40, 32, 32))
+        settings.database.url = isolate_db_url
+        outcome = scan(path, settings)
+        storage = LocalFsStorage(tmp_path / "storage")
+        monkeypatch.setattr(app_module, "storage", storage)
+        committed = commit(outcome, settings, storage)
+        sid = committed.selected_series_ids[0]
+
+        from sqlalchemy import select
+
+        engine = db._engine(settings.database.url)
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy.orm import Session
+
+                s = Session(conn)
+                row = s.execute(select(Series).where(Series.series_id == sid)).scalar_one()
+                key = row.storage_key
+                s.close()
+        finally:
+            engine.dispose()
+
+        img = nib.load(str(storage.root / key))
+        mask_arr = np.zeros(img.shape, dtype=np.uint8)
+        mask_arr[5:15, 5:15, 5:15] = 1
+        mask_arr[20:28, 20:28, 20:28] = 2
+        mask = nib.Nifti1Image(mask_arr, img.affine)
+        mask_key = key.replace("image.nii.gz", "mask.nii.gz")
+        with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
+            tmp_name = tf.name
+        try:
+            nib.save(mask, tmp_name)
+            payload = Path(tmp_name).read_bytes()
+        finally:
+            Path(tmp_name).unlink(missing_ok=True)
+        storage.save(mask_key, payload)
+        return sid, storage, key, mask_key, settings
+
+    @pytest.fixture(autouse=True)
+    def isolate_db_url(self, monkeypatch, tmp_path: Path):  # noqa: ANN001
+        """app.settings.database.url 指向临时库（同 test_review_api.isolate_db_url）。
+        tracker 清空不放这里（return fixture 无 teardown）：committed_series
+        显式清空 + 依赖本 fixture 的返回值。"""
+        from bodydonor import app as app_module
+
+        monkeypatch.setattr(
+            app_module.settings,
+            "database",
+            type(app_module.settings.database)(url=f"sqlite:///{tmp_path}/m6a.db"),
+        )
+        app_module._interaction_trackers.clear()
+        return app_module.settings.database.url
+
+    def _write_correction(self, storage, key, img, target_label=1, voxels=((0, 4, 0, 4, 10),)):
+        """在 storage 写 nninteractive-correction/ 产物（二值修正 mask + sidecar）。"""
+        import json as _json
+        import tempfile
+
+        import nibabel as nib
+
+        series_dir = "/".join(key.split("/")[:2])
+        corr_arr = np.zeros(img.shape, dtype=np.uint8)
+        for x0, x1, y0, y1, z in voxels:
+            corr_arr[x0:x1, y0:y1, z] = 1
+        corr = nib.Nifti1Image(corr_arr, img.affine)
+        with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tf:
+            tmp_name = tf.name
+        try:
+            nib.save(corr, tmp_name)
+            payload = Path(tmp_name).read_bytes()
+        finally:
+            Path(tmp_name).unlink(missing_ok=True)
+        storage.save(f"{series_dir}/nninteractive-correction/correction_mask.nii.gz", payload)
+        sidecar = {
+            "source": "nninteractive_guided",
+            "license": "CC BY-NC-SA 4.0",
+            "target_label": target_label,
+            "provenance": {
+                "sessionId": "sess-1",
+                "baselineTeacherVersion": None,
+                "prompts": [],
+                "acceptedClasses": [],
+            },
+        }
+        storage.save(
+            f"{series_dir}/nninteractive-correction/correction_source.json",
+            _json.dumps(sidecar).encode("utf-8"),
+        )
+        return series_dir
+
+    def _record_drafts_via_tracker(self, series_id, drafts):
+        """模拟 nninteractive-correct 的采集路径：草稿落 app._interaction_trackers。"""
+        from bodydonor import app as app_module
+
+        tracker = app_module._interaction_tracker(series_id)
+        for cls, arr, n_prompts in drafts:
+            tracker.record_draft(cls, arr, n_prompts)
+        return tracker
+
+    def test_submit_nni_persists_interaction_metrics(self, committed_series) -> None:  # noqa: ANN001
+        """草稿序列 → tracker → submit-nni → MaskVersion.provenance.interactionMetrics。"""
+        import nibabel as nib
+        from fastapi.testclient import TestClient
+
+        from bodydonor.app import app
+
+        sid, storage, key, mask_key, settings = committed_series
+        img = nib.load(str(storage.root / key))
+        self._write_correction(storage, key, img)
+
+        # 模拟两步推理采集（与生产 nninteractive-correct 同一 tracker 入口）：
+        # draft1 = 16 体素(0:4,0:4,z=10)；draft2 = 再加 9 体素(4:7,0:3,z=10)
+        draft1 = np.zeros(img.shape, dtype=np.uint8)
+        draft1[0:4, 0:4, 10] = 1
+        draft2 = draft1.copy()
+        draft2[4:7, 0:3, 10] = 1
+        self._record_drafts_via_tracker(sid, [("label-1", draft1, 2), ("label-1", draft2, 3)])
+
+        with TestClient(app) as c:
+            r = c.post(
+                f"/review/{sid}/submit-nni",
+                json={
+                    "target_label": 1,
+                    "prompts": [
+                        {
+                            "type": "point",
+                            "x": 2,
+                            "y": 2,
+                            "z": 10,
+                            "include": True,
+                            "class": "label-1",
+                        }
+                    ],
+                    "acceptedClasses": ["label-1"],
+                    "sessionId": "sess-m6a",
+                    "baselineTeacherVersion": None,
+                },
+            )
+        assert r.status_code == 200
+        prov = r.json()["provenance"]
+        assert "interactionMetrics" in prov
+        m = prov["interactionMetrics"]["label-1"]
+        assert m["numPrompts"] == 3  # 最后一次全量提示数
+        assert len(m["perStepDeltaDice"]) == 1  # 2 步草稿 → 1 个 delta
+        # 草稿间 Dice(16 体素, 25 体素，交 16) = 32/41
+        assert m["perStepDeltaDice"][0] == pytest.approx(2 * 16 / 41, abs=1e-4)
+        # label-1 不在教师评估 117 类表（合成类名）→ counts.get=0 < 10 → 保守判 low
+        # （生产类名是语义名如 aorta，命中 117 类表按 cases 数判）
+        assert m["teacherReliability"] == "low"
+        assert m["abandonedAttempts"] == 0
+        # finalLocalDice：基线 label-1 100 体素 ∪ 修正 25 体素（无交叠）= 125 vs 基线 100
+        # Dice = 2*100/225 ≈ 0.8889（修正体素是超集关系下的新增）
+        assert m["finalLocalDice"] is not None
+
+        # DB roundtrip
+        from sqlalchemy import select
+
+        from bodydonor import db
+        from bodydonor.models import MaskVersion
+
+        engine = db._engine(settings.database.url)
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy.orm import Session
+
+                s = Session(conn)
+                mv = (
+                    s.execute(
+                        select(MaskVersion)
+                        .where(MaskVersion.series_id == sid)
+                        .order_by(MaskVersion.version.desc())
+                    )
+                    .scalars()
+                    .first()
+                )
+                s.close()
+        finally:
+            engine.dispose()
+        assert mv is not None and mv.source == "nninteractive_guided"
+        assert mv.provenance["interactionMetrics"]["label-1"]["numPrompts"] == 3
+        assert mv.provenance["sessionId"] == "sess-m6a"
+
+    def test_submit_nni_empty_metrics_without_tracker(self, committed_series) -> None:  # noqa: ANN001
+        """tracker 无数据 → interactionMetrics 空 dict（不造假）。"""
+        import nibabel as nib
+        from fastapi.testclient import TestClient
+
+        from bodydonor.app import app
+
+        sid, storage, key, mask_key, settings = committed_series
+        img = nib.load(str(storage.root / key))
+        self._write_correction(storage, key, img)
+        with TestClient(app) as c:
+            r = c.post(
+                f"/review/{sid}/submit-nni",
+                json={
+                    "target_label": 1,
+                    "prompts": [
+                        {
+                            "type": "point",
+                            "x": 2,
+                            "y": 2,
+                            "z": 10,
+                            "include": True,
+                            "class": "label-1",
+                        }
+                    ],
+                    "acceptedClasses": ["label-1"],
+                    "sessionId": "sess-empty",
+                },
+            )
+        assert r.status_code == 200
+        assert r.json()["provenance"]["interactionMetrics"] == {}
+
+    def test_abandon_draft_endpoint_increments(self, committed_series) -> None:  # noqa: ANN001
+        """放弃端点 → abandonedAttempts +1 → submit 后 provenance 反映。"""
+        import nibabel as nib
+        from fastapi.testclient import TestClient
+
+        from bodydonor.app import app
+
+        sid, storage, key, mask_key, settings = committed_series
+        img = nib.load(str(storage.root / key))
+        self._write_correction(storage, key, img)
+
+        draft1 = np.zeros(img.shape, dtype=np.uint8)
+        draft1[0:4, 0:4, 10] = 1
+        self._record_drafts_via_tracker(sid, [("label-1", draft1, 2)])
+
+        with TestClient(app) as c:
+            r0 = c.post(f"/review/{sid}/abandon-draft", json={"target_label": 1})
+            assert r0.status_code == 200
+            assert r0.json()["abandonedAttempts"] == 1
+            r0b = c.post(f"/review/{sid}/abandon-draft", json={"target_label": 1})
+            assert r0b.json()["abandonedAttempts"] == 2  # 重复放弃同样计数
+
+            # 放弃后重新修正再提交
+            draft2 = draft1.copy()
+            draft2[4:7, 0:3, 10] = 1
+            self._record_drafts_via_tracker(sid, [("label-1", draft2, 3)])
+            r = c.post(
+                f"/review/{sid}/submit-nni",
+                json={
+                    "target_label": 1,
+                    "prompts": [
+                        {
+                            "type": "point",
+                            "x": 2,
+                            "y": 2,
+                            "z": 10,
+                            "include": True,
+                            "class": "label-1",
+                        }
+                    ],
+                    "acceptedClasses": ["label-1"],
+                    "sessionId": "sess-abandon",
+                },
+            )
+        assert r.status_code == 200
+        m = r.json()["provenance"]["interactionMetrics"]["label-1"]
+        assert m["abandonedAttempts"] == 2  # 放弃历史保留（M5-b 越改越差 → 放弃）
+        assert m["numPrompts"] == 3  # 新序列提示数
+        assert m["perStepDeltaDice"] == []  # 新序列只有 1 步草稿，无 delta
+
+    def test_abandon_draft_bad_label_422(self, committed_series) -> None:  # noqa: ANN001
+        from fastapi.testclient import TestClient
+
+        from bodydonor.app import app
+
+        sid, *_ = committed_series
+        with TestClient(app) as c:
+            r = c.post(f"/review/{sid}/abandon-draft", json={"target_label": 0})
+            assert r.status_code == 422
+            r2 = c.post(f"/review/{sid}/abandon-draft", json={})
+            assert r2.status_code == 422

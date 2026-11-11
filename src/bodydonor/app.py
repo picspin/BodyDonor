@@ -1178,7 +1178,11 @@ def review_nninteractive_correct(series_id: str, body: dict[str, Any]) -> JSONRe
             with _nifti_from_bytes(corr_path.read_bytes()) as draft_img:
                 draft_arr = np.asarray(draft_img.dataobj)
             tracker = _interaction_tracker(series_id)
-            delta = tracker.record_draft(str(m6a_target_label), draft_arr, len(prompts))
+            # tracker key：语义类名（body.class_name，前端 m5ClassName(lv)），
+            # 缺省回退 f"label-{n}"——与 submit-nni 的 acceptedClasses[0] /
+            # abandon-draft 的 class_name 三者同一约定。
+            m6a_class_name = str(body.get("class_name") or f"label-{m6a_target_label}")
+            delta = tracker.record_draft(m6a_class_name, draft_arr, len(prompts))
             result.step_delta_dice = delta
         except (OSError, ValueError, KeyError) as e:
             result.step_delta_dice = None
@@ -1592,7 +1596,10 @@ def review_submit_nni(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
 def review_abandon_draft(series_id: str, body: dict[str, Any]) -> dict[str, Any]:
     """放弃本类草稿（M5-b「越改越差 → 放弃」）→ M6-a abandonedAttempts +1。
 
-    body: {target_label: int, reason?: str}
+    body: {target_label: int, class_name?: str}
+    - class_name：语义类名（前端 m5ClassName(lv)，与 submit-nni 的
+      acceptedClasses[0] 同一约定）；缺省时回退 f"label-{target_label}"，
+      nninteractive-correct 的 tracker key 也是语义名，三者一致。
     - tracker 草稿序列清空（回 teacher，与 DraftStore.discard 同语义）、
       放弃计数 +1；下次 submit 时 interactionMetrics.abandonedAttempts
       反映累计放弃次数。
@@ -1606,7 +1613,7 @@ def review_abandon_draft(series_id: str, body: dict[str, Any]) -> dict[str, Any]
     if target_label <= 0:
         raise HTTPException(status_code=422, detail="target_label 须 > 0")
     tracker = _interaction_tracker(series_id)
-    class_name = str(body.get("class_name") or target_label)
+    class_name = str(body.get("class_name") or f"label-{target_label}")
     attempts = tracker.record_abandoned(class_name)
     return {
         "series_id": series_id,
