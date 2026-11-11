@@ -19,7 +19,15 @@ from typing import Any
 
 from .config import Settings
 from .models import MaskVersion, QCReport, ReviewTask
-from .qc import QC_THRESHOLDS_PATH, load_qc_thresholds, run_qc, sample_review_tasks
+from .qc import (
+    QC_THRESHOLDS_PATH,
+    RULE_MULTI_TEACHER,
+    _rule_cfg,
+    load_qc_thresholds,
+    run_qc,
+    sample_review_tasks,
+)
+from .student_pred import StudentPredictionError, load_student_prediction
 
 
 class QCOrchestrationError(Exception):
@@ -45,12 +53,20 @@ def qc_series(
     series_id: str,
     settings: Settings,
     thresholds: dict[str, Any] | None = None,
+    case_id: str | None = None,
 ) -> dict[str, Any]:
     """对最新 MaskVersion 评分并落 QCReport（阶段 4）。
 
     返回 {qc_report_id, mask_version_id, overall_score, flags, passed}；
     评分本体 run_qc（qc.py）。重复评分幂等：同 MaskVersion 已有 QCReport 时
     生成新版本记录（版本历史保留，评审可 diff 阈值改动的影响）。
+
+    M6-e 接线（关闭 M4 §3.3 open deviation）：case_id 给出且 multi_teacher_
+    consistency enabled 时，经 load_student_prediction 读同 case 学生 mask，
+    传给 run_qc 让规则在生产路径真跑。学生预测缺失（StudentPredictionError，
+    生产 case 一律如此——预测产物只覆盖 hold-out 30 例）→ 显式 skipped
+    {"skipped": "no student mask"}，不进 flags、不计入 enabled 分母（M4 已定
+    语义不变）。case_id 不给 → 同样 skipped，不硬造映射。
     """
     import numpy as np
 
@@ -71,6 +87,19 @@ def qc_series(
         engine.dispose()
     if mv is None:
         raise QCOrchestrationError(f"unknown series or no mask version: {series_id}")
+
+    # ---- M6-e：学生 mask 可选路径（case_id 给出才查，缺失不造假）----
+    student_mask_arr = None
+    student_classes = None
+    student_source = "no case_id"
+    if case_id is not None and _rule_cfg(th, RULE_MULTI_TEACHER).get("enabled", False):
+        try:
+            pred = load_student_prediction(case_id, settings)
+            student_mask_arr = pred.mask_arr
+            student_classes = pred.classes
+            student_source = f"{pred.model_version_id}"
+        except StudentPredictionError as e:
+            student_source = f"unavailable: {e}"
 
     st = LocalFsStorage(settings.resolved_data_dir / "storage")
     # 原图与 mask 同目录：mask key 形如 case/series/mask_vN.nii.gz 或 case/series/mask.nii.gz
@@ -111,10 +140,11 @@ def qc_series(
         hu_values=hu_values,
         totalseg_classes=totalseg_classes or None,
         thresholds=th,
-        # student_mask_arr / student_classes 显式不传：单图 QC 的对象是教师
-        # mask，学生 mask 需 GPU 级重推理，此处无现成学生 mask 可比（不为传
-        # 而传造假 mask）——multi_teacher_consistency 在 rule_scores 里记
-        # skipped="no student mask"，不进 flags、不计入 enabled 分母
+        # M6-e 接线：case_id 给出且学生预测可取 → 真跑 multi_teacher_consistency；
+        # 缺失/无 case_id → run_qc 内显式 skipped="no student mask"（不进 flags、
+        # 不计入 enabled 分母，M4 已定语义）
+        student_mask_arr=student_mask_arr,
+        student_classes=student_classes,
     )
     # QCReport 落库（单一写入纪律）
     engine = db._engine(url)
@@ -142,6 +172,8 @@ def qc_series(
         engine.dispose()
     out = result.to_dict()
     out["qc_report_id"] = report_id
+    # M6-e：学生 mask 血缘（case 级，DecisionTrace 前置；not persisted to QCReport）
+    out["student_source"] = student_source
     return out
 
 
@@ -167,7 +199,10 @@ class TmpNifti:
 
 
 def _ensure_review_task(
-    session, mask_version_id: str, series_id: str, qc_report_id: str,  # noqa: ANN001
+    session,
+    mask_version_id: str,
+    series_id: str,
+    qc_report_id: str,  # noqa: ANN001
     group: str,  # noqa: ANN001 — flagged | clean
 ) -> str:
     """取或建 ReviewTask（幂等：同 mask_version 已有 pending 任务不重复建）。"""
@@ -215,7 +250,8 @@ def generate_review_tasks(
     if batch_size is not None:
         th = dict(th)
         th["review_sampling"] = {
-            **th.get("review_sampling", {}), "batch_size": batch_size,
+            **th.get("review_sampling", {}),
+            "batch_size": batch_size,
         }
 
     url = settings.database.url
@@ -227,43 +263,44 @@ def generate_review_tasks(
 
             s = Session(conn)
             # 每个 mask_version 最新 QCReport（按 created_at 降序第一条）
-            sub = (
-                select(
-                    QCReport.mask_version_id,
-                    QCReport.qc_report_id,
-                    QCReport.passed,
-                    QCReport.overall_score,
-                    func.row_number()
-                    .over(
-                        partition_by=QCReport.mask_version_id,
-                        order_by=QCReport.created_at.desc(),
-                    )
-                    .label("rn"),
-                ).subquery()
-            )
-            latest = (
-                s.execute(
-                    select(
-                        sub.c.mask_version_id, sub.c.qc_report_id,
-                        sub.c.passed, sub.c.overall_score,
-                    ).where(sub.c.rn == 1)
+            sub = select(
+                QCReport.mask_version_id,
+                QCReport.qc_report_id,
+                QCReport.passed,
+                QCReport.overall_score,
+                func.row_number()
+                .over(
+                    partition_by=QCReport.mask_version_id,
+                    order_by=QCReport.created_at.desc(),
                 )
-                .all()
-            )
+                .label("rn"),
+            ).subquery()
+            latest = s.execute(
+                select(
+                    sub.c.mask_version_id,
+                    sub.c.qc_report_id,
+                    sub.c.passed,
+                    sub.c.overall_score,
+                ).where(sub.c.rn == 1)
+            ).all()
             for r in latest:
-                rows.append({
-                    "mask_version_id": r.mask_version_id,
-                    "qc_report_id": r.qc_report_id,
-                    "passed": bool(r.passed),
-                    "overall_score": float(r.overall_score or 0.0),
-                })
+                rows.append(
+                    {
+                        "mask_version_id": r.mask_version_id,
+                        "qc_report_id": r.qc_report_id,
+                        "passed": bool(r.passed),
+                        "overall_score": float(r.overall_score or 0.0),
+                    }
+                )
             # mask_version -> series（ReviewTask 挂 Series 便于检索）
             mv_ids = [r["mask_version_id"] for r in rows]
             mv_map = {}
             if mv_ids:
-                for mv in s.execute(
-                    select(MaskVersion).where(MaskVersion.mask_version_id.in_(mv_ids))
-                ).scalars().all():
+                for mv in (
+                    s.execute(select(MaskVersion).where(MaskVersion.mask_version_id.in_(mv_ids)))
+                    .scalars()
+                    .all()
+                ):
                     mv_map[mv.mask_version_id] = mv
             s.close()
     finally:
@@ -284,16 +321,17 @@ def generate_review_tasks(
                         if mv is None:
                             continue
                         qc_id = next(
-                            r["qc_report_id"] for r in rows
-                            if r["mask_version_id"] == mv_id
+                            r["qc_report_id"] for r in rows if r["mask_version_id"] == mv_id
                         )
-                        rt_id = _ensure_review_task(
-                            s, mv_id, mv.series_id, qc_id, group
+                        rt_id = _ensure_review_task(s, mv_id, mv.series_id, qc_id, group)
+                        created.append(
+                            {
+                                "review_task_id": rt_id,
+                                "mask_version_id": mv_id,
+                                "series_id": mv.series_id,
+                                "group": group,
+                            }
                         )
-                        created.append({
-                            "review_task_id": rt_id, "mask_version_id": mv_id,
-                            "series_id": mv.series_id, "group": group,
-                        })
                 s.commit()
             except Exception:
                 s.rollback()
