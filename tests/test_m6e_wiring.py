@@ -266,7 +266,7 @@ def test_regression_419_pairs_flag_baseline() -> None:
         if rs["flagged"]:
             flagged.append(case_id)
 
-    assert len(flagged) == len(holdout) or abs(len(flagged) - len(baseline)) <= 1, (
+    assert abs(len(flagged) - len(baseline)) <= 1, (
         f"flag 数 {len(flagged)} 与离线基线 {len(baseline)} 偏差 > 1 例"
         f"（flagged: {sorted(flagged)}）"
     )
