@@ -248,15 +248,22 @@ def generate_review_tasks(
     batch_size: int | None = None,
     thresholds: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """阶段 5：QCReport 结果混合采样 -> ReviewTask 落库。
+    """阶段 5：QCReport 结果采样 -> ReviewTask 落库。
+
+    M6-c 起生产路径 = 过程风险驱动采样（sample_review_tasks_by_priority，
+    config sampling_priority.enabled）：按 priority 降序取前 batch_size 名。
+    旧 flagged 70% / clean 30% 路径（sample_review_tasks）保留不删——对照
+    路径与既有测试不静默改行为（切换决定见 M6-C-REPORT）。
 
     候选池 = 每个 Series 最新 MaskVersion 的最新 QCReport（无 QCReport 的
-    Series 跳过——先跑 qc_series）。flagged 70%（passed=false，overall_score
-    升序最差优先）/ clean 随机 30%（proposal §6 第 5 阶段硬约束）。
+    Series 跳过——先跑 qc_series）。priority 采样的数据源随候选池一并取：
+    QCReport.rule_scores（w3/w4）+ MaskVersion.provenance.interactionMetrics
+    （w1/w2）；缺的行按降级语义置零/记不可用（qc_priority.py docstring）。
     """
     from sqlalchemy import func, select
 
     from . import db
+    from .qc_priority import sample_review_tasks_by_priority
 
     th = thresholds or load_qc_thresholds()
     if batch_size is not None:
@@ -265,6 +272,8 @@ def generate_review_tasks(
             **th.get("review_sampling", {}),
             "batch_size": batch_size,
         }
+
+    use_priority = bool(th.get("sampling_priority", {}).get("enabled", False))
 
     url = settings.database.url
     engine = db._engine(url)
@@ -280,6 +289,7 @@ def generate_review_tasks(
                 QCReport.qc_report_id,
                 QCReport.passed,
                 QCReport.overall_score,
+                QCReport.rule_scores,
                 func.row_number()
                 .over(
                     partition_by=QCReport.mask_version_id,
@@ -293,6 +303,7 @@ def generate_review_tasks(
                     sub.c.qc_report_id,
                     sub.c.passed,
                     sub.c.overall_score,
+                    sub.c.rule_scores,
                 ).where(sub.c.rn == 1)
             ).all()
             for r in latest:
@@ -302,9 +313,11 @@ def generate_review_tasks(
                         "qc_report_id": r.qc_report_id,
                         "passed": bool(r.passed),
                         "overall_score": float(r.overall_score or 0.0),
+                        # M6-c：w3/w4 数据源（multi_teacher_consistency detail 逐类 Dice）
+                        "rule_scores": r.rule_scores if isinstance(r.rule_scores, dict) else {},
                     }
                 )
-            # mask_version -> series（ReviewTask 挂 Series 便于检索）
+            # mask_version -> series（ReviewTask 挂 Series 便于检索）+ interactionMetrics
             mv_ids = [r["mask_version_id"] for r in rows]
             mv_map = {}
             if mv_ids:
@@ -314,11 +327,20 @@ def generate_review_tasks(
                     .all()
                 ):
                     mv_map[mv.mask_version_id] = mv
+                    prov = mv.provenance if isinstance(mv.provenance, dict) else {}
+                    im = prov.get("interactionMetrics")
+                    for row in rows:
+                        if row["mask_version_id"] == mv.mask_version_id:
+                            # M6-c：w1/w2 数据源（per-class 过程指标，纯自动 case 为空）
+                            row["interaction_metrics"] = im if isinstance(im, dict) else {}
             s.close()
     finally:
         engine.dispose()
 
-    plan = sample_review_tasks(rows, thresholds=th)
+    if use_priority:
+        plan = sample_review_tasks_by_priority(rows, thresholds=th)
+    else:
+        plan = sample_review_tasks(rows, thresholds=th)
     created: list[dict[str, Any]] = []
     engine = db._engine(url)
     try:
@@ -352,7 +374,15 @@ def generate_review_tasks(
                 s.close()
     finally:
         engine.dispose()
-    return {"plan": plan.to_dict(), "tasks": created}
+    out = {"plan": plan.to_dict(), "tasks": created}
+    if use_priority:
+        # M6-c：priority 采样的全量排名与各分量可用性（DecisionTrace 前置，
+        # M6-f 才落实体；本轮只在返回值与报告里记）。
+        ranked = getattr(plan, "ranked", None)
+        if ranked is not None:
+            out["ranked"] = [row.to_dict() for row in ranked]
+            out["component_availability"] = dict(getattr(plan, "component_availability", {}))
+    return out
 
 
 __all__ = [

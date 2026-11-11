@@ -142,11 +142,40 @@ rules:
       - [semispinalis_left, semispinalis_right]
 
 # ---- 抽检混合采样（proposal §6 第 5 阶段：flagged 70% / clean 随机 30%）----
+# M6-c 起 generate_review_tasks 生产路径改用过程风险驱动采样
+# （sample_review_tasks_by_priority，见 sampling_priority 节）；本节保留：
+# batch_size 供新路径共用，70/30 旧路径 sample_review_tasks 不删（对照保留）。
 review_sampling:
   flagged_ratio: 0.70
   clean_ratio: 0.30
   batch_size: 10        # 每轮生成的 ReviewTask 数（0 = 全部 flagged + 同比例 clean）
   min_clean_pool: 1     # clean 候选不足时仍生成 1 条（确认「没 flag 的真好」）
+
+# ---- 过程风险驱动抽检采样（M6-c：priority 排序替代 flagged 70%/clean 30%）----
+# priority = w1*convergence + w2*abandonment + w3*teacher_student_disagreement
+#            + w4*low_frequency_class_presence（各分量 [0,1]，定义见
+#            src/bodydonor/qc_priority.py docstring）。
+# 权重是冷启动起点，**未经校准**（等权 1 只当起点）：待 M6-f DecisionTrace
+# 决策回流后按「抽检命中率」重算（改权重 = 本节 config diff，不散在代码里）。
+# 分量阈值 N_max/K_max 复用 rules.interaction_convergence 的
+# n_max_prompts / k_max_steps（不在此重复定义）；低频名单复用
+# interaction_metrics.load_teacher_eval 口径（eval/holdout_results.json
+# 117 类 per_class_cases，<10 cases 为低频；prostate 显式高风险）。
+# 降级语义：multi_teacher skipped / 无学生 mask → w3 置零（只 w1/w2/w4
+# 排序，plan 里记 w3_available=False）；interactionMetrics 缺失 → w1=w2=0
+# （无交互即无过程信号，不造假）。priority 只决定抽检顺序，不改 QC
+# pass/fail（不碰 hard_flag_rules）。
+sampling_priority:
+  enabled: true
+  source: cold_start
+  calibrated_on: 0
+  calibrated_at: ""
+  note: "权重是冷启动起点，未经校准：等权 w1=w2=w3=w4=1（2026-11-12）。M4 已证明冷启动 QC flag 区分度低（419 对均值聚合 flag 5/30），flagged/clean 二分在 flag 少时退化成随机抽检；过程风险连续分数按 priority 降序取前 batch_size 名建 ReviewTask。w3 聚合方式 = 最差类（1 - min 逐类 Dice，非 mean）：mean 会稀释单类整类漏检（实测 s0495 prostate 整类漏检 min 0.0 而 mean 0.8771，mean 聚合排不进前 20%）；冷启动抽检目的是找出最坏的 case 交人审，宁过审不漏审。M6-f 决策回流后重算权重（calibrated_on 更新）。"
+  weights:
+    w1: 1.0   # convergence：interactionMetrics 收敛信号（普通类 max(numPrompts/N_max, convergenceSteps/K_max)，高风险类只 numPrompts）
+    w2: 1.0   # abandonment：任一类 abandonedAttempts>=1 则 1（M6-b interaction_abandonment 同判据）
+    w3: 1.0   # teacher_student_disagreement：最差类 1 - min(per_class_dice)（multi_teacher_consistency detail）
+    w4: 1.0   # low_frequency_class_presence：参评类中 39/117 低频类（+prostate）占比
 
 # ---- 总体分数与过滤 ----
 overall:
