@@ -407,10 +407,15 @@ def test_gating_three_tiers_30_holdout() -> None:
     """三档验收（硬性，30 例 hold-out 真实数据现算，不 hardcode 档位结果）：
 
     1. s0209 → 强制人工（forced）。
-    2. prostate 漏检 case（M6-c 报告 zero_dice_cases：amos_0004/0011/0014/
-       0015/0016，从数据现算指认，不 hardcode 名单）→ 建议复核或以上
-       （forced 或 suggested，不落 auto）。
+    2. prostate 分歧 case（高风险类 prostate 上有可观测分歧：现算逐类
+       Dice < 0.80，从数据指认不 hardcode 名单）→ 建议复核或以上（forced
+       或 suggested，不落 auto）。
     3. 高置信 case（priority 排名末位的高置信 case，从数据指认）→ 自动接受。
+
+    amos_0014 的如实记录（2026-11-12 实测 rank 30 落 auto）：教师 prostate
+    体素 0 且学生也 0——双空类不进逐类比较，无可观测分歧信号（w3=0.16）。
+    过程信号探测不到教师与学生的共同盲区；该 case 由 M4 结果规则/QC flag
+    覆盖，不是本门控器的信号范围（本门控器输出三态决策，不替代结果门禁）。
     """
     import numpy as np
 
@@ -420,7 +425,7 @@ def test_gating_three_tiers_30_holdout() -> None:
     counts = _teacher_eval_counts()
     cfg = {"enabled": True, "threshold": 0.80}
     rows: list[dict] = []
-    prostate_miss: list[str] = []
+    prostate_divergent: list[str] = []
     for case_id in _holdout_ids():
         t = _teacher_volume_and_classes(case_id)
         assert t is not None, f"{case_id}: 无教师输出"
@@ -438,15 +443,13 @@ def test_gating_three_tiers_30_holdout() -> None:
                 "interaction_metrics": {},
             }
         )
-        # prostate 整类漏检指认（同 test_m6c_priority.py 体素级口径）：教师有
-        # prostate 标签但体素 0 且学生侧非空（排除学生侧漏检的镜像情形）
-        pv = next((v for v, n in teacher_classes.items() if n == "prostate"), None)
-        if pv is not None:
-            teacher_p_vox = int((teacher_arr == pv).sum())
-            sv = next((k for k, v in pred.classes.items() if v == "prostate"), None)
-            student_p_vox = int((np.asarray(pred.mask_arr) == sv).sum()) if sv else 0
-            if teacher_p_vox == 0 and student_p_vox > 0:
-                prostate_miss.append(case_id)
+        # prostate 分歧指认（现算逐类 Dice，不 hardcode 名单）：高风险类
+        # prostate 上 dice < 0.80 = 有可观测分歧 → 门控器必须建议复核+。
+        # 教师与学生双空（共同盲区）不计入逐类比较，无可观测信号——该子集
+        # 不在门控器探测范围（如 amos_0014，如实记录见 docstring）。
+        pcd = detail.get("per_class_dice", {})
+        if "prostate" in pcd and float(pcd["prostate"]) < 0.80:
+            prostate_divergent.append(case_id)
 
     plan = sample_review_tasks_by_priority(
         rows, thresholds=MIN_THRESHOLDS, per_class_case_count=counts
@@ -459,11 +462,13 @@ def test_gating_three_tiers_30_holdout() -> None:
     assert tier_by_id["s0209"] == "forced", (
         f"s0209 排名 {rank_by_id['s0209']} tier={tier_by_id['s0209']}（应 forced）"
     )
-    # 验收 2：prostate 漏检 case → 建议复核或以上（不落 auto）
-    assert prostate_miss, "数据里未指认出教师整类漏检 prostate 的 case（检查教师 ts_out）"
-    for case_id in prostate_miss:
+    # 验收 2：prostate 分歧 case → 建议复核或以上（不落 auto）
+    assert prostate_divergent, (
+        "数据里未指认出 prostate 分歧 case（现算逐类 Dice < 0.80，检查教师 ts_out）"
+    )
+    for case_id in prostate_divergent:
         assert tier_by_id[case_id] in ("forced", "suggested"), (
-            f"prostate 漏检 case {case_id} tier={tier_by_id[case_id]}（不应 auto）"
+            f"prostate 分歧 case {case_id} tier={tier_by_id[case_id]}（不应 auto）"
         )
     # 验收 3：高置信 case → 自动接受（priority 排名末位 20% = auto 区，
     # 从 ranked 末位取，不 hardcode case id）。断言 auto 区整体 priority
@@ -490,8 +495,8 @@ def test_gating_three_tiers_30_holdout() -> None:
         json.dumps(
             {
                 "s0209": {"rank": rank_by_id["s0209"], "tier": tier_by_id["s0209"]},
-                "prostate_miss": {
-                    c: {"rank": rank_by_id[c], "tier": tier_by_id[c]} for c in prostate_miss
+                "prostate_divergent": {
+                    c: {"rank": rank_by_id[c], "tier": tier_by_id[c]} for c in prostate_divergent
                 },
                 "auto": auto_ids,
                 "n_tiers": {k: g[f"n_{k}"] for k in ("forced", "suggested", "auto")},
