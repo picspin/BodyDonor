@@ -318,7 +318,9 @@ def generate_review_tasks(
                     }
                 )
             # mask_version -> series（ReviewTask 挂 Series 便于检索）+ interactionMetrics
-            mv_ids = [r["mask_version_id"] for r in rows]
+            # row_by_mv 索引：回填 interaction_metrics 与 qc_id 均 O(1)（大库不 O(n²)）
+            row_by_mv = {r["mask_version_id"]: r for r in rows}
+            mv_ids = list(row_by_mv)
             mv_map = {}
             if mv_ids:
                 for mv in (
@@ -329,10 +331,10 @@ def generate_review_tasks(
                     mv_map[mv.mask_version_id] = mv
                     prov = mv.provenance if isinstance(mv.provenance, dict) else {}
                     im = prov.get("interactionMetrics")
-                    for row in rows:
-                        if row["mask_version_id"] == mv.mask_version_id:
-                            # M6-c：w1/w2 数据源（per-class 过程指标，纯自动 case 为空）
-                            row["interaction_metrics"] = im if isinstance(im, dict) else {}
+                    # M6-c：w1/w2 数据源（per-class 过程指标，纯自动 case 为空）
+                    row_by_mv[mv.mask_version_id]["interaction_metrics"] = (
+                        im if isinstance(im, dict) else {}
+                    )
             s.close()
     finally:
         engine.dispose()
@@ -354,9 +356,7 @@ def generate_review_tasks(
                         mv = mv_map.get(mv_id)
                         if mv is None:
                             continue
-                        qc_id = next(
-                            r["qc_report_id"] for r in rows if r["mask_version_id"] == mv_id
-                        )
+                        qc_id = row_by_mv[mv_id]["qc_report_id"]
                         rt_id = _ensure_review_task(s, mv_id, mv.series_id, qc_id, group)
                         created.append(
                             {

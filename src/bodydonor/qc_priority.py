@@ -36,9 +36,7 @@ batch_size 名建 ReviewTask：
   不在名单内）。定义：case 的参评类中低频类占比。参评类集 = w3 的
   per_class_dice 类集（教师/学生真实可比的类，最能代表该 case 实际涉及
   的器官）；w3 不可用时回退 interactionMetrics 的类键并集；两者都无则
-  w4 置零并记录。占比口径 min(低频类数/参评类数 / low_freq_ratio_max, 1)？
-
-  不做封顶：占比本身已在 [0,1]（低频类数 <= 参评类数），直接用。
+  w4 置零并记录。不做封顶：占比本身已在 [0,1]（低频类数 <= 参评类数），直接用。
 
 权重：初期等权 w1=w2=w3=w4=1，进 config/qc_thresholds.yaml 新增
 sampling_priority 节（阈值集中单文件原则不变，改权重 = config diff），
@@ -49,7 +47,7 @@ sampling_priority 节（阈值集中单文件原则不变，改权重 = config d
 - multi_teacher skipped / 无学生 mask → w3=0 并记录 w3_available=False。
 - 三个来源都缺 → priority=0（排最后，不是排最前——无信号不冒充高风险）。
 - DecisionTrace 实体是 M6-f：本轮不造实体，可用性记录在返回值
-  （SamplingPlan.per_case_components / component_availability）与报告里。
+  （ranked 行级 availability / component_availability 汇总）与报告里。
 
 铁律：
 - priority 只决定抽检顺序，不改 QC pass/fail（不碰 hard_flag_rules、
@@ -146,7 +144,10 @@ def component_convergence(
         else:
             steps = entry.get("convergenceSteps")
             steps = steps if isinstance(steps, int) and not isinstance(steps, bool) else 0
-            per_class = max(min(num_prompts / n_max, 1.0), min(steps / k_max, 1.0))
+            # n_max/k_max <=0（config 异常）→ 该项饱和到 1.0（不抛 ZeroDivisionError）
+            prompts_term = min(num_prompts / n_max, 1.0) if n_max > 0 else 1.0
+            steps_term = min(steps / k_max, 1.0) if k_max > 0 else 1.0
+            per_class = max(prompts_term, steps_term)
         worst = max(worst, per_class)
     return worst
 
@@ -180,10 +181,11 @@ def component_disagreement(
     mean 0.8771），最差类聚合把整类漏检顶到 1.0（理由见模块 docstring）。
     返回 (分量值, 逐类 dice dict)——逐类 dice 供 w4 参评类集使用。
     """
-    rs = (rule_scores or {}).get(RULE_MULTI_TEACHER)
+    rs = (rule_scores or {}).get(RULE_MULTI_TEACHER) if isinstance(rule_scores, dict) else None
     if not isinstance(rs, dict) or not isinstance(rs.get("per_class_dice"), dict):
         return None, {}
-    per_class = {k: float(v) for k, v in rs["per_class_dice"].items()}
+    numeric = (int, float)
+    per_class = {k: float(v) for k, v in rs["per_class_dice"].items() if isinstance(v, numeric)}
     if not per_class:
         return None, {}
     return 1.0 - min(per_class.values()), per_class
