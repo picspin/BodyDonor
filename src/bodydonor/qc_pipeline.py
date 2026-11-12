@@ -189,7 +189,6 @@ def qc_series(
                         interaction_metrics=interaction_metrics,
                         student_source=student_source,
                         thresholds=th,
-                        config_version=report.config_version or "",
                     )
                 )
                 s.commit()

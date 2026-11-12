@@ -132,7 +132,6 @@ def record_qc_trace(
     interaction_metrics: dict[str, Any] | None,
     student_source: str | None,
     thresholds: dict[str, Any],
-    config_version: str,
 ) -> DecisionTrace:
     """构造 qc_scoring 阶段 trace（qc_series 产 QCReport 的同一事务里 add）。
 
@@ -156,7 +155,6 @@ def record_qc_trace(
         gate_decision=None,
         human_outcome=None,  # 尚无人工决策，不造假
         calibration=snapshot_calibration(thresholds),
-        config_version=config_version,
     )
 
 
