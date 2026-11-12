@@ -592,21 +592,21 @@ def qc_review_task_decision(
                 if notes:
                     rt.notes = (rt.notes or "") + (f" | {notes}" if rt.notes else notes)
                 # M6-f：锚定该任务的 gate_decision trace 补填 human_outcome
-                #（同一事务；已补填的不覆盖，update_human_outcome 幂等）
-                trace = (
+                #（同一事务；deep-review W 修正：重跑 generate_review_tasks
+                # 会在同一 review_task_id 下累积多条 gate trace——全部补填，
+                # 不只 timestamp 最新一条，否则更早的行永久 null，M7 校准
+                # 误读为「无决策」。已补填的不覆盖，update_human_outcome 幂等）
+                traces = (
                     s.execute(
-                        select(DecisionTrace)
-                        .where(
+                        select(DecisionTrace).where(
                             DecisionTrace.review_task_id == rt.review_task_id,
                             DecisionTrace.pipeline_stage == "gate_decision",
                         )
-                        .order_by(DecisionTrace.timestamp.desc())
-                        .limit(1)
                     )
                     .scalars()
-                    .first()
+                    .all()
                 )
-                if trace is not None:
+                for trace in traces:
                     update_human_outcome(trace, decision, notes=notes or None)
                 s.commit()
             finally:

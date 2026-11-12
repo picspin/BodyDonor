@@ -234,7 +234,9 @@ class DecisionTrace(Base):
         Index("ix_decision_traces_stage", "pipeline_stage"),
     )
 
-    trace_id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("dt"))
+    trace_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=lambda: new_id("dt")
+    )
     case_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # qc 阶段可未给出
     series_id: Mapped[str] = mapped_column(String(64), nullable=False)
     mask_version_id: Mapped[str] = mapped_column(String(64), nullable=False)

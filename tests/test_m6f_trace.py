@@ -475,16 +475,38 @@ def test_generate_review_tasks_old_path_writes_traces(tmp_path: Path) -> None:
     assert gate[0].gate_decision["tier"] == "flagged"  # group 语义，不冒充 forced/auto
     assert gate[0].rules_triggered == ["volume_prior"]
     assert "priority" not in gate[0].process_signals  # 无 priority 路径不硬造分量
+    # deep-review W 修正：旧路径 flagged 也建 ReviewTask → trace 带任务 id
+    #（决策回流按 review_task_id 锚定；不写 id 会让 human_outcome 永久 null）
+    assert gate[0].gate_decision["review_task_generated"] is True
+    assert gate[0].review_task_id
+    assert gate[0].gate_decision["review_task_id"] == gate[0].review_task_id
+    assert gate[0].gate_decision["sample_group"] == "flagged"
 
 
 def test_decision_endpoint_backfills_human_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """决策回流端点：ReviewTask 状态写库同一事务补填 trace.human_outcome。"""
+    """决策回流端点：ReviewTask 状态写库同一事务补填 trace.human_outcome。
+
+    deep-review Blocker 防回归：回流端点 record_review_decision 落盘
+    config/qc_thresholds.yaml（版本控制内）——测试必须 monkeypatch
+    QC_THRESHOLDS_PATH 到临时副本（不污染真配置；断言前后 sha256 不变）。
+    """
     from fastapi.testclient import TestClient
 
+    import bodydonor.qc_reflux as reflux_mod
     from bodydonor import app as app_module
     from bodydonor.app import app
+    from bodydonor.qc import QC_THRESHOLDS_PATH, load_qc_thresholds
+
+    # 阈值文件隔离：临时副本（yaml.safe_dump 不写回真配置）
+    th_backup = load_qc_thresholds(QC_THRESHOLDS_PATH)
+    tmp_th = tmp_path / "qc_thresholds_test.yaml"
+    import yaml as _yaml
+
+    _yaml.safe_dump(th_backup, tmp_th.open("w"), allow_unicode=True, sort_keys=False)
+    monkeypatch.setattr(reflux_mod, "QC_THRESHOLDS_PATH", tmp_th)
+    before = tmp_th.read_bytes()
 
     s = _make_settings(tmp_path)
     # 审阅端点用 app.py 全局 settings.database.url——统一指向临时库（同一库）
@@ -533,6 +555,10 @@ def test_decision_endpoint_backfills_human_outcome(
         )
     gate = [t for t in _traces(s) if t.pipeline_stage == "gate_decision"]
     assert gate[0].human_outcome["decision"] == "accepted"  # 历史不改写
+    # deep-review Blocker 防回归：回流只写临时副本（真配置前后 sha256 一致——
+    # 回流计数进临时 yaml，版本控制内 qc_thresholds.yaml 零改动）
+    assert tmp_th.read_bytes() != before  # 回流累计写进的是临时副本
+    assert load_qc_thresholds(QC_THRESHOLDS_PATH) == th_backup  # 真配置未被改写
 
 
 # ---------------------------------------------------------------------------
@@ -633,12 +659,22 @@ def test_acceptance_a_trace_back_full_chain(
 ) -> None:
     """验收 a（硬性）：任一 case（具体示例）从 trace 单独回溯决策链——
     inputs → process signals → triggered rules → gate tier → human outcome，
-    不需要回到中间变量。"""
+    不需要回到中间变量。回流端点同样 monkeypatch QC_THRESHOLDS_PATH
+    （Blocker 防回归：不污染版本控制内 qc_thresholds.yaml）。"""
     from fastapi.testclient import TestClient
 
+    import bodydonor.qc_reflux as reflux_mod
     from bodydonor import app as app_module
     from bodydonor import db
     from bodydonor.app import app
+    from bodydonor.qc import QC_THRESHOLDS_PATH, load_qc_thresholds
+
+    th_backup = load_qc_thresholds(QC_THRESHOLDS_PATH)
+    tmp_th = tmp_path / "qc_thresholds_test.yaml"
+    import yaml as _yaml
+
+    _yaml.safe_dump(th_backup, tmp_th.open("w"), allow_unicode=True, sort_keys=False)
+    monkeypatch.setattr(reflux_mod, "QC_THRESHOLDS_PATH", tmp_th)
 
     arr = np.zeros((4, 4, 4), dtype=np.uint8)
     arr[1:3, 1:3, 1:3] = 3
@@ -897,3 +933,136 @@ def test_real_holdout_trace_back_30_cases() -> None:
             indent=1,
         ),
     )
+
+
+def test_old_path_decision_backfills_human_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """deep-review W 失败测试先行（旧 70/30 路径）：flagged ReviewTask 人工
+    决策后 gate trace 的 human_outcome 补填（旧实现 rt_id=None → 回流端点
+    找不到 trace → human_outcome 永久 null）。"""
+    import json as _json
+
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import Session
+
+    import bodydonor.qc_reflux as reflux_mod
+    from bodydonor import app as app_module
+    from bodydonor import db
+    from bodydonor.app import app
+    from bodydonor.models import Case, MaskVersion, QCReport, Series
+    from bodydonor.qc import QC_THRESHOLDS_PATH, load_qc_thresholds
+    from bodydonor.qc_pipeline import generate_review_tasks
+
+    # 阈值文件隔离（Blocker 防回归同款）
+    th_backup = load_qc_thresholds(QC_THRESHOLDS_PATH)
+    tmp_th = tmp_path / "qc_thresholds_test.yaml"
+    import yaml as _yaml
+
+    _yaml.safe_dump(th_backup, tmp_th.open("w"), allow_unicode=True, sort_keys=False)
+    monkeypatch.setattr(reflux_mod, "QC_THRESHOLDS_PATH", tmp_th)
+
+    th = _json.loads(_json.dumps(MIN_THRESHOLDS))
+    th["sampling_priority"]["enabled"] = False
+    th["review_sampling"] = {"batch_size": 2, "flagged_ratio": 0.70, "min_clean_pool": 1}
+    s = _make_settings(tmp_path)
+    monkeypatch.setattr(
+        app_module.settings,
+        "database",
+        type(app_module.settings.database)(url=s.database.url),
+    )
+    engine = db._engine(s.database.url)
+    try:
+        with engine.connect() as c:
+            sess = Session(c)
+            sess.add(Case(case_id="case-0"))
+            sess.add(Series(series_id="series-0", case_id="case-0"))
+            sess.add(
+                MaskVersion(
+                    mask_version_id="mv-0",
+                    series_id="series-0",
+                    source="teacher",
+                    storage_key="x/0",
+                )
+            )
+            sess.add(
+                QCReport(
+                    qc_report_id="qc-0",
+                    mask_version_id="mv-0",
+                    overall_score=0.0,
+                    flags=["volume_prior"],
+                    rule_scores={},
+                    passed=False,
+                )
+            )
+            sess.commit()
+            sess.close()
+    finally:
+        engine.dispose()
+    generate_review_tasks(s, thresholds=th)
+    gate = [t for t in _traces(s) if t.pipeline_stage == "gate_decision"]
+    assert len(gate) == 1
+    rt_id = gate[0].review_task_id
+    assert rt_id, "flagged trace 必须带 ReviewTask id（回流锚点）"
+
+    with TestClient(app) as client:
+        r = client.post(
+            f"/qc/review-tasks/{rt_id}/decision", params={"decision": "accepted"}
+        )
+    assert r.status_code == 200, r.text
+    gate = [t for t in _traces(s) if t.pipeline_stage == "gate_decision"]
+    assert gate[0].human_outcome is not None
+    assert gate[0].human_outcome["decision"] == "accepted"
+
+
+def test_repeated_gate_runs_backfill_all_traces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """deep-review W 失败测试先行（重跑累积）：同一 review_task_id 下多条
+    gate_decision trace 全部补填（旧实现只补 timestamp 最新一条，更早的
+    行 human_outcome 永久 null，M7 校准会误读为「无决策」）。"""
+    from fastapi.testclient import TestClient
+
+    import bodydonor.qc_reflux as reflux_mod
+    from bodydonor import app as app_module
+    from bodydonor.app import app
+    from bodydonor.qc import QC_THRESHOLDS_PATH, load_qc_thresholds
+    from bodydonor.qc_pipeline import generate_review_tasks, qc_series
+
+    th_backup = load_qc_thresholds(QC_THRESHOLDS_PATH)
+    tmp_th = tmp_path / "qc_thresholds_test.yaml"
+    import yaml as _yaml
+
+    _yaml.safe_dump(th_backup, tmp_th.open("w"), allow_unicode=True, sort_keys=True)
+    monkeypatch.setattr(reflux_mod, "QC_THRESHOLDS_PATH", tmp_th)
+
+    s = _make_settings(tmp_path)
+    monkeypatch.setattr(
+        app_module.settings,
+        "database",
+        type(app_module.settings.database)(url=s.database.url),
+    )
+    arr = np.zeros((4, 4, 4), dtype=np.uint8)
+    arr[1:3, 1:3, 1:3] = 3
+    _seed_mask_payload(tmp_path, s, arr)
+    qc_series("series-wired", s, thresholds=MIN_THRESHOLDS, case_id="case-wired")
+    # 重跑两轮 generate_review_tasks（第二轮任务幂等复用，不再新建）
+    generate_review_tasks(s, thresholds=MIN_THRESHOLDS)
+    generate_review_tasks(s, thresholds=MIN_THRESHOLDS)
+    gate = [t for t in _traces(s) if t.pipeline_stage == "gate_decision"]
+    assert len(gate) == 2  # 重跑累积两条 gate_decision trace
+    assert all(t.review_task_id for t in gate)
+    rt_id = gate[0].review_task_id
+    assert rt_id
+
+    with TestClient(app) as client:
+        r = client.post(
+            f"/qc/review-tasks/{rt_id}/decision", params={"decision": "corrected"}
+        )
+    assert r.status_code == 200, r.text
+    gate = [t for t in _traces(s) if t.pipeline_stage == "gate_decision"]
+    # 全部补填（不只 timestamp 最新一条）
+    assert all(t.human_outcome is not None for t in gate), (
+        [t.human_outcome for t in gate]
+    )
+    assert all(t.human_outcome["decision"] == "corrected" for t in gate)

@@ -444,21 +444,22 @@ def generate_review_tasks(
                     rs = r["rule_scores"] if isinstance(r["rule_scores"], dict) else {}
                     if use_priority:
                         tier = gating_tier_by_mv.get(mv_id, "auto")
-                        rt_entry = next(
-                            (t for t in created if t["mask_version_id"] == mv_id), None
-                        )
-                        rt_id = rt_entry["review_task_id"] if rt_entry else None
-                        group_out = rt_entry["group"] if rt_entry else None
                     else:
-                        tier = group_out = next(
-                            (
-                                g
-                                for g, ids2 in tier_groups
-                                if mv_id in (ids2 or [])
-                            ),
+                        # 旧 70/30 路径：tier=group 语义（flagged/clean，不冒充三档）
+                        tier = next(
+                            (g for g, ids2 in tier_groups if mv_id in (ids2 or [])),
                             None,
                         )
-                        rt_id = None
+                    # deep-review W 修正：rt_id/group 两条路径统一从 created
+                    # 回查（_ensure_review_task 幂等返回既有 id 时 created 仍
+                    # append 该条）——旧路径 flagged/clean 也建 ReviewTask，
+                    # trace 不写 review_task_id 会让决策回流找不到 trace，
+                    # human_outcome 永久 null（违背 null=尚无人工决策语义）。
+                    rt_entry = next(
+                        (t for t in created if t["mask_version_id"] == mv_id), None
+                    )
+                    rt_id = rt_entry["review_task_id"] if rt_entry else None
+                    group_out = rt_entry["group"] if rt_entry else None
                     s.add(
                         record_gate_trace(
                             case_id=case_by_series.get(mv.series_id),
