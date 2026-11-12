@@ -129,7 +129,25 @@ amos_0004（M6-c 排序验收同一 case，prostate 整类分歧逐类 min 0.0�
 | 验收（2） | b：rules_triggered vs flags 逐项；a：case-wired 全链回溯 |
 | 真实（1） | 30 例 hold-out trace-back（951s 单跑） |
 
-pytest：**16 passed**（test_m6f_trace.py 除真实 hold-out 例 15 passed ~4s；真实例 951s 单跑 1 passed）。全套结果见 §9 收尾数据。m5e 的 alembic head 断言更新为 a4f9e2c81d03（M6-f 链尾）。
+pytest：**16 passed**（test_m6f_trace.py 除真实 hold-out 例 15 passed ~4s；真实例 951s 单跑 1 passed）。全套结果见 §10 收尾数据。m5e 的 alembic head 断言更新为 a4f9e2c81d03（M6-f 链尾）。
+
+### 全套收尾（分批，每文件至少一次；单次全量 run 超环境后台时限 kill，无假合计）
+
+| 批次（文件） | 结果 |
+|---|---|
+| test_qc/test_db/test_storage_config/test_qc_api/test_qc_interaction | 94 passed 3.5s |
+| test_m6f_trace/test_student_pred/test_sqlite_jobs_queue/test_zip_bomb/test_zip_streaming/test_ts_runner/test_tui_smoke | 58 passed 571.7s（trace 真实例 951s 单跑 1 passed 另计） |
+| test_review_api/test_review_session/test_ontology/test_ontology_nl/test_license_whitelist/test_m5e/test_agent_context_phi | 127 passed 5.1s |
+| test_m6e_wiring | 4 passed |
+| test_holdout/test_evaluate_holdout/test_evaluate_student_holdout/test_gpu_lock/test_gpu_probe/test_segmentation/test_source_instances/test_selector_guard/test_interaction_metrics | 125 passed 97.3s |
+| test_distill_license_gate | 34 passed |
+| test_m6c_priority | 15 passed |
+| test_m6d_gating | 13 passed |
+| test_api/test_api_ingest/test_api_ontology/test_ingest/test_deid_usage/test_export_seg/test_nifti_geom_strict/test_ocr_precision/test_burned_ocr | 92 passed 12.0s |
+| test_qc_interaction_e2e | 7 passed 55.3s |
+| test_nninteractive_backend | 30 passed 147.4s |
+
+分批合计 **599 passed / 0 failed / 0 error**（45 文件每文件至少一次；batched——分批计数如实列上表，不并入单次 run 假合计）。ruff（src tests scripts eval alembic config）：**All checks passed**。
 
 ## 8. 降级语义（不造假）
 
@@ -163,7 +181,7 @@ pytest：**16 passed**（test_m6f_trace.py 除真实 hold-out 例 15 passed ~4s�
 
 **Nit（4 件；1 件已修，3 件定性）**
 
-9. **series_id[:60] 截断（已修）。** 列宽 String(64) 足够，截断使 trace 与 Series 表关联静默失配。修复：`record_qc_trace`/`record_gate_trace` 不再截断（62e9e82 一并入库——与 qc_pipeline 既有 `series_id[:60]` ReviewTask 列宽纪律区分，trace 列 String(64) 存完整值）。
+9. **series_id[:60] 截断（已修，e6a8868）。** 列宽 String(64) 足够，截断使 trace 与 Series 表关联静默失配。修复：`record_qc_trace`/`record_gate_trace` 不再截断——trace 列 String(64) 存完整值（与 qc_pipeline 既有 ReviewTask.series_id 列宽 String(60) 纪律区分：那是 ReviewTask 自己的列宽限制，trace 列更宽）。
 10. **YAML 显式 null 使快照抛 TypeError（读码核实，定性不修）。** `float(None)` 会回滚 qc_scoring 事务——与 qc_priority `_load_priority_cfg` 同样的 config 异常行为（fail-loud 语义一致），不是 trace 引入的新类别。
 11. **分档断言可能空转 / 单 series 可能静默 skip（读码核实，定性）。** 接线测试的 tier 循环在空列表时不断言——但 `assert len(gate)==3` 已锚定行数；单 series skip 场景本机实测未触发（case-wired 落 forced，15 passed 无 skip）。
 12. **`plan.ranked`/`component_availability` 的 type: ignore（读码核实，定性不修）。** SamplingPlan 新增属性是 M6-c 既有模式（`plan.ranked = rows  # type: ignore[attr-defined]`），补类型声明超出 M6-f 范围（不碰冻结的 qc_priority 逻辑）。
@@ -177,8 +195,10 @@ pytest：**16 passed**（test_m6f_trace.py 除真实 hold-out 例 15 passed ~4s�
 | d9c09ea | feat(m6f): DecisionTrace 实体 + trace 记录接线（qc_scoring/gate_decision 两阶段） |
 | 696c14c | test(m6f): DecisionTrace 单测 14 条 |
 | 62e9e82 | fix(m6f): deep-reviewer 修正——Blocker 阈值文件污染 + 旧路径 rt_id + 多 trace 全补填 |
+| e6a8868 | fix(m6f): deep-reviewer W9 修正——series_id 截断删除 |
+| 759411f | fix(m6f): 回滚 config/qc_thresholds.yaml 到基线——696c14c 误提交 pre-fix 测试污染的 reflux 计数器 |
 
-（后续 docs 提交见 git log。）
+（docs 提交见 git log。）
 
 ## 11. Leftovers（M7 输入）
 
