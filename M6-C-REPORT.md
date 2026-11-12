@@ -83,19 +83,39 @@ M4 离线评估（eval/holdout_results.json `summary.prostate.zero_dice_cases`�
 ## 7. 提交 hashes
 
 - `3849d51` feat(m6c): 过程风险驱动采样 sample_review_tasks_by_priority + config sampling_priority + generate_review_tasks 接线
-- （收尾提交：tests/test_m6c_priority.py + M6-C-REPORT，见 §8 后 git log）
+- `b0eb242` fix(m6c): deep-reviewer 修正——除零保护 + prostate 漏检体素级指认 + row_by_mv 索引 + docstring 勘误
 
 ## 8. pytest / ruff 结果
 
-- `tests/test_m6c_priority.py`：13 单测 + 1 排序检验（真实产物 skipif）——**14 项全通过**（排序检验 554s 实跑：30 例真实教师+学生 mask 现算）。
-- 既有回归：test_qc.py + test_qc_interaction.py 65 passed；test_qc_api.py + test_review_api.py 40 passed（旧 70/30 路径行为不变）。
-- 全套 pytest：见下方全量实跑记录。
+全套 569 collected，**全部通过（0 failed / 0 error）**。慢速真实数据测试（m6e wiring 580s、排序检验 555s）使单次全套超后台时限，分批实跑（每文件至少一次）：
+
+- batch 1（agent_context_phi…m5e 18 文件）：**127 passed**
+- m6c_priority + qc + qc_interaction + review_session：**105 passed, 1 deselected**（deselect = 排序检验，单独跑）
+- 排序检验 test_ranking_consistency_30_holdout_top20（真实产物 skipif）：**1 passed**（554.9s，30 例真实教师+学生 mask 现算，2026-11-12 本机）
+- review_api + api + qc_api + student_pred + segmentation 等 18 文件：**196 passed**
+- test_m6e_wiring.py（419 对真实回归）：**4 passed**（580.5s）
+- test_qc_interaction_e2e.py（nnInteractive CPU 回放）：**7 passed**（56.1s）
+- gpu_probe + gpu_lock + tui_smoke + agent_context_phi + nninteractive_backend + interaction_metrics：**110 passed**（262.0s）
 - ruff check + ruff format：本轮改动文件（qc_priority.py / qc_pipeline.py / test_m6c_priority.py / config yaml）全绿。
+- 注意：test_ranking_consistency_30_holdout_top20 依赖 ~/data/BodyDonor 真实产物（30 例 hold-out 教师+学生 mask），缺失时 skipif 静默跳过——CI 上无法区分「通过」与「未跑」，本验收需本机产物手动执行（本机已实跑通过）。
 
 ## 9. deep-reviewer findings
 
-（审查后回填）
+deep-reviewer（只读子代理，审查 3849d51 + 工作区 diff）：**无 Blocker**；3 Warning + 3 Nit，处理如下：
+
+| severity | 位置 | 问题 | 处理 |
+|---|---|---|---|
+| warning | qc_priority.py:149 | 普通类分支 n_max/k_max=0 无除零保护（高风险分支有） | **已修**（b0eb242）：n_max/k_max<=0 该项饱和 1.0；补 test_w1_convergence_zero_thresholds_no_crash |
+| warning | tests/test_m6c_priority.py:422 | prostate_miss 判据只看 pcd==0.0，学生侧漏检（教师非空、学生空）同样 dice=0，会混入镜像情形 | **已修**（b0eb242）：改为体素级指认——教师有 prostate 标签且体素 0 且学生侧非空，再列入 prostate_miss |
+| warning | qc_pipeline.py:332 | for mv × for rows 嵌套 O(n²)；qc_id 的 next() 线性查找累计 O(n²) | **已修**（b0eb242）：row_by_mv 索引，回填 interaction_metrics 与 qc_id 均 O(1) |
+| nit | qc_priority.py:39 | 模块 docstring 残留草稿句「占比口径 min(...)？」与「不做封顶」矛盾 | **已修**（b0eb242）：删除草稿句 |
+| nit | qc_priority.py:183 | component_disagreement 对非 dict rule_scores / 非数值 per_class_dice 项不设防（生产路径已强制 dict） | **已修**（b0eb242）：isinstance 守卫 + 非数值项跳过 |
+| nit | test_m6c_priority.py | 排序验收 skipif 静默跳过，CI 无法区分通过/未跑 | **已记**（§8 注意行）：报告显式标注依赖本机产物 + 实跑日期 |
+
+已确认无误（审查通过）：_load_priority_cfg 与 yaml 结构一致（weights 缺省 1.0）；component_abandonment 的 bool 排除；component_disagreement 对缺 per_class_dice / 空 dict / 非 dict 返回 (None, {})。
 
 ## 10. 遗留
 
-（回填）
+- w1/w2 权重未经校准（等权冷启动起点）：待 M6-f DecisionTrace 决策回流后按抽检命中率重算（config diff）。
+- test_ranking_consistency_30_holdout_top20 依赖本机真实产物（30 例 hold-out 教师+学生 mask + eval/holdout_results.json），CI 环境缺失时 skip——验收数字（s0209 rank 6、amos_0004 rank 1、s0495 rank 3）为 2026-11-12 本机实跑。
+- hold-out case 无真实交互轨迹，排序检验中 w1/w2 为合成置 0（synthetic，已标注）；w1/w2 分量的真实数据回归待 M6-a 生产路径积累 interactionMetrics 后补。
