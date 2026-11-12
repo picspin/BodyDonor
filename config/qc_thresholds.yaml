@@ -1,163 +1,203 @@
+# QC 引擎阈值（M3，proposal §7）：全部集中在本文件，禁止散在代码里。
+# 改阈值 = config diff，不是代码 diff。每个阈值带 source 注记：
+#   source: cold_start          —— TS 公开集冷启动定初值（与教师同源，偏乐观，只当起点）
+#   source: calibrated_on_N     —— 人工抽检结果回流后重算（N = 参与校准的 case 数）
+#   calibrated_on: 0            —— 已回流 case 数（qc-calibrate 重算时更新）
+#   calibrated_at: <date>       —— 最近一次在线校准日期（无则空）
+#
+# 多教师一致性规则（Dice < 0.80 则 flagged）：**M3 不启用（单教师）**，M4
+# 学生模型出现后启用（2026-11-11 enabled 改 true）。M3 只有 TotalSegmentator
+# 一个教师（proposal §7 明示「该规则实际无法工作；不要为通过验收造假数据」）。
+
+# 冷启动数据集（qc_thresholds.yaml 的校准依据记录）
 cold_start:
-  dataset: totalsegmentator_ct_lite
-  n_cases: 25
-  calibrated_at: '2026-11-07'
-  method: dice_correlation
+  dataset: totalsegmentator_ct_lite  # HF YongchengYAO/TotalSegmentator-CT-Lite（CC-BY-4.0，TS dataset 派生）
+  n_cases: 25                        # 实际参与冷启动校准的 case 数（qc-coldstart 重算时更新）
+  calibrated_at: "2026-11-07"
+  method: dice_correlation           # QC 分数 vs 与真值 Dice 的相关性定 separating threshold
+  # 该数据集真值与教师同源（TS 模型 + 人工迭代产出），偏乐观；只当起点（proposal §7）
+
 rules:
+  # ---- 体积先验（proposal §7：器官体积异常小/大则 flagged）----
   volume_prior:
     enabled: true
     source: cold_start
-    calibrated_on: 20
-    calibrated_at: '2026-11-12'
-    min_frac: 0.0001
-    max_frac: 0.65
+    calibrated_on: 0
+    calibrated_at: ""
+    # 体积占比（mask 体素数 / 原图体素数）落在 [min_frac, max_frac] 之外 flagged
+    min_frac: 0.0001    # < 0.01% 视为残片（冷启动 P1 分位）
+    max_frac: 0.65      # > 65% 视为过分割/全 mask（冷启动 P99 分位）
+
+  # ---- 连通域检查（主连通域占该类体素数比例；碎成多域=质量差）----
   connected_component:
     enabled: true
     source: cold_start
-    calibrated_on: 20
-    calibrated_at: '2026-11-12'
+    calibrated_on: 0
+    calibrated_at: ""
+    # 逐类主连通域体素数 / 该类总体素数 < min_main_frac 则 flagged
     min_main_frac: 0.8
+    # 单类连通域数 > max_components 则 flagged（碎裂）
     max_components: 20
+
+  # ---- 空洞检查（二值闭运算后填充体素 / 该类总体素数）----
   holes:
     enabled: true
     source: cold_start
-    calibrated_on: 20
-    calibrated_at: '2026-11-12'
-    max_hole_frac: 0.2
+    calibrated_on: 0
+    calibrated_at: ""
+    max_hole_frac: 0.2   # 内部空洞占比 > 20% flagged
+
+  # ---- 边界平滑度（边界体素 / 体积；锯齿边界=上采样伪影）----
   boundary_smoothness:
     enabled: true
     source: cold_start
-    calibrated_on: 20
-    calibrated_at: '2026-11-12'
-    max_boundary_ratio: 1.2
+    calibrated_on: 0
+    calibrated_at: ""
+    max_boundary_ratio: 1.2   # 边界面数/体积 开方 > 1.2 flagged（经验形状因子）
+
+  # ---- HU 分布合理性（CT；本院化校准主体，§7.2）----
   hu_distribution:
     enabled: true
     source: cold_start
-    calibrated_on: 20
-    calibrated_at: '2026-11-12'
+    calibrated_on: 0
+    calibrated_at: ""
+    # mask 内 HU P5..P95 应落在软组织窗 [min_hu, max_hu] 之外过宽则 flagged
     min_hu: -200
     max_hu: 400
-    percentile: 5
+    percentile: 5    # 用 P5/P95（骨/血管类会出窗，flagged 交抽检，不硬过滤）
+    # 骨类（totalseg_class 含 vertebrae/rib/femur/hip/skull/clavicula/scapula/humerus
+    # /costal/teeth/sacrum/craniofacial）不适用软组织窗，跳过本规则
     skip_bone_classes: true
+
+  # ---- 多教师一致性（M3 不启用：单教师；M4 学生模型出现后启用，2026-11-11）----
   multi_teacher_consistency:
     enabled: true
     source: cold_start
-    calibrated_on: 20
-    calibrated_at: '2026-11-12'
-    note: M4 启用（学生模型 student-nnunet-v2-distill-20261109T062920Z 已出现）。聚合方式 = 参与比较类的
-      mean Dice（不是最差类）——校准依据（2026-11-11 实测，教师 vs 学生逐类 Dice，30 例）：419 对 mean 0.8560、p10
-      0.6986；case 级最差类聚合在 0.80 下 flag 24/30 例（无判别力，基本等于全审），均值聚合 flag 5/30 例（有判别力，flag
-      的正是分歧最大的 5 例）。阈值数值保持 0.80 初值不改——本次校准的是聚合方式，不是数值重算（source 保持 cold_start、calibrated_on
-      保持 0）。单图 QC 无学生 mask 时显式 skipped，不进 flags、不计入 enabled 分母。
-    threshold: 0.8
+    calibrated_on: 0
+    calibrated_at: ""
+    note: "M4 启用（学生模型 student-nnunet-v2-distill-20261109T062920Z 已出现）。聚合方式 = 参与比较类的 mean Dice（不是最差类）——校准依据（2026-11-11 实测，教师 vs 学生逐类 Dice，30 例）：419 对 mean 0.8560、p10 0.6986；case 级最差类聚合在 0.80 下 flag 24/30 例（无判别力，基本等于全审），均值聚合 flag 5/30 例（有判别力，flag 的正是分歧最大的 5 例）。阈值数值保持 0.80 初值不改——本次校准的是聚合方式，不是数值重算（source 保持 cold_start、calibrated_on 保持 0）。单图 QC 无学生 mask 时显式 skipped，不进 flags、不计入 enabled 分母。"
+    threshold: 0.80   # 均值 Dice 判据（校准的是聚合方式：均值而非最差类；数值未变）
+
+  # ---- 交互收敛（M6-b：过程级，消费 proven.interactionMetrics）----
+  # 普通类：numPrompts > n_max_prompts 或 convergenceSteps > k_max_steps 即 flag；
+  # 高风险类（teacherReliability=low）只看 numPrompts > n_max_prompts
+  # （不看 convergenceSteps，该维度对高风险类无校准依据；abandonedAttempts
+  # 维度归 interaction_abandonment，同事件不双 flag）。
+  # 阈值初值 cold_start 未校准（计划示例 N_max=15、K_max=6 仅供参考）：
+  # interactionMetrics 采集始于 M6-a（2026-11-12），尚无回放语料可校准，
+  # 初值按"正常交互 < 15 次提示 / 正常收敛 < 6 步"的量级假设取值，
+  # 待 M6-f DecisionTrace 决策回流后重算（calibrated_on 更新）。
   interaction_convergence:
     enabled: true
     source: cold_start
-    calibrated_on: 20
-    calibrated_at: '2026-11-12'
-    note: cold_start 未校准：M6-a 采集 2026-11-12 起，无回放语料；初值为量级假设，M6-f 决策回流后重算。两层逻辑：普通类（teacherReliability=high）看
-      numPrompts/convergenceSteps；高风险类（prostate + 39 低频名单，teacherReliability=low）不看
-      convergenceSteps、不看 finalLocalDice，只看 numPrompts。abandonedAttempts 归 interaction_abandonment
-      规则。
-    n_max_prompts: 15
-    k_max_steps: 6
+    calibrated_on: 0
+    calibrated_at: ""
+    note: "cold_start 未校准：M6-a 采集 2026-11-12 起，无回放语料；初值为量级假设，M6-f 决策回流后重算。两层逻辑：普通类（teacherReliability=high）看 numPrompts/convergenceSteps；高风险类（prostate + 39 低频名单，teacherReliability=low）不看 convergenceSteps、不看 finalLocalDice，只看 numPrompts。abandonedAttempts 归 interaction_abandonment 规则。"
+    n_max_prompts: 15   # 某类提示数上限（超过 = 迭代不收敛，人工介入）
+    k_max_steps: 6      # 某类草稿收敛步数上限（连续 2 步 ΔDice<τ 触发步数，仅普通类）
+
+  # ---- 交互放弃（M6-b：过程级，高 flag）----
+  # 任一交互类 abandonedAttempts >= min_abandonments 即 flag：连交互式修正
+  # 都无法收敛。与 interaction_convergence 同源 cold_start 未校准。
   interaction_abandonment:
     enabled: true
     source: cold_start
-    calibrated_on: 20
-    calibrated_at: '2026-11-12'
-    note: cold_start 未校准：放弃计数采集始于 M6-a（2026-11-12），无回放语料；min_abandonments=1 为高 flag
-      初值（放弃一次即记信号），M6-f 决策回流后重算。
-    min_abandonments: 1
+    calibrated_on: 0
+    calibrated_at: ""
+    note: "cold_start 未校准：放弃计数采集始于 M6-a（2026-11-12），无回放语料；min_abandonments=1 为高 flag 初值（放弃一次即记信号），M6-f 决策回流后重算。"
+    min_abandonments: 1 # 放弃次数下限（>=1 即 flag）
+
+  # ---- 左右对称性（适用成对器官；差异过大 flagged 交抽检）----
   left_right_symmetry:
     enabled: true
     source: cold_start
-    calibrated_on: 20
-    calibrated_at: '2026-11-12'
-    max_log_ratio: 1.0
+    calibrated_on: 0
+    calibrated_at: ""
+    # 成对类体积比 |log(V_left/V_right)| > max_log_ratio 则 flagged
+    max_log_ratio: 1.0   # e^1.0 ≈ 2.7 倍差异
     pairs:
-    - - kidney_left
-      - kidney_right
-    - - adrenal_gland_left
-      - adrenal_gland_right
-    - - femur_left
-      - femur_right
-    - - gluteus_maximus_left
-      - gluteus_maximus_right
-    - - gluteus_medius_left
-      - gluteus_medius_right
-    - - gluteus_minimus_left
-      - gluteus_minimus_right
-    - - iliopsoas_left
-      - iliopsoas_right
-    - - autochthon_left
-      - autochthon_right
-    - - lung_upper_lobe_left
-      - lung_upper_lobe_right
-    - - lung_lower_lobe_left
-      - lung_lower_lobe_right
-    - - humerus_left
-      - humerus_right
-    - - scapula_left
-      - scapula_right
-    - - clavicula_left
-      - clavicula_right
-    - - brachiocephalic_vein_left
-      - brachiocephalic_vein_right
-    - - subclavian_artery_left
-      - subclavian_artery_right
-    - - common_carotid_artery_left
-      - common_carotid_artery_right
-    - - iliac_artery_left
-      - iliac_artery_right
-    - - iliac_vena_left
-      - iliac_vena_right
-    - - temporalis_left
-      - temporalis_right
-    - - pectoralis_major_left
-      - pectoralis_major_right
-    - - rectus_abdominis_left
-      - rectus_abdominis_right
-    - - trapezius_left
-      - trapezius_right
-    - - sternocleidomastoid_left
-      - sternocleidomastoid_right
-    - - semispinalis_left
-      - semispinalis_right
+      - [kidney_left, kidney_right]
+      - [adrenal_gland_left, adrenal_gland_right]
+      - [femur_left, femur_right]
+      - [gluteus_maximus_left, gluteus_maximus_right]
+      - [gluteus_medius_left, gluteus_medius_right]
+      - [gluteus_minimus_left, gluteus_minimus_right]
+      - [iliopsoas_left, iliopsoas_right]
+      - [autochthon_left, autochthon_right]
+      - [lung_upper_lobe_left, lung_upper_lobe_right]
+      - [lung_lower_lobe_left, lung_lower_lobe_right]
+      - [humerus_left, humerus_right]
+      - [scapula_left, scapula_right]
+      - [clavicula_left, clavicula_right]
+      - [brachiocephalic_vein_left, brachiocephalic_vein_right]
+      - [subclavian_artery_left, subclavian_artery_right]
+      - [common_carotid_artery_left, common_carotid_artery_right]
+      - [iliac_artery_left, iliac_artery_right]
+      - [iliac_vena_left, iliac_vena_right]
+      - [temporalis_left, temporalis_right]
+      - [pectoralis_major_left, pectoralis_major_right]
+      - [rectus_abdominis_left, rectus_abdominis_right]
+      - [trapezius_left, trapezius_right]
+      - [sternocleidomastoid_left, sternocleidomastoid_right]
+      - [semispinalis_left, semispinalis_right]
+
+# ---- 抽检混合采样（proposal §6 第 5 阶段：flagged 70% / clean 随机 30%）----
+# M6-c 起 generate_review_tasks 生产路径改用过程风险驱动采样
+# （sample_review_tasks_by_priority，见 sampling_priority 节）；本节保留：
+# batch_size 供新路径共用，70/30 旧路径 sample_review_tasks 不删（对照保留）。
 review_sampling:
-  flagged_ratio: 0.7
-  clean_ratio: 0.3
-  batch_size: 10
-  min_clean_pool: 1
+  flagged_ratio: 0.70
+  clean_ratio: 0.30
+  batch_size: 10        # 每轮生成的 ReviewTask 数（0 = 全部 flagged + 同比例 clean）
+  min_clean_pool: 1     # clean 候选不足时仍生成 1 条（确认「没 flag 的真好」）
+
+# ---- 过程风险驱动抽检采样（M6-c：priority 排序替代 flagged 70%/clean 30%）----
+# priority = w1*convergence + w2*abandonment + w3*teacher_student_disagreement
+#            + w4*low_frequency_class_presence（各分量 [0,1]，定义见
+#            src/bodydonor/qc_priority.py docstring）。
+# 权重是冷启动起点，**未经校准**（等权 1 只当起点）：待 M6-f DecisionTrace
+# 决策回流后按「抽检命中率」重算（改权重 = 本节 config diff，不散在代码里）。
+# 分量阈值 N_max/K_max 复用 rules.interaction_convergence 的
+# n_max_prompts / k_max_steps（不在此重复定义）；低频名单复用
+# interaction_metrics.load_teacher_eval 口径（eval/holdout_results.json
+# 117 类 per_class_cases，<10 cases 为低频；prostate 显式高风险）。
+# 降级语义：multi_teacher skipped / 无学生 mask → w3 置零（只 w1/w2/w4
+# 排序，plan 里记 w3_available=False）；interactionMetrics 缺失 → w1=w2=0
+# （无交互即无过程信号，不造假）。priority 只决定抽检顺序与 M6-d gating
+# 三档分档（gating 节），不改 QC pass/fail（不碰 hard_flag_rules）。
 sampling_priority:
   enabled: true
   source: cold_start
   calibrated_on: 0
-  calibrated_at: ''
-  note: 权重是冷启动起点，未经校准：等权 w1=w2=w3=w4=1（2026-11-12）。M4 已证明冷启动 QC flag 区分度低（419 对均值聚合
-    flag 5/30），flagged/clean 二分在 flag 少时退化成随机抽检；过程风险连续分数按 priority 降序取前 batch_size
-    名建 ReviewTask。w3 聚合方式 = 最差类（1 - min 逐类 Dice，非 mean）：mean 会稀释单类整类漏检（实测 s0495 prostate
-    整类漏检 min 0.0 而 mean 0.8771，mean 聚合排不进前 20%）；冷启动抽检目的是找出最坏的 case 交人审，宁过审不漏审。M6-f
-    决策回流后重算权重（calibrated_on 更新）。
+  calibrated_at: ""
+  note: "权重是冷启动起点，未经校准：等权 w1=w2=w3=w4=1（2026-11-12）。M4 已证明冷启动 QC flag 区分度低（419 对均值聚合 flag 5/30），flagged/clean 二分在 flag 少时退化成随机抽检；过程风险连续分数按 priority 降序取前 batch_size 名建 ReviewTask。w3 聚合方式 = 最差类（1 - min 逐类 Dice，非 mean）：mean 会稀释单类整类漏检（实测 s0495 prostate 整类漏检 min 0.0 而 mean 0.8771，mean 聚合排不进前 20%）；冷启动抽检目的是找出最坏的 case 交人审，宁过审不漏审。M6-f 决策回流后重算权重（calibrated_on 更新）。"
   weights:
-    w1: 1.0
-    w2: 1.0
-    w3: 1.0
-    w4: 1.0
+    w1: 1.0   # convergence：interactionMetrics 收敛信号（普通类 max(numPrompts/N_max, convergenceSteps/K_max)，高风险类只 numPrompts）
+    w2: 1.0   # abandonment：任一类 abandonedAttempts>=1 则 1（M6-b interaction_abandonment 同判据）
+    w3: 1.0   # teacher_student_disagreement：最差类 1 - min(per_class_dice)（multi_teacher_consistency detail）
+    w4: 1.0   # low_frequency_class_presence：参评类中 39/117 低频类（+prostate）占比
+
+# ---- M6-d 轻量门控器（规则形式，正式交付物）----
+# priority 全量排名分三档：top forced_ratio → forced（强制人工：生成
+# ReviewTask 且标红 sample_group=forced）；中间 suggested_ratio → suggested
+# （建议复核：生成 ReviewTask，不标红）；bottom auto_ratio → auto（自动接受：
+# 不生成 ReviewTask，减少医生负担）。M4 报告抽检决策回流 0/20：标签为 0
+# 期间规则门控器是唯一方案、是正式交付物，不是过渡凑合。学习模型（逻辑回归
+# /小型 GBDT，CPU 毫秒级推理）是 M7 的事：等 ReviewTask 标签 ≥20 例后再做。
+# 改比例 = 本节 config diff（不散在代码里）；source 保持 cold_start 未校准
+# （分档比例未经决策回流校准，M6-f 后重算）。
 gating:
   enabled: true
   source: cold_start
   calibrated_on: 0
-  calibrated_at: ''
-  forced_ratio: 0.2
-  suggested_ratio: 0.6
-  auto_ratio: 0.2
+  calibrated_at: ""
+  forced_ratio: 0.20     # top 20% → 强制人工（ReviewTask 标红）
+  suggested_ratio: 0.60  # 中间 60% → 建议复核（ReviewTask 不标红）
+  auto_ratio: 0.20       # bottom 20% → 自动接受（不生成 ReviewTask；实际 auto = 余量，本值只作声明记录）
+
+# ---- 总体分数与过滤 ----
 overall:
-  min_score: 0.5
-  hard_flag_rules:
-  - volume_prior
-  decisions:
-    accepted: 12
-    rejected: 8
-  calibrated_on: 20
-  calibrated_at: '2026-11-12'
+  # 总体 QC 分数 = 通过规则数的加权（flagged 规则数 0 → 1.0，每多一个 flag 线性降）
+  min_score: 0.5        # overall_score < 0.5 → passed=false（低质量过滤，不进蒸馏）
+  hard_flag_rules:      # 这些规则任一 flagged → 直接 passed=false（一票否决）
+    - volume_prior
