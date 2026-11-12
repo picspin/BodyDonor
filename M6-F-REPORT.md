@@ -197,6 +197,8 @@ pytest：**16 passed**（test_m6f_trace.py 除真实 hold-out 例 15 passed ~4s�
 | 62e9e82 | fix(m6f): deep-reviewer 修正——Blocker 阈值文件污染 + 旧路径 rt_id + 多 trace 全补填 |
 | e6a8868 | fix(m6f): deep-reviewer W9 修正——series_id 截断删除 |
 | 759411f | fix(m6f): 回滚 config/qc_thresholds.yaml 到基线——696c14c 误提交 pre-fix 测试污染的 reflux 计数器 |
+| 58cebce | docs: M6-F-REPORT——DecisionTrace 形态/schema/接线/trace 示例/验收/分批收尾/deep-reviewer findings |
+| bebabe1 | fix(m6f): 迁移 a4f9e2c81d03 补 review_task_id 索引——deep-review W4 真正落地 |
 
 （docs 提交见 git log。）
 
