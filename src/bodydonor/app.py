@@ -559,12 +559,17 @@ def qc_review_task_decision(
 
     决策写进 ReviewTask（status/decision），并累计进 qc_thresholds.yaml 的
     calibrated_on 计数（阈值本体由 bodydonor qc-calibrate 重算）。
+
+    M6-f：决策回流补填 DecisionTrace.human_outcome（与 ReviewTask 状态写库
+    同一事务）——trace 的唯一事后变更，其余列不回写（append/update 语义，
+    qc_trace.py）；已补填的 trace 不覆盖（幂等，历史不改写）。
     """
     from sqlalchemy import select
 
     from . import db
-    from .models import ReviewTask
+    from .models import DecisionTrace, ReviewTask
     from .qc_reflux import record_review_decision
+    from .qc_trace import update_human_outcome
 
     if decision not in ("accepted", "corrected", "rejected"):
         raise HTTPException(status_code=422, detail="decision 必须是 accepted|corrected|rejected")
@@ -586,6 +591,23 @@ def qc_review_task_decision(
                 rt.decision = decision
                 if notes:
                     rt.notes = (rt.notes or "") + (f" | {notes}" if rt.notes else notes)
+                # M6-f：锚定该任务的 gate_decision trace 补填 human_outcome
+                #（同一事务；已补填的不覆盖，update_human_outcome 幂等）
+                trace = (
+                    s.execute(
+                        select(DecisionTrace)
+                        .where(
+                            DecisionTrace.review_task_id == rt.review_task_id,
+                            DecisionTrace.pipeline_stage == "gate_decision",
+                        )
+                        .order_by(DecisionTrace.timestamp.desc())
+                        .limit(1)
+                    )
+                    .scalars()
+                    .first()
+                )
+                if trace is not None:
+                    update_human_outcome(trace, decision, notes=notes or None)
                 s.commit()
             finally:
                 s.close()

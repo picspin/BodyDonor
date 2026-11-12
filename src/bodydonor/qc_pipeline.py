@@ -27,6 +27,7 @@ from .qc import (
     run_qc,
     sample_review_tasks,
 )
+from .qc_trace import record_gate_trace, record_qc_trace
 from .student_pred import StudentPredictionError, load_student_prediction
 
 
@@ -158,7 +159,7 @@ def qc_series(
         student_classes=student_classes,
         interaction_metrics=interaction_metrics,
     )
-    # QCReport 落库（单一写入纪律）
+    # QCReport + qc_scoring DecisionTrace 落库（单一写入纪律；同一事务）
     engine = db._engine(url)
     try:
         with db.write_lock, engine.connect() as conn:
@@ -176,6 +177,21 @@ def qc_series(
                     config_version=str(th.get("cold_start", {}).get("calibrated_at", "")),
                 )
                 s.add(report)
+                # M6-f：qc_scoring trace 与 QCReport 同一事务（决策在哪发生就在哪记）
+                s.add(
+                    record_qc_trace(
+                        case_id=case_id,
+                        series_id=series_id,
+                        mask_version_id=mv.mask_version_id,
+                        qc_report_id=report.qc_report_id,
+                        flags=result.flags,
+                        rule_scores=result.rule_scores,
+                        interaction_metrics=interaction_metrics,
+                        student_source=student_source,
+                        thresholds=th,
+                        config_version=report.config_version or "",
+                    )
+                )
                 s.commit()
                 report_id = report.qc_report_id
             finally:
@@ -306,6 +322,7 @@ def generate_review_tasks(
                 QCReport.qc_report_id,
                 QCReport.passed,
                 QCReport.overall_score,
+                QCReport.flags,
                 QCReport.rule_scores,
                 func.row_number()
                 .over(
@@ -320,6 +337,7 @@ def generate_review_tasks(
                     sub.c.qc_report_id,
                     sub.c.passed,
                     sub.c.overall_score,
+                    sub.c.flags,
                     sub.c.rule_scores,
                 ).where(sub.c.rn == 1)
             ).all()
@@ -330,6 +348,9 @@ def generate_review_tasks(
                         "qc_report_id": r.qc_report_id,
                         "passed": bool(r.passed),
                         "overall_score": float(r.overall_score or 0.0),
+                        # M6-f：QCReport.flags 原文（trace rules_triggered 与
+                        # 落库 flags 逐项一致的数据源，验收 b）
+                        "flags": r.flags if isinstance(r.flags, list) else [],
                         # M6-c：w3/w4 数据源（multi_teacher_consistency detail 逐类 Dice）
                         "rule_scores": r.rule_scores if isinstance(r.rule_scores, dict) else {},
                     }
@@ -339,6 +360,8 @@ def generate_review_tasks(
             row_by_mv = {r["mask_version_id"]: r for r in rows}
             mv_ids = list(row_by_mv)
             mv_map = {}
+            # M6-f：series -> case_id（trace 用；Series.case_id 是普通列，无懒加载）
+            case_by_series: dict[str, str | None] = {}
             if mv_ids:
                 for mv in (
                     s.execute(select(MaskVersion).where(MaskVersion.mask_version_id.in_(mv_ids)))
@@ -346,6 +369,7 @@ def generate_review_tasks(
                     .all()
                 ):
                     mv_map[mv.mask_version_id] = mv
+                    case_by_series[mv.series_id] = mv.series.case_id
                     prov = mv.provenance if isinstance(mv.provenance, dict) else {}
                     im = prov.get("interactionMetrics")
                     # M6-c：w1/w2 数据源（per-class 过程指标，纯自动 case 为空）
@@ -361,6 +385,19 @@ def generate_review_tasks(
     else:
         plan = sample_review_tasks(rows, thresholds=th)
     created: list[dict[str, Any]] = []
+    # M6-f：ranked 行 / gating 三档 id 集（gate_decision trace 的 tier/信号源）
+    ranked_by_mv = {}
+    if use_priority:
+        ranked_by_mv = {
+            row.mask_version_id: row for row in getattr(plan, "ranked", []) or []
+        }
+    gating_tier_by_mv: dict[str, str] = {}
+    if use_priority:
+        gating = getattr(plan, "gating", {})
+        for tier_name in ("forced", "suggested", "auto"):
+            for mv_id in gating.get(tier_name, []) or []:
+                gating_tier_by_mv[mv_id] = tier_name
+    component_availability = dict(getattr(plan, "component_availability", {}) or {})
     engine = db._engine(url)
     try:
         with db.write_lock, engine.connect() as conn:
@@ -396,6 +433,50 @@ def generate_review_tasks(
                                 "group": group,
                             }
                         )
+                # M6-f：gate_decision trace——priority 路径全量 ranked 行各记
+                # 一条（auto 也在内：自动接受本身是门禁决策）；tier 取
+                # gating_tier_by_mv（旧 70/30 路径无 gating → tier=group 语义
+                # 不冒充，记 group）。QCReport flags 逐项带入（验收 b）。
+                for r in rows:
+                    mv_id = r["mask_version_id"]
+                    mv = mv_map.get(mv_id)
+                    if mv is None:
+                        continue
+                    rs = r["rule_scores"] if isinstance(r["rule_scores"], dict) else {}
+                    if use_priority:
+                        tier = gating_tier_by_mv.get(mv_id, "auto")
+                        rt_entry = next(
+                            (t for t in created if t["mask_version_id"] == mv_id), None
+                        )
+                        rt_id = rt_entry["review_task_id"] if rt_entry else None
+                        group_out = rt_entry["group"] if rt_entry else None
+                    else:
+                        tier = group_out = next(
+                            (
+                                g
+                                for g, ids2 in tier_groups
+                                if mv_id in (ids2 or [])
+                            ),
+                            None,
+                        )
+                        rt_id = None
+                    s.add(
+                        record_gate_trace(
+                            case_id=case_by_series.get(mv.series_id),
+                            series_id=mv.series_id,
+                            mask_version_id=mv_id,
+                            qc_report_id=r["qc_report_id"],
+                            flags=r["flags"],
+                            rule_scores=rs,
+                            interaction_metrics=r.get("interaction_metrics"),
+                            ranked_row=ranked_by_mv.get(mv_id),
+                            component_availability=component_availability,
+                            tier=tier,
+                            review_task_id=rt_id,
+                            sample_group=group_out,
+                            thresholds=th,
+                        )
+                    )
                 s.commit()
             except Exception:
                 s.rollback()

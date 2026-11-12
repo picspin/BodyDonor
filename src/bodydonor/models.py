@@ -205,6 +205,51 @@ class ReviewTask(Base):
     series: Mapped[Series] = relationship(back_populates="review_tasks")
 
 
+class DecisionTrace(Base):
+    """决策审计痕迹（M6-f，proposal §7 过程信任）：决策在哪发生就在哪记一条。
+
+    每行 = 一个流水线阶段的一次决策记录（append-only；human_outcome 由决策
+    回流端点事后补填，只改 human_outcome/updated_at 两列——决策内容
+    （signals/rules/tier）不回写，历史不改写）：
+
+    - pipeline_stage: 'qc_scoring'（qc_series 产 QCReport 同一事务）|
+      'gate_decision'（generate_review_tasks 分档 + 建任务同一事务）。
+    - input_refs: MaskVersion / ModelVersion / QCReport 的 id 指针（非像素）。
+    - process_signals: M6-c priority 分量（w1–w4 + availability）+ M6-b
+      过程规则逐类 flag + 交互覆盖（该 case 是否有过 nnInteractive 交互——
+      小样本本身是要记录的事实）。
+    - rules_triggered: 与同决策流产出的 QCReport.flags 逐项一致（验收 b）。
+    - gate_decision: M6-d 三档 tier + 是否生成 ReviewTask（含 id/组）；
+      qc_scoring 阶段尚无门禁决策 → null。
+    - human_outcome: null = 尚无人工决策（不造假）；回流后
+      {"decision", "notes", "decided_at"}——空缺本身是 M7 决策回流的信号。
+    - calibration: 生效中的校准参数（gating 三比例 + priority 权重 + source
+      cold_start）——M7 校准重算的对照基准。
+    """
+
+    __tablename__ = "decision_traces"
+    __table_args__ = (
+        Index("ix_decision_traces_case_id", "case_id"),
+        Index("ix_decision_traces_mask_version_id", "mask_version_id"),
+        Index("ix_decision_traces_stage", "pipeline_stage"),
+    )
+
+    trace_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    case_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # qc 阶段可未给出
+    series_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    mask_version_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    pipeline_stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_refs: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    process_signals: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    rules_triggered: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    gate_decision: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    human_outcome: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    calibration: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    review_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, onupdate=utcnow)
+
+
 class ModelVersion(Base):
     """学生模型版本 + 晋级门禁结果（proposal §8：mean Dice + 每类 Dice 下限）。
 
