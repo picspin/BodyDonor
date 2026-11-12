@@ -140,7 +140,7 @@ def record_qc_trace(
     """
     return DecisionTrace(
         case_id=case_id,
-        series_id=series_id[:60],
+        series_id=series_id,
         mask_version_id=mask_version_id,
         pipeline_stage="qc_scoring",
         input_refs={
@@ -181,7 +181,7 @@ def record_gate_trace(
     """
     return DecisionTrace(
         case_id=case_id,
-        series_id=series_id[:60],
+        series_id=series_id,
         mask_version_id=mask_version_id,
         pipeline_stage="gate_decision",
         input_refs={

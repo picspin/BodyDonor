@@ -104,32 +104,32 @@ M6-a/b/c/d 规则逻辑零改动（diff 只增不改）；eval/holdout.txt、Mod
 
 `test_real_holdout_trace_back_30_cases`：真实 w3（教师+学生 mask 现算逐类 Dice）+ 真实 w4（117 类低频名单）+ w1/w2 置 0（hold-out 无真实交互轨迹，**synthetic 如实标注**——无过程信号不造假）。`sample_review_tasks_by_priority` 排名分档 → `record_gate_trace` 落成 30 条 gate_decision trace → 从 trace 单独回溯任选 case（priority 最高者从 ranked 指认，不 hardcode id）+ 三档覆盖断言（30 例 20/60/20 → 6/18/6，不 hardcode 档位分配）。
 
-实测（2026-11-12）：
+实测（2026-11-12，951s 单跑 1 passed）：
 
 ```
 M6-F 真实 hold-out trace: {
- "top_case": {"case_id": "s0209", "tier": "forced", "priority": 0.4,
-   "components": {"w1": null, "w2": null, "w3": 0.4, "w4": 0.0},
+ "top_case": {"case_id": "amos_0004", "tier": "forced", "priority": 1.0667,
+   "components": {"w1": null, "w2": null, "w3": 1.0, "w4": 0.0667},
    "availability": {"w1": false, "w2": false, "w3": true, "w4": true}},
  "n_tiers": {"forced": 6, "suggested": 18, "auto": 6}}
 ```
 
-s0209（M6-c 排序验收同一 case）rank 1 → forced；w1/w2 null（无交互轨迹，availability=False 如实记录）；w4=0.0（参评类无低频类）；三档 6/18/6 与 M6-D-REPORT 三档验收一致。amos_0014 共同盲区 case 在本实现中仍落 auto（教师/学生 prostate 双空 → 逐类比较无该类 → w3 无该类信号）——与 M6-d 如实记录的诚实边界一致，由 M4 结果规则/QC flag 覆盖，trace 不掩盖（coverage/components 如实为空）。
+amos_0004（M6-c 排序验收同一 case，prostate 整类分歧逐类 min 0.0）rank 1 → forced；w1/w2 null（无交互轨迹，availability=False 如实记录）；w3=1.0（最差类聚合把整类漏检顶到 1.0）；w4=0.0667（参评类 15 类中 1 类低频）；三档 6/18/6 与 M6-D-REPORT 三档验收一致。s0209 同样在 forced 区（M6-c 排序验收 rank 6）。amos_0014 共同盲区 case 在本实现中仍落 auto（教师/学生 prostate 双空 → 逐类比较无该类 → w3 无该类信号）——与 M6-d 如实记录的诚实边界一致，由 M4 结果规则/QC flag 覆盖，trace 不掩盖（coverage/components 如实为空）。
 
 ## 7. 测试与结果
 
-`tests/test_m6f_trace.py`（14 条）：
+`tests/test_m6f_trace.py`（16 条，deep-reviewer 修复轮后）：
 
 | 组 | 测试 |
 |---|---|
 | schema（3） | snapshot_calibration 缺省/覆盖；qc trace 形状（stage/rules=flags/human_outcome null/calibration）；gate trace 形状（tier+任务+priority 信号） |
 | 降级（3） | 无 interactionMetrics（coverage=False + skipped 原文）；case_id 未给 null；tier=auto 不建任务 |
 | update（1） | human_outcome 补填 + 幂等不覆盖 |
-| 接线（5） | qc_series 同一事务记 qc_scoring trace；generate_review_tasks 全量 ranked 记 gate trace（auto 在内 + tier 一致 + 验收 b）；旧 70/30 路径 tier=group；决策回流端点补填 + 回放不覆盖 |
+| 接线（7） | qc_series 同一事务记 qc_scoring trace；generate_review_tasks 全量 ranked 记 gate trace（auto 在内 + tier 一致 + 验收 b）；旧 70/30 路径 tier=group + ReviewTask id 带入；决策回流端点补填 + 回放不覆盖；旧路径人工决策补填；重跑累积多 trace 全补填 |
 | 验收（2） | b：rules_triggered vs flags 逐项；a：case-wired 全链回溯 |
-| 真实（1） | 30 例 hold-out trace-back |
+| 真实（1） | 30 例 hold-out trace-back（951s 单跑） |
 
-pytest：**14 passed**（test_m6f_trace.py 单跑；真实 hold-out 例在 30 例教师+学生 mask 现算上实测通过）。全套回归另报（见 §9 提交记录后的收尾数据）。
+pytest：**16 passed**（test_m6f_trace.py 除真实 hold-out 例 15 passed ~4s；真实例 951s 单跑 1 passed）。全套结果见 §9 收尾数据。m5e 的 alembic head 断言更新为 a4f9e2c81d03（M6-f 链尾）。
 
 ## 8. 降级语义（不造假）
 
@@ -139,16 +139,48 @@ pytest：**14 passed**（test_m6f_trace.py 单跑；真实 hold-out 例在 30 �
 - human_outcome 恒 null 直至人工决策；补填幂等不覆盖。
 - student prediction 缺失 → input_refs.student_source="unavailable: …"（原文，不清洗）。
 
-## 9. 提交
+## 9. Deep-reviewer closing review（三区域并行，对抗式）
+
+按 `.claude/agents/deep-reviewer.md` 三约束：并行 3 个 deep-reviewer 子代理按区域深审（本体 models/qc_trace/迁移、接线 qc_pipeline/app、测试与红线），每条报回 issue 二次核实（本机实跑复现），findings 逐条呈现。审查基线 c227fb0..696c14c。
+
+**Blocker（1 件，实跑复现，失败测试先行已修）**
+
+1. **决策回流测试改写真实 `config/qc_thresholds.yaml`（版本控制内阈值文件）。**
+   - 文件:行：tests/test_m6f_trace.py:515（修复前）/ app.py:616 / qc_reflux.py:37,53。
+   - 证据：回流端点 `record_review_decision(settings, decision)` 未传 path → 落到模块级 `QC_THRESHOLDS_PATH` → `yaml.safe_dump` 写盘；跑 `test_decision_endpoint_backfills_human_outcome` 后 `config/qc_thresholds.yaml` 的 `calibrated_on` 20→22（本机 sha256 前后实测变化）。
+   - 复现：干净树记录 `sha256sum config/qc_thresholds.yaml` → 跑该测试 → sha256 变化、`decisions` 计数增加。
+   - 修复：两个用回流端点的测试（endpoint 补填 + acceptance a）monkeypatch `qc_reflux.QC_THRESHOLDS_PATH` 到临时副本，并断言测试后真配置 == 备份（零改动）、临时副本字节有变化（回流计数进的是副本）。提交 62e9e82。
+
+**Warning（7 件；4 件已修，3 件定性/文档）**
+
+2. **旧 70/30 路径的 gate trace 写 `rt_id=None`（实跑复现，失败测试先行已修）。** flagged/clean 组确实经 `_ensure_review_task` 建 ReviewTask，但旧实现 trace 写 `review_task_generated=False`、无 id——决策回流按 `review_task_id` 锚定找不到 trace，人工决策后 `human_outcome` 永久 null，违背「null=尚无人工决策」语义。复现：`sampling_priority.enabled=false` 跑 generate_review_tasks → 决策端点 → trace.human_outcome 仍 null。修复：两条路径统一从 `created` 回查 rt_id/group；`test_old_path_decision_backfills_human_outcome` 失败测试先行。提交 62e9e82。
+3. **重跑累积多条 gate trace 只补 timestamp 最新一条（实跑复现，失败测试先行已修）。** 每次 generate_review_tasks 对全量 ranked 各 add 一条 trace，重跑同一 review_task_id 下累积多条；旧实现只补最新一条，更早的行永久 null，M7 校准会误读为「无决策」。复现：连续两轮 generate_review_tasks → 决策端点 → `[None, {'decision': ...}]`。修复：回流端点补填同 review_task_id 下全部 gate trace；`test_repeated_gate_runs_backfill_all_traces` 失败测试先行（修复前该测试红、修复后绿）。提交 62e9e82。
+4. **迁移漏 `ix_decision_traces_review_task_id` 索引（读码核实，已修）。** models.py `review_task_id` 有 `index=True`（生成 `ix_decision_traces_review_task_id`），迁移只建了三个索引——迁移建库与 create_all 建库索引漂移，回流查询正按该列过滤。修复：迁移补 create_index + downgrade 对应 drop。提交 62e9e82。
+5. **human_outcome=None 存为 JSON 字面量 'null' 而非 SQL NULL（读码核实，定性不修）。** SQLAlchemy JSON 列默认 `none_as_null=False`，Python 层读回是 None（代码路径正常），但 M7 若用 SQL `WHERE human_outcome IS NULL` 统计会漏行。定性：保留现状（ORM 查询路径 `trace.human_outcome is None` 判断），M7 Leftover 记明查询口径。
+6. **重放 rejected 时 ReviewTask=rejected / trace.human_outcome=accepted 并存（读码核实，定性为设计语义）。** ReviewTask.status 记最终决策、trace.human_outcome 记首次决策（幂等不覆盖=决策历史保留）——测试补断言重放后 ReviewTask 状态与 trace 值，锁定语义（acceptance a/endpoint 测试断言 trace 不改写）。
+7. **`decided_at` 自引用断言判别力弱（读码核实，定性）。** `"decided_at": gate_t.human_outcome["decided_at"]` 只证键存在。定性：decided_at 格式由 `update_human_outcome` 单点产生（UTC ISO 字符串），M7 校准不消费该字段；不补正则断言。
+8. **重跑 auto 档 trace 的 `review_task_generated=False` 陈旧性（读码核实，定性为本次运行语义）。** 某 mv 之前建过任务、本次分档 auto → 本次 trace 写 False。「本次运行」语义下成立；既有任务由其建档时的 trace 锚定回流。
+
+**Nit（4 件；1 件已修，3 件定性）**
+
+9. **series_id[:60] 截断（已修）。** 列宽 String(64) 足够，截断使 trace 与 Series 表关联静默失配。修复：`record_qc_trace`/`record_gate_trace` 不再截断（62e9e82 一并入库——与 qc_pipeline 既有 `series_id[:60]` ReviewTask 列宽纪律区分，trace 列 String(64) 存完整值）。
+10. **YAML 显式 null 使快照抛 TypeError（读码核实，定性不修）。** `float(None)` 会回滚 qc_scoring 事务——与 qc_priority `_load_priority_cfg` 同样的 config 异常行为（fail-loud 语义一致），不是 trace 引入的新类别。
+11. **分档断言可能空转 / 单 series 可能静默 skip（读码核实，定性）。** 接线测试的 tier 循环在空列表时不断言——但 `assert len(gate)==3` 已锚定行数；单 series skip 场景本机实测未触发（case-wired 落 forced，15 passed 无 skip）。
+12. **`plan.ranked`/`component_availability` 的 type: ignore（读码核实，定性不修）。** SamplingPlan 新增属性是 M6-c 既有模式（`plan.ranked = rows  # type: ignore[attr-defined]`），补类型声明超出 M6-f 范围（不碰冻结的 qc_priority 逻辑）。
+
+**已核实无问题**：qc_scoring 同事务（run_qc 异常在 Session 打开前，无孤立 trace）；重跑幂等 created append 语义正确；窗口子查询 flags 传递正确；锁纪律（三处写路径均持 db.write_lock）；`_table_exists` 幂等；降级语义不造假；human_outcome 无伪造路径；TestClient lifespan 指向临时库；红线（nnInteractive/distill_data/holdout.txt/gate_status/hard_flag_rules/M6-a–d 规则本体）零触碰。
+
+## 10. 提交
 
 | 提交 | 内容 |
 |---|---|
 | d9c09ea | feat(m6f): DecisionTrace 实体 + trace 记录接线（qc_scoring/gate_decision 两阶段） |
 | 696c14c | test(m6f): DecisionTrace 单测 14 条 |
+| 62e9e82 | fix(m6f): deep-reviewer 修正——Blocker 阈值文件污染 + 旧路径 rt_id + 多 trace 全补填 |
 
-（后续 fix(m6f) / docs 提交见 git log。）
+（后续 docs 提交见 git log。）
 
-## 10. Leftovers（M7 输入）
+## 11. Leftovers（M7 输入）
 
 1. **M6-c 遗留（w1/w2 真实回归）**：interactionMetrics 采集始于 M6-a（2026-11-12），生产 case 尚无真实交互轨迹——trace.process_signals 的 w1/w2 availability 分布是 M7 回归的样本底账。
 2. **M6-d 遗留（比例/权重重算）**：M7 决策回流标签 ≥20 例后重算 gating 三比例 + priority 权重；trace.calibration 提供重算前参数快照，`review_task_id` 列可直接 join ReviewTask.decision 取标签。
