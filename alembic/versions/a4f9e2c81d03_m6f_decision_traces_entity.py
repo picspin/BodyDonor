@@ -58,10 +58,14 @@ def upgrade() -> None:
     op.create_index("ix_decision_traces_case_id", "decision_traces", ["case_id"])
     op.create_index("ix_decision_traces_mask_version_id", "decision_traces", ["mask_version_id"])
     op.create_index("ix_decision_traces_stage", "decision_traces", ["pipeline_stage"])
+    # models.DecisionTrace.review_task_id 有 index=True：迁移建库须与
+    # create_all 一致，否则 human_outcome 回流端点按 review_task_id 查询漂移
+    op.create_index("ix_decision_traces_review_task_id", "decision_traces", ["review_task_id"])
 
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.drop_index("ix_decision_traces_review_task_id", table_name="decision_traces")
     op.drop_index("ix_decision_traces_stage", table_name="decision_traces")
     op.drop_index("ix_decision_traces_mask_version_id", table_name="decision_traces")
     op.drop_index("ix_decision_traces_case_id", table_name="decision_traces")

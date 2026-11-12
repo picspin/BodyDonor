@@ -18,6 +18,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -1066,3 +1069,35 @@ def test_repeated_gate_runs_backfill_all_traces(
         [t.human_outcome for t in gate]
     )
     assert all(t.human_outcome["decision"] == "corrected" for t in gate)
+
+
+def test_migration_builds_review_task_id_index(tmp_path: Path) -> None:
+    """deep-review W4 失败测试先行：models.DecisionTrace.review_task_id 有
+    index=True（create_all 建 ix_decision_traces_review_task_id），迁移
+    a4f9e2c81d03 必须同样建该索引，否则迁移建库与 create_all 漂移——
+    human_outcome 回流端点按 review_task_id 查询在迁移建库上慢查询。"""
+    db = tmp_path / "mig_index.db"
+    url = f"sqlite:///{db}"
+    r = subprocess.run(
+        [sys.executable, "-m", "alembic", "-x", f"db_url={url}", "upgrade", "head"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "VIRTUAL_ENV": str(REPO / ".venv"),
+        },
+    )
+    assert r.returncode == 0, f"alembic upgrade 失败：{r.stdout[-500:]}{r.stderr[-500:]}"
+    c = sqlite3.connect(db)
+    try:
+        # PRAGMA index_list 行形如 (seq, name, unique, origin, partial)
+        indexes = {
+            row[1] for row in c.execute("PRAGMA index_list(decision_traces)")
+        }
+    finally:
+        c.close()
+    assert "ix_decision_traces_review_task_id" in indexes, (
+        f"迁移建库缺 review_task_id 索引，实际：{sorted(indexes)}"
+    )
