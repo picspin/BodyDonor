@@ -163,8 +163,8 @@ review_sampling:
 # 117 类 per_class_cases，<10 cases 为低频；prostate 显式高风险）。
 # 降级语义：multi_teacher skipped / 无学生 mask → w3 置零（只 w1/w2/w4
 # 排序，plan 里记 w3_available=False）；interactionMetrics 缺失 → w1=w2=0
-# （无交互即无过程信号，不造假）。priority 只决定抽检顺序，不改 QC
-# pass/fail（不碰 hard_flag_rules）。
+# （无交互即无过程信号，不造假）。priority 只决定抽检顺序与 M6-d gating
+# 三档分档（gating 节），不改 QC pass/fail（不碰 hard_flag_rules）。
 sampling_priority:
   enabled: true
   source: cold_start
@@ -176,6 +176,20 @@ sampling_priority:
     w2: 1.0   # abandonment：任一类 abandonedAttempts>=1 则 1（M6-b interaction_abandonment 同判据）
     w3: 1.0   # teacher_student_disagreement：最差类 1 - min(per_class_dice)（multi_teacher_consistency detail）
     w4: 1.0   # low_frequency_class_presence：参评类中 39/117 低频类（+prostate）占比
+
+# ---- M6-d 轻量门控器（规则形式，正式交付物）----
+# priority 全量排名分三档：top forced_ratio → forced（强制人工：生成
+# ReviewTask 且标红 sample_group=forced）；中间 suggested_ratio → suggested
+# （建议复核：生成 ReviewTask，不标红）；bottom auto_ratio → auto（自动接受：
+# 不生成 ReviewTask，减少医生负担）。M4 报告抽检决策回流 0/20：标签为 0
+# 期间规则门控器是唯一方案、是正式交付物，不是过渡凑合。学习模型（逻辑回归
+# /小型 GBDT，CPU 毫秒级推理）是 M7 的事：等 ReviewTask 标签 ≥20 例后再做。
+# 改比例 = 本节 config diff（不散在代码里）；source 保持 cold_start 未校准
+# （分档比例未经决策回流校准，M6-f 后重算）。
+gating:
+  forced_ratio: 0.20     # top 20% → 强制人工（ReviewTask 标红）
+  suggested_ratio: 0.60  # 中间 60% → 建议复核（ReviewTask 不标红）
+  auto_ratio: 0.20       # bottom 20% → 自动接受（不生成 ReviewTask）
 
 # ---- 总体分数与过滤 ----
 overall:

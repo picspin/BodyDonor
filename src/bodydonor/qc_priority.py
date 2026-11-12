@@ -49,9 +49,19 @@ sampling_priority 节（阈值集中单文件原则不变，改权重 = config d
 - DecisionTrace 实体是 M6-f：本轮不造实体，可用性记录在返回值
   （ranked 行级 availability / component_availability 汇总）与报告里。
 
+M6-d gating（轻量门控器，正式交付物——M4 报告抽检决策回流 0/20，标签为 0
+期间规则形式是唯一方案）：priority 全量排名分三档，非学习模型（逻辑回归 /
+GBDT 是 M7、ReviewTask 标签 ≥20 例后的事）：
+
+- top 20% → forced（强制人工：生成 ReviewTask 且标红 sample_group=forced）。
+- 中间 60% → suggested（建议复核：生成 ReviewTask，不标红）。
+- bottom 20% → auto（自动接受：不生成 ReviewTask，减少医生负担）。
+- 比例进 config/qc_thresholds.yaml gating 节（forced_ratio/suggested_ratio/
+  auto_ratio，默认 0.20/0.60/0.20；改比例 = config diff）。
+
 铁律：
-- priority 只决定抽检顺序，不改 QC pass/fail（不碰 hard_flag_rules、
-  不动 eval/holdout.txt 与 M4 门禁结果）。
+- priority 只决定抽检顺序与 gating 分档，不改 QC pass/fail（不碰
+  hard_flag_rules、不动 eval/holdout.txt 与 M4 门禁结果）。
 - 无 mock 数字冒充真实数据：真实 mask 回归用真实产物；合成数据标注
   synthetic。
 """
@@ -74,7 +84,11 @@ _HIGH_RISK_TEACHER_CLASSES = frozenset({"prostate"})
 
 @dataclass
 class PriorityRow:
-    """一个 case 的 priority 采样行（含各分量值与可用性，DecisionTrace 前置）。"""
+    """一个 case 的 priority 采样行（含各分量值与可用性，DecisionTrace 前置）。
+
+    M6-d：gating_tier = 该行按 priority 排名落的三档（forced / suggested /
+    auto；采样时按全量排名回填，默认空串 = 未分档）。
+    """
 
     mask_version_id: str
     qc_report_id: str = ""
@@ -82,6 +96,7 @@ class PriorityRow:
     components: dict[str, float | None] = field(default_factory=dict)  # w1..w4 值（None=不可用）
     availability: dict[str, bool] = field(default_factory=dict)  # 分量数据源是否可用
     passed: bool = True
+    gating_tier: str = ""  # M6-d：forced | suggested | auto（rank 回填）
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,6 +108,7 @@ class PriorityRow:
             },
             "availability": dict(self.availability),
             "passed": self.passed,
+            "gating_tier": self.gating_tier,
         }
 
 
@@ -218,6 +234,48 @@ def component_low_freq_presence(
     return len(low_freq) / len(classes)
 
 
+def load_gating_cfg(thresholds: dict[str, Any] | None) -> dict[str, Any]:
+    """gating 配置（M6-d 三档比例；缺省 20/60/20，与冷启动声明一致）。
+
+    ratios 之和 <= 1：剩余份额归 suggested（sum > 1 按比例归一，不 raise）。
+    """
+    from .qc import load_qc_thresholds
+
+    th = thresholds if thresholds is not None else load_qc_thresholds()
+    cfg = th.get("gating") if isinstance(th.get("gating"), dict) else {}
+    forced = float(cfg.get("forced_ratio", 0.20))
+    suggested = float(cfg.get("suggested_ratio", 0.60))
+    auto = float(cfg.get("auto_ratio", 0.20))
+    return {
+        "forced_ratio": forced,
+        "suggested_ratio": suggested,
+        "auto_ratio": auto,
+        "min_auto_priority": float(cfg.get("min_auto_priority", 0.0)),
+    }
+
+
+def tier_for_rank(
+    rank: int,  # 1-based 排名（priority 降序）
+    n_total: int,
+    gating_cfg: dict[str, Any],
+) -> str:
+    """rank -> 三档决策（M6-d）：forced / suggested / auto。
+
+    边界：top forced_ratio 比例 -> forced；接着 suggested_ratio 比例 ->
+    suggested；其余 -> auto。rank 超界（> n_total）或 n_total <= 0 归 auto
+    （不 raise）。比例和 > 1 时按顺序切，auto 区可能为空（config 异常不崩）。
+    """
+    if n_total <= 0 or rank < 1 or rank > n_total:
+        return "auto"
+    n_forced = round(n_total * gating_cfg["forced_ratio"])
+    n_suggested = round(n_total * gating_cfg["suggested_ratio"])
+    if rank <= n_forced:
+        return "forced"
+    if rank <= n_forced + n_suggested:
+        return "suggested"
+    return "auto"
+
+
 def sample_review_tasks_by_priority(
     qc_rows: list[dict[str, Any]],
     thresholds: dict[str, Any] | None = None,
@@ -238,8 +296,14 @@ def sample_review_tasks_by_priority(
     返回 SamplingPlan（兼容形状：flagged_ids=参审 ids 按优先级降序、
     clean_ids 恒空——优先级模型里没有「clean 组」概念，未入选 case 本轮
     不审；n_total=入选数；flagged_pool/clean_pool=参审/未入选池大小）。
-    新增字段：ranked（PriorityRow 列表，priority 降序全量）、
-    component_availability（各分量的数据源可用计数）。
+    新增字段：ranked（PriorityRow 列表，priority 降序全量，行级 gating_tier）、
+    component_availability（各分量的数据源可用计数）、gating（M6-d 三档汇总：
+    forced/suggested/auto 的 id 列表 + 计数 + 生效比例）。
+
+    M6-d gating：三档分档由 config gating 节比例决定（默认 20/60/20），
+    tier_for_rank 按全量排名切（ranked 全量都分档，batch_size 只截
+    flagged_ids）。ReviewTask 生成只消费 forced+suggested（qc_pipeline），
+    auto 不建任务。
 
     降级显式记录：w3 不可用的行 availability["w3"]=False + plan 含
     w3_available 汇总；w1/w2 缺失同记录（任务书 3：返回值里记录各分量
@@ -251,6 +315,7 @@ def sample_review_tasks_by_priority(
     pcfg = _load_priority_cfg(th)
     weights = pcfg["weights"]
     icfg = _interaction_cfg(th)
+    gcfg = load_gating_cfg(th)
     if per_class_case_count is None:
         per_class_case_count = load_teacher_eval()
 
@@ -289,6 +354,12 @@ def sample_review_tasks_by_priority(
     rows.sort(key=lambda x: (-x.priority, x.mask_version_id))
     selected = rows[:batch] if batch > 0 else rows
     n_avail = {k: sum(1 for row in rows if row.availability[k]) for k in ("w1", "w2", "w3", "w4")}
+    # M6-d gating：全量排名分三档（forced/suggested/auto），行级 tier + 汇总。
+    for i, row in enumerate(rows, start=1):
+        row.gating_tier = tier_for_rank(i, len(rows), gcfg)
+    n_tier = {
+        t: sum(1 for row in rows if row.gating_tier == t) for t in ("forced", "suggested", "auto")
+    }
     plan = SamplingPlan(
         flagged_ids=[row.mask_version_id for row in selected],
         clean_ids=[],
@@ -305,5 +376,18 @@ def sample_review_tasks_by_priority(
             if n_avail["w3"] == 0
             else ""
         ),
+    }
+    plan.gating = {  # type: ignore[attr-defined] — M6-d 新增：三档汇总
+        "forced": [row.mask_version_id for row in rows if row.gating_tier == "forced"],
+        "suggested": [row.mask_version_id for row in rows if row.gating_tier == "suggested"],
+        "auto": [row.mask_version_id for row in rows if row.gating_tier == "auto"],
+        "n_forced": n_tier["forced"],
+        "n_suggested": n_tier["suggested"],
+        "n_auto": n_tier["auto"],
+        "ratios": {
+            "forced_ratio": gcfg["forced_ratio"],
+            "suggested_ratio": gcfg["suggested_ratio"],
+            "auto_ratio": gcfg["auto_ratio"],
+        },
     }
     return plan

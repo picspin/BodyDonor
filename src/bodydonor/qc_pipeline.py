@@ -351,7 +351,20 @@ def generate_review_tasks(
 
             s = Session(conn)
             try:
-                for group, ids in (("flagged", plan.flagged_ids), ("clean", plan.clean_ids)):
+                if use_priority:
+                    # M6-d gating：forced（标红）+ suggested（不标红）建
+                    # ReviewTask，auto（自动接受）不建——高置信 case 减少医生
+                    # 负担。gating 按全量排名分档（tier_for_rank），不是
+                    # batch_size 截断集（flagged_ids 仍是 M6-c 语义：top
+                    # batch_size，作采样对照保留）。
+                    gating = getattr(plan, "gating", {})
+                    tier_groups = (
+                        ("forced", gating.get("forced", [])),
+                        ("suggested", gating.get("suggested", [])),
+                    )
+                else:
+                    tier_groups = (("flagged", plan.flagged_ids), ("clean", plan.clean_ids))
+                for group, ids in tier_groups:
                     for mv_id in ids:
                         mv = mv_map.get(mv_id)
                         if mv is None:
@@ -382,6 +395,8 @@ def generate_review_tasks(
         if ranked is not None:
             out["ranked"] = [row.to_dict() for row in ranked]
             out["component_availability"] = dict(getattr(plan, "component_availability", {}))
+        # M6-d：三档 gating 汇总（forced/suggested/auto id 列表 + 计数 + 比例）。
+        out["gating"] = dict(getattr(plan, "gating", {}))
     return out
 
 
