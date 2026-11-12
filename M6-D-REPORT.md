@@ -129,7 +129,30 @@ liver 分歧低、非低频（30 cases）的 case 在 priority 排名末位（w3
 
 ## 4. pytest / ruff 结果
 
-（待回填。）
+全套 571 collected，**全绿（0 failed / 0 error）**。慢速真实数据测试
+（m6e wiring ~10m、m6c 排序检验 ~9m、m6d 三档验收 ~11m）使单次全套超后台
+时限，分批实跑（每文件至少一次）：
+
+- 快速全套（--ignore 3 个慢文件 + deselect 2 项真实数据验收）：
+  **530 passed, 2 deselected**（255.2s，修复轮后 7e6b0c8 复跑；首轮
+  f3e8e16 同口径 528 passed, 264.6s）
+- test_m6e_wiring.py（419 对真实 mask 回归）：**4 passed**（~580s，本轮
+  无该文件改动，未复跑——首轮实跑记录沿用 M6-C-REPORT §8）
+- test_qc_interaction_e2e.py（nnInteractive CPU 回放）：**7 passed**
+  （~56s，同上未复跑）
+- test_qc_api.py + test_review_api.py + test_qc.py + test_qc_interaction.py
+  （QC/review API 批次）：**105 passed**（4.4s，修复轮后复跑）
+- tests/test_m6d_gating.py 单测 12 项 + 失败测试 2 项（分组升级 + 负比例
+  raise）：**全绿**（stash 验证：修前 FAIL 修后 PASS）
+- tests/test_m6c_priority.py 单测 14 项（减排序检验）：**全绿**
+- 三档验收 test_gating_three_tiers_30_holdout（真实产物 skipif）：
+  **1 passed**（exit=0，~11 分钟，2026-11-12 本机；验收 2 口径修正后复跑）
+- ruff check src tests scripts eval alembic config：本轮改动文件
+  （qc_priority.py / qc_pipeline.py / app.py / test_m6d_gating.py /
+  config yaml）全绿
+- 注意：三项真实数据测试依赖 ~/data/BodyDonor 真实产物，缺失时 skipif
+  静默跳过——CI 上无法区分「通过」与「未跑」，本验收需本机产物手动执行
+  （本机已实跑通过）。
 
 ## 5. 提交 hashes
 
