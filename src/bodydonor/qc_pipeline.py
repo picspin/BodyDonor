@@ -215,9 +215,14 @@ def _ensure_review_task(
     mask_version_id: str,
     series_id: str,
     qc_report_id: str,  # noqa: ANN001
-    group: str,  # noqa: ANN001 — flagged | clean
+    group: str,  # noqa: ANN001 — forced | suggested | flagged | clean
 ) -> str:
-    """取或建 ReviewTask（幂等：同 mask_version 已有 pending 任务不重复建）。"""
+    """取或建 ReviewTask（幂等：同 mask_version 已有 pending 任务不重复建）。
+
+    M6-d：已有 pending 任务但分组更低（suggested < forced）时升级 notes 里的
+    sample_group（红标不可静默丢失）。已决策（claimed/accepted/…）的任务
+    不动——决策历史保留，不因重跑生成而改写。
+    """
     from sqlalchemy import select
 
     existing = (
@@ -230,6 +235,18 @@ def _ensure_review_task(
         .first()
     )
     if existing is not None:
+        # M6-d 分组升级：pending 且旧分组低（非 forced -> forced）时改写
+        # notes 的 sample_group（幂等不重复建任务，但红标跟随最新分档）。
+        if existing.status == "pending" and group == "forced":
+            notes = existing.notes or ""
+            if "sample_group=forced" not in notes:
+                if "sample_group=" in notes:
+                    notes = notes.replace("sample_group=suggested", "sample_group=forced")
+                    notes = notes.replace("sample_group=clean", "sample_group=forced")
+                    notes = notes.replace("sample_group=flagged", "sample_group=forced")
+                else:
+                    notes = f"{notes} | sample_group=forced" if notes else "sample_group=forced"
+                existing.notes = notes
         return existing.review_task_id
     task = ReviewTask(
         review_task_id=f"rt-{uuid.uuid4().hex[:8]}",

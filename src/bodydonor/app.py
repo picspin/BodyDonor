@@ -487,7 +487,14 @@ def qc_thresholds_summary() -> dict[str, Any]:
 def qc_review_tasks_create(
     batch_size: int = Query(0, description="0 = 用 config 的 batch_size"),
 ) -> JSONResponse:
-    """阶段 5（人工抽检）：混合采样生成 ReviewTask（flagged 70% / clean 30%）。"""
+    """阶段 5（人工抽检）：采样生成 ReviewTask。
+
+    M6-d 起 priority 路径（sampling_priority.enabled，缺省 true）按 gating
+    三档生成：forced（标红）+ suggested 建 ReviewTask，auto 不建——任务数
+    由 gating 比例决定（gating 节 forced/suggested_ratio），batch_size 在
+    该路径只截断对照字段 flagged_ids，不限制任务数。旧 70/30 路径
+    （enabled=false）batch_size 仍是任务数上限。
+    """
     from .qc_pipeline import generate_review_tasks
 
     out = generate_review_tasks(settings, batch_size=batch_size if batch_size > 0 else None)

@@ -187,9 +187,13 @@ sampling_priority:
 # 改比例 = 本节 config diff（不散在代码里）；source 保持 cold_start 未校准
 # （分档比例未经决策回流校准，M6-f 后重算）。
 gating:
+  enabled: true
+  source: cold_start
+  calibrated_on: 0
+  calibrated_at: ""
   forced_ratio: 0.20     # top 20% → 强制人工（ReviewTask 标红）
   suggested_ratio: 0.60  # 中间 60% → 建议复核（ReviewTask 不标红）
-  auto_ratio: 0.20       # bottom 20% → 自动接受（不生成 ReviewTask）
+  auto_ratio: 0.20       # bottom 20% → 自动接受（不生成 ReviewTask；实际 auto = 余量，本值只作声明记录）
 
 # ---- 总体分数与过滤 ----
 overall:

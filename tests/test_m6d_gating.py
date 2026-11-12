@@ -280,6 +280,45 @@ def test_generate_review_tasks_old_path_unaffected(tmp_path: Path) -> None:
     assert out["plan"]["n_total"] >= 1
 
 
+def test_negative_gating_ratio_raises() -> None:
+    """负比例是 config 错误 → raise（fail-loud，不静默错分档）。"""
+    with pytest.raises(ValueError, match="gating"):
+        load_gating_cfg({"gating": {"forced_ratio": -0.2}})
+
+
+def test_ensure_review_task_upgrades_pending_group(tmp_path: Path) -> None:
+    """deep-review W3 失败测试先行：同 MV 先建 suggested 任务，重跑分档为
+    forced → pending 任务的 notes 升级 sample_group=forced（红标不静默丢失）。"""
+    from sqlalchemy import select
+
+    from bodydonor import db
+    from bodydonor.models import ReviewTask
+    from bodydonor.qc_pipeline import _ensure_review_task
+
+    s = _seed_db(tmp_path, 1)
+    engine = db._engine(s.database.url)
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy.orm import Session
+
+            sess = Session(conn)
+            # 第一轮：建 suggested 任务
+            _ensure_review_task(sess, "mv-00", "series-0", "qc-0", "suggested")
+            sess.commit()
+            # 第二轮：分档升为 forced → 幂等不重复建，但 notes 升级
+            _ensure_review_task(sess, "mv-00", "series-0", "qc-0", "forced")
+            sess.commit()
+            n_tasks = len(sess.execute(select(ReviewTask)).scalars().all())
+            notes = (
+                sess.execute(select(ReviewTask.notes)).scalars().first()
+            )
+            sess.close()
+    finally:
+        engine.dispose()
+    assert n_tasks == 1  # 幂等：不重复建
+    assert "sample_group=forced" in (notes or "")  # 红标升级（bug：旧实现不升级）
+
+
 # ---------------------------------------------------------------------------
 # 三档验收（30 例 hold-out 真实数据现算；语料同 test_m6c_priority.py）
 # ---------------------------------------------------------------------------
@@ -427,15 +466,22 @@ def test_gating_three_tiers_30_holdout() -> None:
             f"prostate 漏检 case {case_id} tier={tier_by_id[case_id]}（不应 auto）"
         )
     # 验收 3：高置信 case → 自动接受（priority 排名末位 20% = auto 区，
-    # 从 ranked 末位取，不 hardcode case id；末位 priority 显著低于 forced 区）
+    # 从 ranked 末位取，不 hardcode case id）。断言 auto 区整体 priority
+    # 低于 forced+suggested 区（不是只低于全局最高——max 恒真断言无判别力）。
     auto_ids = g["auto"]
     assert auto_ids, "auto 区为空（分档比例异常）"
-    forced_set = set(g["forced"])
+    reviewed = set(g["forced"]) | set(g["suggested"])
     pri = {r.mask_version_id: r.priority for r in plan.ranked}  # type: ignore[attr-defined]
+    min_reviewed = min(pri[c] for c in reviewed)
     for cid in auto_ids:
-        assert cid not in forced_set
-        assert pri[cid] < max(pri.values()), f"auto case {cid} priority 不是低置信区"
+        assert cid not in reviewed
+        assert pri[cid] <= min_reviewed, (
+            f"auto case {cid} priority={pri[cid]} 高于参审区最低 {min_reviewed}（auto 应是最低段）"
+        )
     # 三档覆盖齐全（30 例默认 20/60/20 → 6/18/6）
+    assert min(pri[c] for c in g["forced"]) >= max(pri[c] for c in g["suggested"]), (
+        "forced 区 priority 应整体不低于 suggested 区"
+    )
     assert g["n_forced"] == 6 and g["n_suggested"] == 18 and g["n_auto"] == 6
 
     # 报告数字：s0209/prostate case/auto case 的 tier + rank

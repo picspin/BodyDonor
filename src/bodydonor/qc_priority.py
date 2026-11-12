@@ -237,7 +237,10 @@ def component_low_freq_presence(
 def load_gating_cfg(thresholds: dict[str, Any] | None) -> dict[str, Any]:
     """gating 配置（M6-d 三档比例；缺省 20/60/20，与冷启动声明一致）。
 
-    ratios 之和 <= 1：剩余份额归 suggested（sum > 1 按比例归一，不 raise）。
+    分档语义（tier_for_rank）：forced = top round(n*forced_ratio) 名，
+    suggested = 接着 round(n*suggested_ratio) 名，auto = **其余全部**（auto
+    是余量，auto_ratio 只作声明记录，不参与切分——三比例之和不必为 1，剩余
+    份额落在 auto）。负比例是 config 错误 → raise（fail-loud，不静默错分档）。
     """
     from .qc import load_qc_thresholds
 
@@ -246,11 +249,15 @@ def load_gating_cfg(thresholds: dict[str, Any] | None) -> dict[str, Any]:
     forced = float(cfg.get("forced_ratio", 0.20))
     suggested = float(cfg.get("suggested_ratio", 0.60))
     auto = float(cfg.get("auto_ratio", 0.20))
+    if forced < 0 or suggested < 0 or auto < 0:
+        raise ValueError(
+            f"gating 比例不能为负：forced_ratio={forced}, suggested_ratio={suggested}, "
+            f"auto_ratio={auto}（config/qc_thresholds.yaml gating 节）"
+        )
     return {
         "forced_ratio": forced,
         "suggested_ratio": suggested,
-        "auto_ratio": auto,
-        "min_auto_priority": float(cfg.get("min_auto_priority", 0.0)),
+        "auto_ratio": auto,  # 声明性记录：实际 auto = 余量（见 docstring）
     }
 
 
