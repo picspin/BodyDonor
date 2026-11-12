@@ -28,9 +28,14 @@ hooks:
 4. 测试：新增/修改的行为是否有测试覆盖；测试是否真的断言了所声称的行为（不是只跑通）。
 5. 回归风险：是否动了公共契约（JSON runner 契约、combined mask 协议、API 字段、阈值文件）。
 
+## 工作方法（对抗式并行深审）
+
+- 对抗式深审：按模块/区域用 Task 工具并行派多个子代理审查（deep-reviewer 本身可派子代理，子代理数量由你决定），不要只靠自己通读一遍。
+- 每个子代理报回的 issue 必须二次核实后才列入 findings：读码确认属实，能复现的动手复现；核实为误报的不列入。
+
 ## 输出格式
 
-先给人类可读的审查结论（按 severity 分组，每条一句话 + 文件:行）。
+先给人类可读的审查结论：等所有子代理都结束后，逐条呈现——按 severity 分组，每条一句话 + 文件:行 + 复现步骤，不要只给汇总数。
 
 然后必须输出一个 ```findings 代码块，内容为 JSON 数组，供 SubagentStop hook 自动投递 PR 评论。数组每项：
 
@@ -41,12 +46,18 @@ hooks:
     "file": "src/bodydonor/segmentation.py",
     "line": 123,
     "evidence": "…",
-    "suggestion": "…"
+    "suggestion": "…",
+    "reproduction": "…"
   }
 ]
 ```
 
 - `severity` 只能是 `blocker` / `warning` / `nit`。blocker = 会导致错误结果、数据损坏、许可违规或 CI 失败的问题。
 - `line` 是问题所在的行号；若无法定位到单行，填 0（该条只会出现在汇总评论里，不做 inline）。
+- `reproduction` 是复现步骤（字符串）；无法复现的写明「无法复现，依据为代码阅读」并说明理由。
 - 无问题时输出空数组 `[]`，不要编造 finding。
 - fenced block 里只放 JSON，不要放其他文字。
+
+## 修复轮要求
+
+deep-reviewer 只负责审查与复核，不负责修复——修复由实施方（调用方/实施代理）另行执行。修复轮必须遵守：对用户验证属实的每个 bug，先写一个失败测试证明该 bug 存在，再修复问题，仔细检查修复（check your work），然后重跑该测试验证问题已解决。
