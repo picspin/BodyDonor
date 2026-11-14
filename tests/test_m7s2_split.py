@@ -181,6 +181,17 @@ class TestMetadataHonesty:
         assert cfg["threshold"] == 0.80
         assert cfg["enabled"] is True
 
+    def test_derived_hash_written_verbatim(self, thresholds: dict) -> None:
+        """note 引用的 derived_from_case_ids_hash 必须写出真实哈希值（不只是公式），
+        且与 eval/holdout.txt 实算一致——引用无值无法核对（deep-reviewer finding）。"""
+        for note in (
+            thresholds["rules"]["multi_teacher_consistency"]["note"],
+            thresholds["sampling_priority"]["note"],
+        ):
+            assert case_ids_hash(
+                [e.case_id for e in load_holdout()]
+            ) in note
+
     def test_sampling_priority_w3_w4_marked(self, thresholds: dict) -> None:
         """w3/w4 定义依据 30 例实测 → 节 source=holdout_30_dev；w1/w2 未调。"""
         cfg = thresholds["sampling_priority"]
