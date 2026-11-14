@@ -95,6 +95,7 @@ class TestTeacherReliability:
         assert teacher_reliability("liver", None) == "high"
         assert teacher_reliability("prostate", None) == "low"
 
+    @pytest.mark.local_artifacts
     def test_teacher_eval_product_loads_117_classes(self) -> None:
         counts = load_teacher_eval()
         assert counts is not None
@@ -377,8 +378,11 @@ class TestSubmitNniPersistence:
             tracker.record_draft(cls, arr, n_prompts)
         return tracker
 
+    @pytest.mark.local_artifacts
     def test_submit_nni_persists_interaction_metrics(self, committed_series) -> None:  # noqa: ANN001
-        """草稿序列 → tracker → submit-nni → MaskVersion.provenance.interactionMetrics。"""
+        """草稿序列 → tracker → submit-nni → MaskVersion.provenance.interactionMetrics。
+        :430 断言 teacherReliability 依赖 gitignored eval/holdout_results.json
+        （在位判 low，缺失判 high）→ CI -m 过滤跳过，同 S1 漏标教训。"""
         import nibabel as nib
         from fastapi.testclient import TestClient
 
@@ -555,6 +559,7 @@ class TestSubmitNniPersistence:
             assert r2.status_code == 422
 
 
+@pytest.mark.local_artifacts
 class TestCorrectSubmitE2E:
     """Blocker 修复验收（M6-E-A-REPORT §3 Blocker 1/2）：correct→abandon→
     correct→submit 全路径 HTTP 端到端（前端实际 payload 形状，真实 CPU 推理）。

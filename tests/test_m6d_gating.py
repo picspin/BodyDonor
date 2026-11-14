@@ -399,6 +399,7 @@ def _teacher_eval_counts() -> dict[str, int]:
     return counts
 
 
+@pytest.mark.local_artifacts
 @pytest.mark.skipif(
     not _real_products_available(),
     reason="~/data/BodyDonor 真实产物缺失（三档验收依赖 30 例 hold-out 教师+学生 mask）",

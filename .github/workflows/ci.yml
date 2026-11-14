@@ -32,11 +32,14 @@ jobs:
       - name: Install (locked, all extras)
         run: uv sync --all-extras --locked
       - name: Unit tests
-        run: uv run pytest -v
+        run: uv run pytest -v -m "not local_artifacts"
         # 覆盖：许可白名单负测试（tests/test_license_whitelist.py）、
         # AgentContext PHI 负测试（tests/test_agent_context_phi.py）、
         # Storage/Queue/Config、FastAPI 骨架、
         # DB 纪律 + Alembic upgrade/downgrade（tests/test_db.py）。
+        # -m "not local_artifacts"：依赖本机 ~/data/BodyDonor 或 eval/*.json
+        # 运行产物的测试跳过（CI 干净检出无这些文件），逻辑分支由合成 fixture
+        # 覆盖（marker 见 pyproject.toml）。
       - name: Alembic migration roundtrip (fresh db)
         run: |
           uv run alembic -x db_url=sqlite:///./ci_mig.db upgrade head

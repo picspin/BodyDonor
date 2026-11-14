@@ -72,6 +72,7 @@ def _interaction_thresholds(min_score: float = 0.0) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.local_artifacts
 @pytest.mark.skipif(
     not _real_patch_available(),
     reason="真实 case 缺失（amos_0004 patch 源文件不存在）",

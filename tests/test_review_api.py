@@ -468,6 +468,7 @@ class TestReviewPropagate:
 class TestReviewRiskQueue:
     """M5 异常驱动队列端点：M4 实测 Dice + 阶段 5 一致性 flag。"""
 
+    @pytest.mark.local_artifacts
     def test_risk_queue_order(self, committed_series) -> None:  # noqa: ANN001
         sid, storage, key, mask_key, settings = committed_series
         with client() as c:

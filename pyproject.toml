@@ -56,6 +56,11 @@ ignore = ["SIM108"]
 testpaths = ["tests"]
 addopts = "-q"
 pythonpath = ["."]
+markers = [
+    # 本地产物依赖（~/data/BodyDonor 真实数据、eval/*.json 运行产物）——
+    # CI 干净检出缺失，跳过；逻辑分支用合成 fixture 覆盖
+    "local_artifacts: 依赖本机 ~/data/BodyDonor 或 eval/*.json 产物，CI 跳过",
+]
 
 [dependency-groups]
 dev = [

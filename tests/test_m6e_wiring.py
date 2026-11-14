@@ -21,9 +21,6 @@ from bodydonor.qc_pipeline import qc_series
 from bodydonor.student_pred import StudentPrediction
 
 REPO = Path(__file__).resolve().parents[1]
-EVAL_BASELINE = json.loads(
-    (REPO / "eval" / "student_teacher_consistency.json").read_text(encoding="utf-8")
-)
 
 # 最小 thresholds：只开 multi_teacher_consistency（其余 disabled——回归只看该规则）
 MIN_THRESHOLDS = {
@@ -236,6 +233,8 @@ def _real_products_available() -> bool:
       （load_student_prediction 的产物路径）；DB passed ModelVersion 的
       weights_key 无法定位 nnUNet_raw/Dataset*/dataset.json 时同样缺失
       （load_student_prediction 会 raise），逐 case 捕获转 skip 条件。
+    - eval/student_teacher_consistency.json（mean Dice 基线，gitignored 运行
+      产物）——缺失时同样 skip（回归测试内惰性读取，探测先行保证一致）。
     """
     data = Path.home() / "data/BodyDonor"
     paths = [
@@ -243,6 +242,7 @@ def _real_products_available() -> bool:
         data / "downloads/ct_lite/ts_class_map.json",
         data / "downloads/ct_lite/ts_out",
         data / "student_holdout/pred/dataset.json",
+        REPO / "eval" / "student_teacher_consistency.json",
     ]
     if not all(p.exists() for p in paths):
         return False
@@ -264,9 +264,13 @@ def _real_products_available() -> bool:
     return True
 
 
+@pytest.mark.local_artifacts
 @pytest.mark.skipif(
     not _real_products_available(),
-    reason="~/data/BodyDonor 真实产物缺失（回归依赖 30 例 hold-out 教师+学生 mask）",
+    reason=(
+        "~/data/BodyDonor 真实产物或 eval 基线缺失"
+        "（回归依赖 30 例 hold-out 教师+学生 mask + mean Dice 基线 json）"
+    ),
 )
 def test_regression_419_pairs_flag_baseline() -> None:
     """30 例 hold-out 真跑 run_qc（教师 vs 学生），flag 集合对比离线评估 5 例。
@@ -279,6 +283,10 @@ def test_regression_419_pairs_flag_baseline() -> None:
     from bodydonor.qc import run_qc
     from bodydonor.student_pred import load_student_prediction
 
+    baseline_path = REPO / "eval" / "student_teacher_consistency.json"
+    baseline_mean = float(
+        json.loads(baseline_path.read_text(encoding="utf-8"))["overall"]["mean"]
+    )
     holdout = [
         line.split("\t")[0]
         for line in (REPO / "eval" / "holdout.txt").read_text().splitlines()
@@ -318,7 +326,6 @@ def test_regression_419_pairs_flag_baseline() -> None:
         f"flag 集合与基线差异 > ±1 例：diff={sorted(diff)}，flagged={sorted(flagged)}"
     )
     mean_dice = float(np.mean(dices))
-    baseline_mean = float(EVAL_BASELINE["overall"]["mean"])
     assert abs(mean_dice - baseline_mean) < 0.02, (
         f"mean Dice {mean_dice:.4f} 与 419 对基线 {baseline_mean} 偏差 ≥ 0.02"
     )
