@@ -1102,3 +1102,80 @@ def test_migration_builds_review_task_id_index(tmp_path: Path) -> None:
     assert "ix_decision_traces_review_task_id" in indexes, (
         f"迁移建库缺 review_task_id 索引，实际：{sorted(indexes)}"
     )
+
+
+def _run_alembic(url: str, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "alembic", "-x", f"db_url={url}", *args],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "VIRTUAL_ENV": str(REPO / ".venv"),
+        },
+    )
+
+
+def test_migration_s3_roundtrip_upgrade_downgrade_upgrade(tmp_path: Path) -> None:
+    """S3 做法 6 号项验收：f8a3b9c2d1e4 roundtrip（upgrade head → downgrade
+    a4f9e2c81d03 → upgrade head）。6 列全可空——存量 DecisionTrace 行（先建
+    14 列旧表并插一行）必须能升级；downgrade 后 6 列消失、原 14 列保留。"""
+    db = tmp_path / "mig_s3_roundtrip.db"
+    url = f"sqlite:///{db}"
+    r = _run_alembic(url, "upgrade", "a4f9e2c81d03")
+    assert r.returncode == 0, f"upgrade a4f9e2c81d03 失败：{r.stdout[-500:]}{r.stderr[-500:]}"
+    # 存量行：14 列旧表插一行（模拟升级前已有 trace）
+    c = sqlite3.connect(db)
+    try:
+        c.execute(
+            "INSERT INTO decision_traces (trace_id, series_id, mask_version_id,"
+            " timestamp, pipeline_stage) VALUES ('dt-pre', 's1', 'mv1',"
+            " '2026-11-15 00:00:00', 'qc_scoring')"
+        )
+        c.commit()
+    finally:
+        c.close()
+    # upgrade head（+6 列，存量行保留）
+    r = _run_alembic(url, "upgrade", "head")
+    assert r.returncode == 0, f"upgrade head 失败：{r.stdout[-500:]}{r.stderr[-500:]}"
+    c = sqlite3.connect(db)
+    try:
+        cols = {row[1] for row in c.execute("PRAGMA table_info(decision_traces)")}
+        assert {
+            "modality",
+            "teacher_id",
+            "distill_profile",
+            "skip_reason",
+            "config_hash",
+            "env",
+        } <= cols, (
+            f"upgrade head 后缺 S3 新列，实际：{sorted(cols)}"
+        )
+        row = c.execute(
+            "SELECT trace_id, modality FROM decision_traces WHERE trace_id='dt-pre'"
+        ).fetchone()
+        assert row == ("dt-pre", None), f"存量行未保留或 modality 非空：{row}"
+    finally:
+        c.close()
+    # downgrade a4f9e2c81d03（-6 列，原 14 列保留）
+    r = _run_alembic(url, "downgrade", "a4f9e2c81d03")
+    assert r.returncode == 0, f"downgrade 失败：{r.stdout[-500:]}{r.stderr[-500:]}"
+    c = sqlite3.connect(db)
+    try:
+        cols = {row[1] for row in c.execute("PRAGMA table_info(decision_traces)")}
+        assert "modality" not in cols and "trace_id" in cols and "rules_triggered" in cols, (
+            f"downgrade 后列集不对：{sorted(cols)}"
+        )
+    finally:
+        c.close()
+    # 再 upgrade head（幂等可重放）
+    r = _run_alembic(url, "upgrade", "head")
+    assert r.returncode == 0, f"再 upgrade head 失败：{r.stdout[-500:]}{r.stderr[-500:]}"
+    c = sqlite3.connect(db)
+    try:
+        cols = {row[1] for row in c.execute("PRAGMA table_info(decision_traces)")}
+        assert "skip_reason" in cols, f"再 upgrade 后缺新列：{sorted(cols)}"
+    finally:
+        c.close()

@@ -198,6 +198,7 @@ def qc_series(
                         interaction_metrics=interaction_metrics,
                         student_source=student_source,
                         thresholds=th,
+                        modality=modality_row,  # S3：qc_scoring trace 记模态
                     )
                 )
                 s.commit()
