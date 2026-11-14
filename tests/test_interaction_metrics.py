@@ -378,8 +378,11 @@ class TestSubmitNniPersistence:
             tracker.record_draft(cls, arr, n_prompts)
         return tracker
 
+    @pytest.mark.local_artifacts
     def test_submit_nni_persists_interaction_metrics(self, committed_series) -> None:  # noqa: ANN001
-        """草稿序列 → tracker → submit-nni → MaskVersion.provenance.interactionMetrics。"""
+        """草稿序列 → tracker → submit-nni → MaskVersion.provenance.interactionMetrics。
+        :430 断言 teacherReliability 依赖 gitignored eval/holdout_results.json
+        （在位判 low，缺失判 high）→ CI -m 过滤跳过，同 S1 漏标教训。"""
         import nibabel as nib
         from fastapi.testclient import TestClient
 
