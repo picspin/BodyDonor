@@ -85,7 +85,7 @@
 | 文件 | 条数 | 结果 |
 |---|---|---|
 | tests/test_m7_s3_modality.py（新增，2a；6 个 test 函数、1 个 parametrize 2 项、合计 7 项收集） | 7 | 全绿（2a 轮实测） |
-| tests/test_teacher_registry.py（新增，2b；2e 增 B1/W1/W8 测试） | 20 | 全绿（2e 轮实测） |
+| tests/test_teacher_registry.py（新增，2b；2e 增 B1/W1/W8 测试） | 19 | 全绿（2e 轮实测） |
 | tests/test_license_whitelist.py（改，2b；2e 改名 test_bare_settings_registry_ready_task_allowed） | 8 | 全绿（2e 轮实测） |
 | tests/test_m6f_trace.py（增 roundtrip，2c；2e 增 W10/W11 两列断言测试） | 20（17 + 1 roundtrip + 2 新增） | 全绿（2e 轮实测） |
 | tests/test_source_instances.py（2e 增 W9 raise 用例） | 10 | 全绿（2e 轮实测） |
@@ -249,7 +249,7 @@
   `Series.modality` 传入），`skip_reason` 由 `_skip_reasons(rs)` 填充——
   两条 trace 两列同源；补两列值断言测试（含 disabled 排除、全 disabled 返 None）。
 - **W12/W13/W14/W15/N8（报告事实错误）**：§2.2 条目名改正、§3.1 计数改正
-  （7 项/20 项/18→20 项）、§5 ruff 真实 16 文件清单、§6.1"主要"措辞 +
+  （7 项/19 项/18→20 项）、§5 ruff 真实 16 文件清单、§6.1"主要"措辞 +
   app.py:226 / export_seg.py:49 列入问题 1 范围、§1 补 d0824bf 与 2e 提交。
 - **Nit 全修**：N1 注释措辞、N3 迁移 roundtrip 逐列 type/notnull 断言、
   N4 `== 12` + (teacher_id, task) 唯一、N5 完整片段断言、N6 白名单模块
