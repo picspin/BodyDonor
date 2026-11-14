@@ -193,11 +193,15 @@ def record_gate_trace(
     review_task_id: str | None,
     sample_group: str | None,
     thresholds: dict[str, Any],
+    modality: str | None = None,
 ) -> DecisionTrace:
     """构造 gate_decision 阶段 trace（generate_review_tasks 分档+建任务同一事务）。
 
     gate_decision：{tier, review_task_generated, review_task_id?, sample_group?}；
     tier=auto → 不生成 ReviewTask（M6-d 语义）→ review_task_generated=False。
+    S3 W10：modality/skip_reason 与 qc_scoring trace 同源——modality 由
+    qc_pipeline 从 persisted QCReport.rule_scores 所属 Series 传入（generate_
+    review_tasks 候选池行含 Series.modality），skip_reason 从 rule_scores 提取。
     """
     return DecisionTrace(
         case_id=case_id,
@@ -222,6 +226,8 @@ def record_gate_trace(
         human_outcome=None,
         calibration=snapshot_calibration(thresholds),
         review_task_id=review_task_id,
+        modality=modality,
+        skip_reason=_skip_reasons(rule_scores),
     )
 
 

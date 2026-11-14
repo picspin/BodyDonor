@@ -218,6 +218,48 @@ def test_record_gate_trace_shape() -> None:
     assert t.calibration["gating_ratios"]["forced_ratio"] == 0.20
 
 
+def test_record_qc_trace_modality_and_skip_reason_columns() -> None:
+    """S3 W11 失败测试先行：qc_scoring trace 的 modality/skip_reason 两列
+    由入参/rule_scores 填充（disabled 排除、全 disabled 返回 None）。"""
+    t = record_qc_trace(**_qc_kwargs(), modality="CT")
+    assert t.modality == "CT"
+    # _skip_reasons：skipped 原文去重拼接，disabled 不记
+    assert t.skip_reason == "no student mask"
+    kw = _qc_kwargs()
+    kw["rule_scores"] = {
+        "interaction_convergence": {"skipped": "disabled"},
+        "interaction_abandonment": {"skipped": "no interaction metrics"},
+    }
+    t2 = record_qc_trace(**kw)
+    assert t2.skip_reason == "no interaction metrics"  # disabled 不进 skip_reason
+    kw["rule_scores"] = {"interaction_convergence": {"skipped": "disabled"}}
+    assert record_qc_trace(**kw).skip_reason is None  # 全 disabled → None（不造假空串）
+
+
+def test_record_gate_trace_modality_and_skip_reason_columns() -> None:
+    """S3 W10 失败测试先行：gate_decision trace 与 qc_scoring 同源——
+    modality/skip_reason 两列同样由入参/rule_scores 填充。"""
+    row = PriorityRow(mask_version_id="mv-x", priority=0.5, gating_tier="suggested")
+    t = record_gate_trace(
+        case_id="case-x",
+        series_id="series-x",
+        mask_version_id="mv-x",
+        qc_report_id="qc-x",
+        flags=[],
+        rule_scores={"multi_teacher_consistency": {"skipped": "no student mask"}},
+        interaction_metrics=None,
+        ranked_row=row,
+        component_availability=None,
+        tier="suggested",
+        review_task_id=None,
+        sample_group=None,
+        thresholds=MIN_THRESHOLDS,
+        modality="MR",
+    )
+    assert t.modality == "MR"
+    assert t.skip_reason == "no student mask"
+
+
 def test_record_gate_trace_auto_no_task() -> None:
     """tier=auto：不生成 ReviewTask（M6-d 语义）→ review_task_generated=False。"""
     row = PriorityRow(mask_version_id="mv-x", priority=0.0, gating_tier="auto")
@@ -1143,16 +1185,35 @@ def test_migration_s3_roundtrip_upgrade_downgrade_upgrade(tmp_path: Path) -> Non
     c = sqlite3.connect(db)
     try:
         cols = {row[1] for row in c.execute("PRAGMA table_info(decision_traces)")}
-        assert {
+        new_cols = {
             "modality",
             "teacher_id",
             "distill_profile",
             "skip_reason",
             "config_hash",
             "env",
-        } <= cols, (
+        }
+        assert new_cols <= cols, (
             f"upgrade head 后缺 S3 新列，实际：{sorted(cols)}"
         )
+        # N3：逐列断言 type 与 notnull（只查列名会放过 String(64)→String(63) 漂移）
+        info = {
+            row[1]: (row[2], row[3])
+            for row in c.execute("PRAGMA table_info(decision_traces)")
+        }
+        expect = {
+            # PRAGMA table_info 第 3 位 = notnull（0=nullable，6 列全部可空）
+            "modality": ("VARCHAR(16)", 0),
+            "teacher_id": ("VARCHAR(200)", 0),
+            "distill_profile": ("VARCHAR(32)", 0),
+            "skip_reason": ("VARCHAR(255)", 0),
+            "config_hash": ("VARCHAR(64)", 0),
+            "env": ("VARCHAR(32)", 0),
+        }
+        for name, (typ, notnull) in expect.items():
+            assert info[name] == (typ, notnull), (
+                f"列 {name} 类型/可空性漂移：{info[name]} != {(typ, notnull)}"
+            )
         row = c.execute(
             "SELECT trace_id, modality FROM decision_traces WHERE trace_id='dt-pre'"
         ).fetchone()

@@ -371,6 +371,8 @@ def generate_review_tasks(
             mv_map = {}
             # M6-f：series -> case_id（trace 用；Series.case_id 是普通列，无懒加载）
             case_by_series: dict[str, str | None] = {}
+            # S3 W10：series -> modality（gate_decision trace 与 qc_scoring 同源）
+            modality_by_series: dict[str, str | None] = {}
             if mv_ids:
                 for mv in (
                     s.execute(select(MaskVersion).where(MaskVersion.mask_version_id.in_(mv_ids)))
@@ -379,6 +381,7 @@ def generate_review_tasks(
                 ):
                     mv_map[mv.mask_version_id] = mv
                     case_by_series[mv.series_id] = mv.series.case_id
+                    modality_by_series[mv.series_id] = mv.series.modality
                     prov = mv.provenance if isinstance(mv.provenance, dict) else {}
                     im = prov.get("interactionMetrics")
                     # M6-c：w1/w2 数据源（per-class 过程指标，纯自动 case 为空）
@@ -485,6 +488,7 @@ def generate_review_tasks(
                             review_task_id=rt_id,
                             sample_group=group_out,
                             thresholds=th,
+                            modality=modality_by_series.get(mv.series_id),
                         )
                     )
                 s.commit()
