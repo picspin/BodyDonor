@@ -1,4 +1,4 @@
-# M7-S2-REPORT — 评估三集分离与元数据诚实（草稿）
+# M7-S2-REPORT — 评估三集分离与元数据诚实
 
 日期：2026-11-14。分支：`feat/m7-s2-three-set-split`（独立 worktree `~/work/BodyDonor-S2`，基于 main `7d644af`）。依据：NEXT-ITERATION-PLAN v3.2 §2 S2、M7-PLAN v3 §4.2/§4.3。
 
@@ -69,7 +69,7 @@
 
 ## 7. 测试与验证
 
-新增 `tests/test_m7s2_split.py` 19 条：
+新增 `tests/test_m7s2_split.py` 19 条（收尾轮 deep-reviewer 修复后 20 条，MetadataHonesty 新增 derived_hash_written_verbatim）：
 
 | 组 | 条数 | 覆盖 |
 |---|---|---|
@@ -82,21 +82,43 @@
 
 既有测试更新：`tests/test_qc.py` 2 条断言旧元数据（`cold_start`/`calibrated_on: 0`）更新为写实值（`holdout_30_dev`/30）——正是本次要改的不诚实元数据的防回归断言。
 
-本轮实跑（repo venv，pytest 9.2.0 `-q` 无尾行 summary，以 exit code + 点数为准）：
+### 收尾轮全量 pytest（2026-11-14）
 
-| 文件 | 结果 |
-|---|---|
-| test_m7s2_split.py | 19 passed |
-| test_holdout.py + test_interaction_metrics.py + test_distill_license_gate.py | 97 passed |
-| test_qc.py + test_qc_interaction.py + test_evaluate_holdout.py + test_evaluate_student_holdout.py | 75 passed |
-| test_m6c_priority.py + test_m6d_gating.py | 26 passed, 2 skipped |
-| test_m6e_wiring.py + test_review_api.py | 37 passed, 1 skipped |
-| test_qc_interaction_e2e.py + test_qc_api.py | 13 passed |
-| ruff（改动文件 + config） | All checks passed |
+`PYTHONPATH=~/work/BodyDonor-S2/src` + repo venv，620 项收集，**612 passed / 3 failed（重跑后全绿）/ 4 skipped**（首轮 316s + 重跑 90.75s）：
 
-跳过项（skipif 静默，既往模式）：test_m6c_priority.py:392（排序检验，~9 分钟）、test_m6d_gating.py:402（三档验收，~11 分钟）、test_m6e_wiring.py:267（419 对真实回归，~10 分钟）——均依赖 `~/data/BodyDonor` 真实教师+学生 mask，本 worktree 未跑（慢速真实数据测试下一轮随全量 pytest 执行）。test_m7s2_split.py 的本机 manifest 测试在 manifest 缺失时同样 skip（本机存在，实跑通过）。
+- 3 failed = `test_interaction_metrics.py::TestCorrectSubmitE2E` 3 条——**环境性 GPU 锁相撞**，非代码 bug：本 worktree 全量跑与另一会话（S1，主 checkout）的 pytest 并行，后者持 `~/data/BodyDonor/.gpu.lock` 批量推理锁，交互修正端点按设计 fast-fail 409（「等批量任务结束再试」）。**另一会话结束后重跑该类：3 passed（90.75s）——失败确认为锁相撞，代码无问题。**
+- 4 skipped 逐项（`pytest -rs` 逐文件核对，skipif 均为 `_real_products_available()`）：
+  - `test_m6d_gating.py::test_gating_three_tiers_30_holdout`（`:402`，三档验收）：**数据库为空**——`settings.database.url = sqlite:///./bodydonor.db` 相对 CWD，worktree 的 `bodydonor.db` 有表但 `model_versions` 0 行，`load_student_prediction('s0045')` 查不到 gate_status=passed 的学生版本即 raise → skip。主 checkout 的 db 有该行（环境性：worktree 无生产 db 数据，非本轮改动引入）。
+  - `test_m6e_wiring.py::test_regression_419_pairs_flag_baseline`（`:267`，419 对真实回归）：同原因。
+  - `test_m6c_priority.py::test_ranking_consistency_30_holdout_top20`（`:392`，排序检验）：同原因。
+  - `test_m6f_trace.py::test_real_holdout_trace_back_30_cases`（`:835`，trace 验收）：同原因。
+
+其余真实数据 skipif 文件全量跑中**未静默跳过**：`~/data/BodyDonor` 真实产物 + worktree `eval/` 复制件齐全，`test_qc_interaction_e2e.py`、`test_nninteractive_backend.py`、`test_interaction_metrics.py` 的真实推理测试在 316s 内真实跑过（TestCorrectSubmitE2E 3 条除外，见上）。
+
+ruff：全量 `ruff check .` All checks passed（`ruff format --check` 不在本仓库约定内，65 文件未 format 属既有状态，未动）。
 
 环境说明：repo `.venv` editable install 指向主 checkout（S1 工作区），本 worktree 用 `PYTHONPATH=~/work/BodyDonor-S2/src` 覆盖运行；eval 运行产物（holdout_results.json 等三个 gitignore 文件）从主 checkout 复制到本 worktree 供测试（只读复制，未提交）。
+
+## 7b. deep-reviewer 收尾审查（三约束流程：对抗审查 → 逐条复核 → 红绿修复）
+
+三个并行只读 subagent（split/hash、metrics/metadata、报告 docs）共报 12 条候选，逐条读码/实算复核：
+
+**已验证属实并修复（2 blocker 级处理，先失败测试后修复再绿）：**
+
+| # | severity | 位置 | 问题 | 处理 |
+|---|---|---|---|---|
+| 1 | blocker | `config/qc_thresholds.yaml:84`、`:179` | 两处 note 只写公式（「该 30 例排序 sha256 前 16 hex」）不写值，引用的 `derived_from_case_ids_hash` 无法核对 | 新增 `test_derived_hash_written_verbatim`（红：断言 note 含 holdout.txt 实算哈希）→ 两处写实 `218a663e218d4ce7` → 绿（20+55 passed）。提交 `d2a7209` |
+| 2 | warning | `M7-S2-REPORT.md` §7 | 测试表与文件不符：TestMetadataHonesty 标 5 实为 4（新测试前）、TestCaseIdsHash 3 条未列入，表合计 17 vs 正文 19 | 修正表（补 TestCaseIdsHash 行 + MetadataHonesty 覆盖列写实测算断言）。提交 `37e110c` |
+
+**复核后不修（未验证为缺陷，属设计决策/记录如实）：**
+
+- `check_derived_source` / `teacher_reliability_entry` 未接入生产路径：**如实**——报告 §5/§10 已写「新条目供 M7 消费」「本轮目标保持调用方行为一致」，提交说明与代码一致，属计划内接线，记未决第 2 项。
+- yaml `source: holdout_30_dev` 为静态手写字段无运行时校验：设计如此（config diff 即审计），防回归测试已挡误改。
+- `case_ids_hash(['a\nb']) == case_ids_hash(['a','b'])` 换行碰撞、空列表返回空串哈希：真实边界，但 gate/train 列表来自受控文件（30 例无重复无换行，实算核对），属理论碰撞，记未决。
+- `test_manifest_records_both_hashes` 未调 `prepare_dataset`：属实但测试 docstring 已如实写「最小覆盖：只验证 build_train_pool 层的哈希（prepare_dataset 预检需要 TS 真实 mask，属于 local_artifacts 范围）」，非名不符实。
+- 旧 manifest 无双哈希字段时 `if "train_case_ids_hash" in leak` 静默跳过：与 §10 第 5 项记录一致，S1 合流后补 marker 时一并收紧。
+
+**未决（不硬修）：** 上述后五条中前两条已如实记录，换行碰撞/空列表两条新增到 §10。
 
 ## 8. 与 S1 fixture 可能重复的记录
 
@@ -116,5 +138,20 @@
 1. **calib 集缺失**：派生统计来源哈希即 gate 哈希（样本内），另建 calib 集（开发划分或生产回流 ≥20 例）后须复核全部 `holdout_30_dev` 项（M7-PLAN §4.3.9）。
 2. **teacher_reliability_entry 的消费方接线**：新条目本轮未接入 w1/w4 消费路径（w1 仍读 provenance 条目的 `teacherReliability` 标记、w4 仍用低频名单）——保持调用方行为一致是本轮目标；M7 加权训练时切换到四元组条目 + low_frequency 独立特征。
 3. **local_artifacts marker**：待 S1 的 marker 注册合流后，为本机 manifest 测试补标。
-4. **全量 pytest**（约 600 项、25–43 分钟）下一轮跑；本轮只跑了受影响文件。
+4. **全量 pytest**：本收尾轮已跑（见 §7），慢速真实数据 skipif 项仍未跑（依赖 `~/data/BodyDonor` 真实 mask + TS 推理，~30 分钟）。
 5. **旧 manifest 无双哈希字段**：本机 Dataset501 manifest 是旧格式，重新准备数据时写入 `train_case_ids_hash`/`gate_case_ids_hash`（测试对旧格式兼容跳过）。
+6. **case_ids_hash 理论边界**（deep-reviewer 提出，复核属实但不修）：id 含 `\n` 时与拆分列表碰撞（`['a\nb']` ≡ `['a','b']`）、空列表返回空串哈希 `e3b0c442…`——gate/train 列表来自受控文件（30 例无重复无换行，实算核对），生产无此输入；若将来接受外部 id 列表，改为长度前缀或拒绝含 `\n`。
+7. **worktree 无生产 db 数据**：`model_versions` 在本 worktree `bodydonor.db` 为 0 行（db url 相对 CWD），4 条真实数据验收测试因此 skip——S1 合流或 CI 环境用固定 db url / fixture 注入后可跑。
+
+## 11. 提交列表
+
+| hash | 内容 |
+|---|---|
+| `ab8da49` | feat: 三集分离——case_ids_hash + check_derived_source + manifest 双哈希 |
+| `0473620` | feat: 可靠性表 (teacher,task,modality,class)+n，低频独立特征；w3 聚合理由显式 |
+| `51bb9e1` | feat: 元数据诚实——已调规则不再标 cold_start，写实 holdout_30_dev |
+| `3663c6e` | test: 三集分离 19 条 + 更新旧元数据防回归断言 |
+| `ea7afb4` | docs: M6-C/D/F 报告改标「样本内开发指标」+ M6-F 附录补记学生 0.8014 口径 |
+| `0fd341d` | docs: M7-S2-REPORT 草稿 |
+| `d2a7209` | fix: derived_from_case_ids_hash 写实值 + 防回归测试（deep-reviewer） |
+| `37e110c` | docs: §7 测试表修正（deep-reviewer） |
