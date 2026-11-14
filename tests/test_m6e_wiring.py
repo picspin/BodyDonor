@@ -21,9 +21,6 @@ from bodydonor.qc_pipeline import qc_series
 from bodydonor.student_pred import StudentPrediction
 
 REPO = Path(__file__).resolve().parents[1]
-EVAL_BASELINE = json.loads(
-    (REPO / "eval" / "student_teacher_consistency.json").read_text(encoding="utf-8")
-)
 
 # 最小 thresholds：只开 multi_teacher_consistency（其余 disabled——回归只看该规则）
 MIN_THRESHOLDS = {
@@ -318,7 +315,10 @@ def test_regression_419_pairs_flag_baseline() -> None:
         f"flag 集合与基线差异 > ±1 例：diff={sorted(diff)}，flagged={sorted(flagged)}"
     )
     mean_dice = float(np.mean(dices))
-    baseline_mean = float(EVAL_BASELINE["overall"]["mean"])
+    baseline_path = REPO / "eval" / "student_teacher_consistency.json"
+    baseline_mean = float(
+        json.loads(baseline_path.read_text(encoding="utf-8"))["overall"]["mean"]
+    )
     assert abs(mean_dice - baseline_mean) < 0.02, (
         f"mean Dice {mean_dice:.4f} 与 419 对基线 {baseline_mean} 偏差 ≥ 0.02"
     )
