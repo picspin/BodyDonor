@@ -64,5 +64,101 @@
 |---|---|
 | 069c9c9 | fix(m6e): 惰性读取 eval/student_teacher_consistency.json——干净检出 collection error 修复 |
 | 6d5735f | fix(m6e): skipif 探测补 eval 基线 json + baseline 惰性读取前移 fail fast |
+| 379c94e | docs: CI-FIX-REPORT 第 1 轮 |
+| 2c1e2a6 | test+ci: local_artifacts 标记 16 项本地产物依赖测试 + CI -m 过滤跳过（第 2 轮 S1） |
 
 git diff 全程只动 `tests/test_m6e_wiring.py`；eval/、config/qc_thresholds.yaml、M4 门禁结果零改动（git status 每次提交前核对，eval json 移走后已原样移回）。
+
+---
+
+# 第 2 轮（S1 细化，M7 计划 v3.2）
+
+**日期**：2026-11-14　**分支**：fix/ci-m6e-eval-file（HEAD 379c94e 起步）
+
+## 9. S1-1 本地产物依赖测试打标记（2c1e2a6）
+
+- `pyproject.toml` `[tool.pytest.ini_options]` 注册 `local_artifacts` marker（避免 unknown-mark warnings）。
+- `.github/workflows/ci.yml:35` Unit tests 步：`uv run pytest -v -m "not local_artifacts"`（job 其余步骤零重构）。
+
+### 标记清单（16 项测试 / 12 处装饰器）
+
+| 位置 | 测试 | 依赖 |
+|---|---|---|
+| tests/test_m6c_priority.py | test_ranking_consistency_30_holdout_top20 | 30 例 hold-out 教师+学生 mask + eval/holdout_results.json（低频名单） |
+| tests/test_m6d_gating.py | test_gating_three_tiers_30_holdout | 同上 |
+| tests/test_m6e_wiring.py | test_regression_419_pairs_flag_baseline | 30 例 hold-out + eval/student_teacher_consistency.json 基线 |
+| tests/test_m6f_trace.py | test_real_holdout_trace_back_30_cases | 30 例 hold-out + eval/holdout_results.json |
+| tests/test_qc_interaction_e2e.py | TestReplayRealPath（类级，2 测试） | 真实 amos_0004 patch（真实 nnInteractive CPU 推理） |
+| tests/test_interaction_metrics.py | TestCorrectSubmitE2E（类级，3 测试） | 真实 amos_0004 patch |
+| tests/test_nninteractive_backend.py | TestBboxScribbleRealRun（类级，2 测试） | 真实 amos_0004 patch |
+| tests/test_nninteractive_backend.py | TestRunnerContractCpu 的 test_cpu_small_input_real_run / test_session_id_unique_per_run（函数级） | real_patch fixture |
+| tests/test_review_api.py | test_risk_queue_order | eval/student_holdout_results.json（缺文件 503） |
+| tests/test_evaluate_student_holdout.py | test_holdout_results_json_scope_numbers | eval/student_holdout_results.json |
+| tests/test_interaction_metrics.py | test_teacher_eval_product_loads_117_classes | eval/holdout_results.json（load_teacher_eval） |
+
+**精度修正**：TestRunnerContractCpu 只函数级标记两个 real_patch 消费者——同类的 `test_empty_prompts_rejected` 是纯逻辑测试（`b"stub"` 桩文件），类级标记会让它被 CI 白跳过。
+
+### 逻辑分支合成覆盖（不取真实 holdout 内容）
+
+已有合成 fixture 未重复造：接线单测（test_m6e_wiring `_seed_mask_payload` 合成 mask）、qc_series 过程规则（test_qc_interaction_e2e TestSyntheticBoundary 合成 provenance/tracker）、门禁/采样/tier（test_qc/test_m6c_priority/test_m6d_gating 合成 rows）、trace 构造与回流（test_m6f_trace 合成 QCReport+DecisionTrace）。真实 hold-out 依赖只剩 5 个验收测试（上表前 4 行 + TestReplayRealPath），均已标记。
+
+## 10. S1-2 真实 holdout JSON 不入库核查
+
+- `git log --all --diff-filter=A -- "eval/*.json"` → **空**（无任何历史提交）。
+- `git ls-files eval/` → 仅 `.gitignore`、`build_holdout.py`、`evaluate_holdout.py`、`evaluate_student_holdout.py`、`holdout.txt`（固化的 case_id 列表，proposal §8 允许入仓）。
+- eval/.gitignore `*` 规则 + git add 默认不进 untracked → 第 1 轮无误提交。本轮 diff 零触碰 eval/。
+
+## 11. S1-3 Alembic roundtrip + License CLI 实测（CI 原命令）
+
+| 步骤 | 结果 |
+|---|---|
+| `uv run alembic -x db_url=sqlite:///./ci_mig.db upgrade head` | exit 0（a4f9e2c81d03） |
+| 同 `downgrade base` | exit 0 |
+| 同 `upgrade head` | exit 0；`rm -f ci_mig.db` |
+| `uv run bodydonor license check total` | ✔ allowed，exit 0 |
+| `! uv run bodydonor license check brain_aneurysm` | ✘ BLOCKED，exit 1（`!` 反转后过） |
+| `! uv run bodydonor license check heartchambers_highres` | ✘ not in whitelist，exit 1（同） |
+
+顺序性核实：三步同 job 顺序执行，GitHub 默认 shell `bash -e`，前一步失败中止后续——Unit tests 绿则后两步按序跑。ci.yml job 结构零改动。
+
+## 12. S1-4 「全量 flag 即通过」审计
+
+grep 全套 tests/ 找 `len(flagged) == len(holdout)` 类写法 → **无此模式，零改动**。三处候选逐一核实为真断言：
+
+| 位置 | 写法 | 定性 |
+|---|---|---|
+| tests/test_qc.py:353 | `len(plan.flagged_ids) == min(len([r for r in rows if not r["passed"]]), expected_flagged)` | 70/30 采样语义断言：flag 上限受 failed 数约束，非全量通过 |
+| tests/test_m6e_wiring.py:319 | `abs(len(flagged) - len(baseline)) <= 1` | M6-e 回归 ±1 例**容差**（用户明确不算全量通过），不误伤 |
+| tests/test_m6d_gating.py:96-99 | `all(tier_for_rank(i, 5, cfg) == "forced"/"auto")` | tier_for_rank 边界 config（1.0/0/0、0/0/1.0）的函数契约断言 |
+
+## 13. 第 2 轮验收数字
+
+| 条件 | 结果 |
+|---|---|
+| 移走 eval/student_teacher_consistency.json：`uv run pytest --collect-only -q` | **600 项，exit 0，无 collection error**（文件已原样移回） |
+| `uv run pytest -m "not local_artifacts"` | **584 passed, 16 deselected**，exit 0（71.9s） |
+| `pytest -m "local_artifacts" --collect-only` | 16 项（= 被排除清单，无一在 CI 跑） |
+| 全套 `pytest -q`（有文件条件） | 见 §15 |
+| `uvx ruff check src tests` | **All checks passed** |
+
+## 14. deep-reviewer findings（agent 对抗式静态深审，第 1+2 轮全范围）
+
+| # | 级别 | 位置 | 内容 | 复现步骤 | 处置 |
+|---|---|---|---|---|---|
+| W1 | Warning | tests/test_review_api.py:487 | test_risk_queue_unknown_series_404 未标记；client() 不带 with，lifespan 不跑 init_db，404 依赖 isolate_db_url 建表 | `pytest tests/test_review_api.py::TestReviewRiskQueue::test_risk_queue_unknown_series_404 -v` | **实跑 1 passed**——非问题（预期 404 断言成立） |
+| W2 | Warning | tests/test_nninteractive_backend.py:143/165/198 | TestLockMutex 三测试经 correct_image 访问 Settings() 默认 DB；CI 通过依赖 .venv-nninteractive 缺失抛 NnInteractiveError，环境变化断言语义变 | 本机（nni venv 存在）`pytest tests/test_nninteractive_backend.py::TestLockMutex -v` | **实跑 4 passed**——本机有 nni venv 时仍过（stub 输入在 runner 输入校验层 fail-fast，三测试断言的是锁层语义不依赖推理成败）；CI 无 venv 同样过。预存环境依赖如实记录，不属本轮 diff |
+| W3 | Warning | pyproject.toml:57 | addopts 未加 --strict-markers：marker 拼错只告警不报错，-m 过滤失效 | 把某测试 local_artifacts 写成 local_artifact 后 `pytest -m "not local_artifacts"`，无 strict 时该测试照跑 | 属实；不加 --strict-markers 是**预存 addopts 形态**（改 addopts 影响全套测试默认行为，超出本轮 surgical 范围）。当前 12 处标记拼写已逐一核对（§9 清单 + collect-only 16 项交叉验证），实际无拼错 |
+| N1 | Nit | .github/workflows/ci.yml:35 | `-v` 与 addopts `-q` 互相抵消，CI 日志详细程度不合预期 | `pytest -v -m "..." --co -q` 对比 | 预存形态（`-v` 第 1 轮前就有），不动 |
+| N2 | Nit | tests/test_evaluate_student_holdout.py:29 | esh fixture 按路径加载 eval 脚本，CI 导入未核实 | `pytest tests/test_evaluate_student_holdout.py -v` | **实跑 4 passed**——脚本顶层仅 argparse/json/subprocess 等标准库 + numpy + repo 内模块（sys.path.insert 后），DATA_ROOT 是常量不在 import 期读取，CI 干净导入无问题 |
+
+**Blocker：无**（审查者结论 + 调用方逐条实跑复核）。
+
+## 15. 全套 pytest（有文件条件）
+
+后台 10m 时限被 kill 一次（管道化缓冲），改前台后台化重跑收尾——结果以 log 尾行 + exit code 为准（真实 holdout 验收 30 例现算历史基线 951s）。
+
+## 16. 遗留（同 §7，另起修复）
+
+- 第 1 轮 W2（collection 期隐式访问 cwd 数据库）、W3（接线单测写真实数据目录残留）。
+- 第 2 轮 W3（--strict-markers 不在 addopts）如要收紧另起。
+- CI 绿后开 M7-a。
