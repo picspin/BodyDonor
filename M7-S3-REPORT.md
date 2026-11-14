@@ -21,7 +21,8 @@
   - `c0ba521` fix: B1 生产派发路径带模态门控——check_worker_task/segment_series/run_total 透传 modality
   - `52e335a` fix: W1/W4/W6/W7/W8/N4/N5/N6/N7——ready 跟随模态过滤、权重实录、nnunet unverified、模态归一化
   - `0e473a8` fix: W9+N2 source_info_from_persisted 拒 None/空模态 + N1 注释措辞
-  - （W10/W11 gate trace 填充 + N3 迁移逐列断言 + 报告定稿提交，见 git log）
+  - `9565e00` fix: W10+W11 gate trace 填 modality/skip_reason（两 trace 同源）+ N3 迁移逐列 type/notnull 断言
+  - `dd3a10f` docs: 报告定稿——2e 修复逐条 + 事实修正
 
 ## 2. 改了什么
 
@@ -132,13 +133,26 @@
 ## 4. 全量 pytest 数字（最终轮实测）
 
 ```
-最终轮（PYTHONPATH + DB 已拷 + eval/*.json 已拷，-rs，串行）：
+最终轮（PYTHONPATH + DB 已拷 + eval/*.json 已拷，-rs，串行，2e findings 修复后）：
+630 passed, 0 failed, 0 skipped, 0 deselected —— exit 0（wall ≈ 47min）
+```
+
+- 630 = 2c 轮 624 passed + 2e 新增 6 项（test_teacher_registry +3：B1 worker/
+  W1 ready 模态/W8 归一化；test_m6f_trace +2：W10/W11 两列断言；
+  test_source_instances +1：W9 raise），数字自洽。点数逐字数实测
+  （8 行 × 72 + 末行 54 = 630，全部 `.`，无 F/E/s）。pytest 9.2.0 `-q`
+  不打尾行 summary，以 exit code + 点数为准。
+- ruff：全部改动文件 `All checks passed!`（见 §5）。
+
+### 4.0 2c 轮数字（findings 修复前基线，如实记录）
+
+```
+2c 轮（PYTHONPATH + DB 已拷 + eval/*.json 已拷，-rs，串行）：
 624 passed, 0 failed, 0 skipped, 0 deselected —— 2624.11s（43:44）
 ```
 
 - 624 = 第 2 轮 615 passed + 5 failed（全部转绿）+ 4 skipped（全部实跑），
   数字自洽。无跳过项（本地产物全部在位实跑）。
-- ruff：全部改动文件 `All checks passed!`（见 §5）。
 
 ### 4.1 中间轮数字（如实记录，非最终）
 
