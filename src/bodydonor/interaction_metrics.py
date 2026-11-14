@@ -96,12 +96,62 @@ def teacher_reliability(
       low_frequency_classes() 口径）→ "low"。
     - 计数数据缺（per_class_case_count=None 或无该类）时只按显式名单判，
       不猜数字。
+
+    M7-S2 备注：低频与显式高风险现在是两个独立信号（见
+    teacher_reliability_entry —— 低频作为独立特征返回，不再与显式 low 折
+    成同一个 "low"）。本函数保留作调用方（tracker.build_metrics 打标）的
+    兼容入口，语义不变。
     """
     if cls in HIGH_RISK_TEACHER_CLASSES:
         return "low"
     if per_class_case_count and per_class_case_count.get(cls, 0) < MIN_PER_CLASS:
         return "low"
     return "high"
+
+
+def teacher_reliability_entry(
+    cls: str,
+    per_class_case_count: dict[str, int] | None = None,
+    task: str = "total",
+    modality: str = "ct",
+    teacher: str = "totalsegmentator",
+) -> dict[str, Any]:
+    """教师可靠性条目（M7-S2 重构）：按 (teacher, task, modality, class) 组织。
+
+    - 键维度：teacher/task/modality/class（四元组唯一标识一个可靠性度量；
+      现有教师评估产物只有 TS total CT 117 类，其余维度如实填缺省）。
+    - **n 附支持数**：per_class_case_count 里该类的 case 数（缺名单/缺类
+      如实 None/0，不猜）。
+    - reliability：显式高风险（prostate，M4 实测教师 prostate Dice 0.5914，
+      依据见 HIGH_RISK_TEACHER_CLASSES 注释）→ "low"；低频（< MIN_PER_CLASS
+      cases）→ "unknown"（支持数不足，可靠性无法判定）；缺数据 → "unknown"
+      （不猜）；其余 → "high"。
+    - **低频是独立特征**（low_frequency 布尔，< MIN_PER_CLASS cases），不再
+      折进 reliability——同一信号不再在可靠性先验与 w4 里被重复计入为不可靠
+      （消费方按需加权，w4 用 low_frequency，w1 用 reliability）。
+    """
+    n = None
+    if per_class_case_count is not None:
+        n = int(per_class_case_count.get(cls, 0))
+    low_frequency = n is not None and n < MIN_PER_CLASS
+    if cls in HIGH_RISK_TEACHER_CLASSES:
+        reliability = "low"  # 显式依据：M4 实测教师 prostate Dice 0.5914
+    elif n is None:
+        reliability = "unknown"  # 缺名单/缺类：不猜，缺数据本身是信号
+    elif low_frequency:
+        # 支持数不足，可靠性无法判定——信号在 low_frequency（独立特征），不再折成 "low"
+        reliability = "unknown"
+    else:
+        reliability = "high"
+    return {
+        "teacher": teacher,
+        "task": task,
+        "modality": modality,
+        "class": cls,
+        "n": n,
+        "reliability": reliability,
+        "low_frequency": low_frequency,
+    }
 
 
 def load_teacher_eval(
@@ -228,4 +278,5 @@ __all__ = [
     "load_teacher_eval",
     "restore_tracker_from_metrics",
     "teacher_reliability",
+    "teacher_reliability_entry",
 ]

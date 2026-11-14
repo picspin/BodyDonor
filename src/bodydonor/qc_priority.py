@@ -196,6 +196,13 @@ def component_disagreement(
     体素比较）。mean 聚合会稀释单类整类漏检（s0495 prostate min 0.0 而
     mean 0.8771），最差类聚合把整类漏检顶到 1.0（理由见模块 docstring）。
     返回 (分量值, 逐类 dice dict)——逐类 dice 供 w4 参评类集使用。
+
+    聚合方式与 rules.multi_teacher_consistency 的 mean **有意不同**（非静默
+    不一致，M7-S2 决策）：本分量目的是抽检排序「找出最坏 case 交人审」
+    （最差类，宁过审不漏审）；一致性规则目的是 QC flag「估整体一致率」
+    （mean，最差类在 0.80 下 flag 24/30 无判别力）。理由实证各自记录在
+    config/qc_thresholds.yaml 两处 note（M7-PLAN §4.3.6 二选一：写明理由
+    各自写死）。
     """
     rs = (rule_scores or {}).get(RULE_MULTI_TEACHER) if isinstance(rule_scores, dict) else None
     if not isinstance(rs, dict) or not isinstance(rs.get("per_class_dice"), dict):
