@@ -78,7 +78,7 @@ def main() -> int:
             t_case = time.monotonic()
             runner = run_total(
                 c.image_path, c.teacher_out, task="total", device="gpu",
-                settings=settings, job_id=job_id,
+                settings=settings, job_id=job_id, modality="CT",
             )
             elapsed = time.monotonic() - t_case
             # 成功后写来源清单（位置与 read_teacher_provenance 一致：

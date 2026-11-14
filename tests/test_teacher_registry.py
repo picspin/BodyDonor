@@ -21,6 +21,7 @@ from bodydonor.license_registry import (
     classify_missing_output,
     validate_entry,
 )
+from bodydonor.segmentation import SegmentWorkerError, check_worker_task
 
 
 def _settings(allowed: list[str] | None = None, blocked: list[str] | None = None) -> Settings:
@@ -109,7 +110,14 @@ def test_total_on_mr_routed_rejected_with_reason() -> None:
     """total 是 CT-only；套到 MR 须被路由拒绝并带模态原因（M7-S3 测试项 1）。"""
     ok, msg = LicenseRegistry(_settings()).check_task("total", modality="MR")
     assert not ok
-    assert "modality" in msg
+    assert "modality 'MR' not supported" in msg
+
+
+def test_worker_task_mr_rejected_via_check_worker_task() -> None:
+    """S3 B1 失败测试先行：worker 分发路径（check_worker_task）带 modality
+    时 CT-only 任务派 MR 被拒（生产派发链路的门控，不只函数层）。"""
+    with pytest.raises(SegmentWorkerError, match="modality 'MR' not supported"):
+        check_worker_task("total", _settings(), modality="MR")
 
 
 def test_total_on_ct_allowed() -> None:
