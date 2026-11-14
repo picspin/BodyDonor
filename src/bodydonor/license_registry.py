@@ -114,7 +114,15 @@ TEACHER_REGISTRY: list[dict] = [
             "注册表 provenance 引用该运行时值",
         },
         "ready": True,
-        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "weight_integrity": {
+            "sha256": "b3ac4421f85457bbd1aa0d87f5e67bcb7bc8e2ce6b824b6ac45077cc5d630ea9",
+            "size_bytes": 411387150,
+            "status": "verified",
+            "checkpoint_path": "~/data/BodyDonor/nninteractive-models/models/"
+            "nnInteractive_v1.0/fold_0/checkpoint_final.pth",
+            "license_runtime": "CC BY-NC-SA 4.0（checkpoint 文件夹 LICENSE 首行，"
+            "nni_runner 暴露为 session.license）",
+        },
         "class_map_ref": "prompt-targets/v1 (目标由交互提示决定，无固定类映射)",
         "data_contract_version": "v1",
     },
@@ -168,8 +176,11 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": None,
         "modalities": ("CT", "MR"),
         "output_type": "framework",
-        "research_use": "allowed",
-        "known_restrictions": ["框架条目：不附带权重；具体 mask 任务须逐任务登记"],
+        "research_use": "unverified",
+        "known_restrictions": [
+            "框架条目：不附带权重，不产生蒸馏资格（LICENSE-CHECK §七）；"
+            "具体 mask 任务须逐任务登记"
+        ],
         "provenance": {
             "source": "https://github.com/MIC-DKFZ/nnUNet (LICENSE)",
             "version": "v2",
@@ -226,6 +237,11 @@ def validate_entry(entry: dict) -> None:
         raise ValueError(
             f"mask 教师 {entry['teacher_id']}/{entry['task']} 缺 class_map_ref 或 "
             "data_contract_version（无法判断结构覆盖与跨教师比较）"
+        )
+    if entry.get("ready") and "待建" in str(entry.get("class_map_ref") or ""):
+        raise ValueError(
+            f"{entry['teacher_id']}/{entry['task']} ready=True 但 class_map_ref "
+            f"是占位（{entry['class_map_ref']}）——先落地类映射再 ready"
         )
     if entry["output_type"] == "feature" and not entry.get("feature_schema"):
         raise ValueError(f"feature 教师 {entry['teacher_id']} 缺 feature_schema")
@@ -343,15 +359,19 @@ class LicenseRegistry:
         entries = [e for e in TEACHER_REGISTRY if e["task"] == task]
         if entries:
             if modality is not None:
-                ok = [e for e in entries if modality in e["modalities"]]
+                # 归一化（W8）：与 qc.py 同口径（"mr"/" MR" 按 MR 处理）
+                m = modality.strip().upper()
+                ok = [e for e in entries if m in e["modalities"]]
                 if not ok:
                     return (
                         False,
                         f"task '{task}' modality '{modality}' not supported by registry "
                         f"(registered modalities: "
-                        f"{sorted({m for e in entries for m in e['modalities']})})",
+                        f"{sorted({mm for e in entries for mm in e['modalities']})})",
                     )
-            ready = [e for e in entries if e["ready"]]
+            ready = [e for e in ok if e["ready"]] if modality is not None else [
+                e for e in entries if e["ready"]
+            ]
             if not ready:
                 return (
                     False,

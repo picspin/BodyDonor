@@ -37,7 +37,9 @@ def _settings(allowed: list[str] | None = None, blocked: list[str] | None = None
 
 
 def test_all_entries_pass_validation() -> None:
-    assert len(TEACHER_REGISTRY) >= 11
+    assert len(TEACHER_REGISTRY) == 12
+    seen = {(e["teacher_id"], e["task"]) for e in TEACHER_REGISTRY}
+    assert len(seen) == 12  # (teacher_id, task) 唯一
     for e in TEACHER_REGISTRY:
         validate_entry(e)  # 不 raise 即通过
 
@@ -120,6 +122,41 @@ def test_worker_task_mr_rejected_via_check_worker_task() -> None:
         check_worker_task("total", _settings(), modality="MR")
 
 
+def test_ready_follows_modality_filter() -> None:
+    """S3 W1 失败测试先行：ready 判定跟随模态过滤——同 task 双模态条目
+    （CT ready=False、MR ready=True）下 CT 拒绝、MR 放行。"""
+    entry_ct = dict(TEACHER_REGISTRY[0])
+    entry_ct["modalities"] = ("CT",)
+    entry_ct["ready"] = False
+    entry_mr = dict(TEACHER_REGISTRY[0])
+    entry_mr["modalities"] = ("MR",)
+    entry_mr["ready"] = True
+    reg = LicenseRegistry(_settings())
+    from bodydonor import license_registry as lr
+
+    saved = lr.TEACHER_REGISTRY
+    lr.TEACHER_REGISTRY = [entry_ct, entry_mr]
+    try:
+        ok, _ = reg.check_task("total", modality="CT")
+        assert not ok  # CT 条目 ready=False → 拒绝（不落到 MR 条目）
+        ok, msg = reg.check_task("total", modality="MR")
+        assert ok, msg
+    finally:
+        lr.TEACHER_REGISTRY = saved
+
+
+def test_modality_normalization_case_and_whitespace() -> None:
+    """S3 W8 失败测试先行：模态比较归一化——小写/带空白按大写去空白处理。"""
+    ok, msg = LicenseRegistry(_settings()).check_task("total", modality=" ct ")
+    assert ok, msg
+    ok, msg = LicenseRegistry(_settings()).check_task("total", modality="ct")
+    assert ok, msg
+    # 归一化后仍不匹配的模态照拒
+    ok, msg = LicenseRegistry(_settings()).check_task("total", modality="PT")
+    assert not ok
+    assert "modality 'PT' not supported" in msg
+
+
 def test_total_on_ct_allowed() -> None:
     ok, _ = LicenseRegistry(_settings()).check_task("total", modality="CT")
     assert ok
@@ -172,7 +209,8 @@ def test_fallback_record_planned_then_executed() -> None:
     rec = FallbackRecord(planned={"teacher_id": "totalsegmentator", "task": "total"})
     rec.status = "executed"
     rec.actual = {"teacher_id": "totalsegmentator", "task": "total"}
-    assert rec.planned != rec.actual or rec.planned == rec.actual
+    assert rec.planned == {"teacher_id": "totalsegmentator", "task": "total"}
+    assert rec.actual == {"teacher_id": "totalsegmentator", "task": "total"}
     assert rec.status == "executed"
 
 

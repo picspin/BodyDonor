@@ -134,7 +134,10 @@ def _modality_skip(
     if not modality:
         return {"skipped": "modality_unknown"}
     allowed = RULE_MODALITIES.get(rule)
-    if allowed is not None and modality not in allowed:
+    # 归一化（W8）：DICOM Modality 大小写/空白不齐（"ct"/" CT"）按 CT 处理，
+    # 与 review_session.py 同口径
+    m = modality.strip().upper()
+    if allowed is not None and m not in allowed:
         return {"skipped": "modality unsupported"}
     return None
 
