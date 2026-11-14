@@ -95,6 +95,7 @@ class TestTeacherReliability:
         assert teacher_reliability("liver", None) == "high"
         assert teacher_reliability("prostate", None) == "low"
 
+    @pytest.mark.local_artifacts
     def test_teacher_eval_product_loads_117_classes(self) -> None:
         counts = load_teacher_eval()
         assert counts is not None
@@ -555,6 +556,7 @@ class TestSubmitNniPersistence:
             assert r2.status_code == 422
 
 
+@pytest.mark.local_artifacts
 class TestCorrectSubmitE2E:
     """Blocker 修复验收（M6-E-A-REPORT §3 Blocker 1/2）：correct→abandon→
     correct→submit 全路径 HTTP 端到端（前端实际 payload 形状，真实 CPU 推理）。

@@ -286,6 +286,7 @@ class TestRunnerContractCpu:
         dst = Path(tempfile.mkdtemp(prefix="nni-patch-")) / "amos_0004_patch48.nii.gz"
         return _make_small_patch(src, dst)
 
+    @pytest.mark.local_artifacts
     def test_cpu_small_input_real_run(self, real_patch: Path, tmp_path: Path) -> None:
         """CPU 小 patch 真实跑通：加载 → 点提示 → 出 mask → 落盘 sidecar。
 
@@ -346,6 +347,7 @@ class TestRunnerContractCpu:
         mask = nib.load(result.mask_path)
         assert_affine_match(img, mask, label="test_cpu_small_input")
 
+    @pytest.mark.local_artifacts
     def test_session_id_unique_per_run(self, real_patch: Path, tmp_path: Path) -> None:
         """sessionId 每次修正运行新生成（两次运行不同 uuid，可重放审计）。"""
         from bodydonor.nninteractive_backend import correct_image
@@ -503,6 +505,7 @@ class TestRunnerValidatePromptsScribble:
         assert out == [{"type": "bbox", "bbox": [[8.0, 12.0], [8.0, 12.0], [10.0, 11.0]]}]
 
 
+@pytest.mark.local_artifacts
 class TestBboxScribbleRealRun:
     """bbox / scribble 提示真实小输入验证（M4 阶段 3 同款 CPU 48^3 patch）。
 

@@ -832,6 +832,7 @@ def _real_products_available() -> bool:
     return True
 
 
+@pytest.mark.local_artifacts
 @pytest.mark.skipif(
     not _real_products_available(),
     reason="~/data/BodyDonor 真实产物缺失（trace 验收依赖 30 例 hold-out 教师+学生 mask）",

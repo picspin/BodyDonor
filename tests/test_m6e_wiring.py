@@ -264,6 +264,7 @@ def _real_products_available() -> bool:
     return True
 
 
+@pytest.mark.local_artifacts
 @pytest.mark.skipif(
     not _real_products_available(),
     reason=(

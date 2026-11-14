@@ -85,6 +85,7 @@ def test_scope_gate_semantics_in_scope_pass_naive_fail(esh):
     assert naive.failures  # naive 侧有具体失败条目
 
 
+@pytest.mark.local_artifacts
 def test_holdout_results_json_scope_numbers(esh):
     """results JSON 锁定实测口径数字（--skip-inference 重跑产物，非 mock）。"""
     results = (
