@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from bodydonor.config import Settings, TeacherConfig, load_settings
+from bodydonor.config import Settings, TeacherConfig
 from bodydonor.license_registry import (
     TEACHER_REGISTRY,
     FallbackRecord,
