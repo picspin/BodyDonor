@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .models import MaskVersion, QCReport, ReviewTask
+from .models import MaskVersion, QCReport, ReviewTask, Series
 from .qc import (
     QC_THRESHOLDS_PATH,
     RULE_MULTI_TEACHER,
@@ -74,8 +74,13 @@ def qc_series(
     interaction_convergence / interaction_abandonment 在生产路径真跑。
     无 provenance / 空 interactionMetrics（纯自动 case）→ run_qc 内显式
     skipped "no interaction metrics"（不进 flags、不计入 enabled 分母）。
+
+    S3 模态门闩：读 Series.modality 传给 run_qc（HU 规则只对 CT 真跑）；
+    modality 为 NULL/空（旧数据未回填）→ modality unknown，run_qc 内
+    skipped {"skipped": "modality_unknown"}，QCReport 留记录。
     """
     import numpy as np
+    from sqlalchemy import select
 
     from . import db
     from .storage import LocalFsStorage
@@ -89,6 +94,9 @@ def qc_series(
 
             s = Session(conn)
             mv = _latest_mask_version(s, series_id)
+            modality_row = s.execute(
+                select(Series.modality).where(Series.series_id == series_id[:60])
+            ).scalar_one_or_none()
             s.close()
     finally:
         engine.dispose()
@@ -158,6 +166,7 @@ def qc_series(
         student_mask_arr=student_mask_arr,
         student_classes=student_classes,
         interaction_metrics=interaction_metrics,
+        modality=modality_row,
     )
     # QCReport + qc_scoring DecisionTrace 落库（单一写入纪律；同一事务）
     engine = db._engine(url)
