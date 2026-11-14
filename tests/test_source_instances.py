@@ -191,6 +191,23 @@ class TestSegExportRealReferences:
         assert rep.ok, rep.errors
         assert rep.voxel_diff_nonzero == 0
 
+    def test_source_info_raises_on_missing_modality(self) -> None:
+        """S3 W9+N2：persisted/modality 为 None 时显式 raise（不静默缺省）。"""
+        with pytest.raises(ValueError, match="modality"):
+            source_info_from_persisted(
+                {"rows": 32, "columns": 32, "instances": []},
+                "1.2.826.0.1.3680043.8.498.fallback",
+                "1.2.826.0.1.3680043.8.498.123",
+                None,
+            )
+        with pytest.raises(ValueError, match="persisted"):
+            source_info_from_persisted(
+                None,
+                "1.2.826.0.1.3680043.8.498.fallback",
+                "1.2.826.0.1.3680043.8.498.123",
+                "CT",
+            )
+
 
 class TestCommitWithFixture:
     def test_commit_persists_instances(

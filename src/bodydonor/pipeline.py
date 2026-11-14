@@ -311,6 +311,11 @@ def source_info_from_persisted(
             "source_info_from_persisted: persisted 为 None——调用方应走合成 fallback，"
             "不传 None 进本函数"
         )
+    if not modality:
+        raise ValueError(
+            "source_info_from_persisted: modality 为 None/空——模态必须显式给出"
+            "（M7-S3 8dc6549 同语义，不静默缺省）"
+        )
     instances = persisted.get("instances", [])
     first = instances[0] if instances else {}
     iop = tuple(first.get("image_orientation_patient") or (1.0, 0.0, 0.0, 0.0, 1.0, 0.0))

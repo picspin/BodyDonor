@@ -481,7 +481,8 @@ def run_qc(
     - 模态门闩（S3）：modality 给出且规则不在 RULE_MODALITIES 适用名单 →
       skipped {"skipped": "modality unsupported"}；modality 未知（None/空）
       → skipped {"skipped": "modality_unknown"}（跳过写原因，不静默按 CT）。
-      未声明模态的规则不受影响（向后兼容：恒开检查、volume_prior 等照跑）。
+      未声明模态的规则不受影响（恒开检查、volume_prior 等照跑）——modality
+      未传/未知时 HU 规则跳过，不再静默按 CT。
     """
     import numpy as np
 
