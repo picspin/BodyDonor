@@ -155,7 +155,7 @@ grep 全套 tests/ 找 `len(flagged) == len(holdout)` 类写法 → **无此模�
 
 ## 15. 全套 pytest（有文件条件）
 
-后台 10m 时限被 kill 一次（管道化缓冲），改前台后台化重跑收尾——结果以 log 尾行 + exit code 为准（真实 holdout 验收 30 例现算历史基线 951s）。
+后台 10m 时限被 kill 两次（uv 包装器超时上限），改 `nohup` 裸 pytest（`-p no:warnings -rN`）收尾：**600 passed in 2606.19s（43m26s）**，exit 0——600 项全 dots 无 skip（本机 eval json + holdout 数据齐全，回归测试真跑）。真实 holdout 验收 30 例现算段（3 个 ×~13min CPU 推理）是主耗时。
 
 ## 16. 遗留（同 §7，另起修复）
 
