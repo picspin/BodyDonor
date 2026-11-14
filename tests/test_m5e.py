@@ -45,11 +45,11 @@ def test_alembic_upgrade_head_on_fresh_db(tmp_path: Path) -> None:
     )
     assert r.returncode == 0, f"alembic upgrade 失败：{r.stdout[-500:]}{r.stderr[-500:]}"
     c = sqlite3.connect(db)
-    # head = a4f9e2c81d03（M6-f decision_traces 建表，2026-11-12 加到链尾；
-    # M0-stale b8e21c4a7f05 仍是链中段，不回退）。head 断言只校验链尾后缀，
+    # head = f8a3b9c2d1e4（M7-S3 decision_traces 增 6 列，2026-11-15 加到链尾；
+    # M6-f a4f9e2c81d03 仍是链中段，不回退）。head 断言只校验链尾后缀，
     # 不 hardcode 完整历史（M6-f 起新表迁移加链尾，断言跟随 head 更新）。
     assert c.execute("SELECT version_num FROM alembic_version").fetchone() == (
-        "a4f9e2c81d03",
+        "f8a3b9c2d1e4",
     )
     # M6-f：decision_traces 表存在（head 迁移语义实证）
     trace_cols = {row[1] for row in c.execute("PRAGMA table_info(decision_traces)")}
