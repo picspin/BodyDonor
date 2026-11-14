@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,52 @@ MIN_LOCAL_CORRECTIONS = 5
 # 门禁判据（proposal §8：mean Dice + 每类 Dice 下限 + 整类漏检）
 MEAN_DICE_FLOOR = 0.75
 PER_CLASS_DICE_FLOOR = 0.5
+
+# ---------------------------------------------------------------------------
+# 三集分离（M7-PLAN §4.2）：gate / calib / train
+# ---------------------------------------------------------------------------
+# gate = eval/holdout.txt 30 例（ts_public 15 + amos 15）：只用于最终验收与
+#   回归；case 列表冻结，case_ids_hash 由 case_ids_hash() 算。
+# calib = **现状 pending/空**（无独立校准集）：teacher_reliability 低频名单、
+#   w4 低频名单、multi_teacher_consistency 聚合方式、sampling_priority 权重
+#   目前全部派生自这 30 例 hold-out —— 其 derived_from_case_ids_hash 就是
+#   gate 的哈希，须标「样本内开发指标」（in-sample dev），不得冒充独立校准。
+#   在另建 calib 集（开发划分或生产回流 ≥20 例）之前，不再用这 30 例调阈值、
+#   名单或聚合方式（M7-PLAN §4.3.9）。
+# train = 蒸馏训练实际用的 case 列表（distill_data.build_train_pool，manifest
+#   n_cases=35：AMOS 25 + CT-Lite 10），与 gate 已验证不相交（check_leak +
+#   manifest leak_check）。
+
+
+def case_ids_hash(case_ids: list[str]) -> str:
+    """冻结 case 列表的哈希（sha256，排序后 '\\n' 连接的 utf-8 摘要，16 hex）。
+
+    集合身份凭据：同一集合无论增删重排，哈希即变。gate/calib/train 各自
+    冻结列表后记录；派生统计的 derived_from_case_ids_hash 引用同一格式。
+    """
+    return hashlib.sha256("\n".join(sorted(case_ids)).encode("utf-8")).hexdigest()[:16]
+
+
+def check_derived_source(
+    derived_case_ids: list[str],
+    gate_case_ids: list[str] | None = None,
+    path: Path | None = None,
+) -> None:
+    """派生统计来源与 gate 相交检查（M7-PLAN §4.3.2）。
+
+    derived_case_ids：该统计派生自的 case 列表。与 gate 交集非空 → LeakError
+    （样本既用来调参又用来验收 = 评估/校准泄漏，非空即中止；gate 派生统计
+    须标「样本内开发指标」而不是改列表）。
+    """
+    if gate_case_ids is None:
+        gate_case_ids = [e.case_id for e in load_holdout(path)]
+    overlap = sorted(set(derived_case_ids) & set(gate_case_ids))
+    if overlap:
+        raise LeakError(
+            f"派生统计来源与 gate 相交（{len(overlap)} 例）：{overlap[:10]}"
+            f"{'…' if len(overlap) > 10 else ''}。gate 只用于验收，派生统计"
+            "来源须与 gate 不相交（M7-PLAN §4.3.2 三集分离）。"
+        )
 
 
 @dataclass
@@ -389,6 +436,8 @@ __all__ = [
     "MIN_PER_CLASS",
     "PER_CLASS_DICE_FLOOR",
     "ModelVersionError",
+    "case_ids_hash",
+    "check_derived_source",
     "check_leak",
     "low_frequency_classes",
     "check_per_class_coverage",
