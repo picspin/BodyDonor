@@ -73,9 +73,10 @@
 
 | 组 | 条数 | 覆盖 |
 |---|---|---|
+| TestCaseIdsHash | 3 | 排序稳定性 + 增删即变 / gate 哈希与已知值一致（实算断言） |
 | TestCheckDerivedSource | 3 | 派生统计来源与 gate 不相交通过 / 相交 LeakError / 默认读真 gate 文件（gate 自身派生 → LeakError） |
 | TestThreeSetSplit | 3 | train 池与 gate 不相交（check_leak 真跑）/ train_hash != gate_hash / 本机真实 manifest 双哈希+不相交（local_artifacts，缺失 skip） |
-| TestMetadataHonesty | 5 | multi_teacher source=holdout_30_dev+calibrated_on=30+数值未动 / sampling_priority w3/w4 标记+w1/w2 未调如实记 / 8 条未调规则保持 cold_start / gating 保持 cold_start |
+| TestMetadataHonesty | 5 | multi_teacher source=holdout_30_dev+calibrated_on=30+数值未动 / derived_from_case_ids_hash 写实值且与 holdout.txt 实算一致 / sampling_priority w3/w4 标记+w1/w2 未调如实记 / 8 条未调规则保持 cold_start / gating 保持 cold_start |
 | TestReliabilityEntry | 5 | (teacher,task,modality,class) 组织 / n+低频独立（unknown）/ prostate 显式 low+依据 / 缺数据 unknown / 维度覆盖 |
 | TestCompatEntry | 1 | teacher_reliability 语义不变 |
 
