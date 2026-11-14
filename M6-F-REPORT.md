@@ -116,6 +116,8 @@ M6-F 真实 hold-out trace: {
 
 amos_0004（M6-c 排序验收同一 case，prostate 整类分歧逐类 min 0.0）rank 1 → forced；w1/w2 null（无交互轨迹，availability=False 如实记录）；w3=1.0（最差类聚合把整类漏检顶到 1.0）；w4=0.0667（参评类 15 类中 1 类低频）；三档 6/18/6 与 M6-D-REPORT 三档验收一致。s0209 同样在 forced 区（M6-c 排序验收 rank 6）。amos_0014 共同盲区 case 在本实现中仍落 auto（教师/学生 prostate 双空 → 逐类比较无该类 → w3 无该类信号）——与 M6-d 如实记录的诚实边界一致，由 M4 结果规则/QC flag 覆盖，trace 不掩盖（coverage/components 如实为空）。
 
+**M7-S2 改标（2026-11-14）**：本节 trace-back 基于 30 例 hold-out（gate 集）现算，该批 case 同时承担 w3/w4 定义校准与 priority 排序验证——**以上分档比例（6/18/6）与排名为「样本内开发指标」（in-sample dev），不得冒充独立验收**。派生统计来源哈希见 config/qc_thresholds.yaml note 与 M7-S2-REPORT，独立 calib 集建好后须复核。原数字与原结论不动。
+
 ## 7. 测试与结果
 
 `tests/test_m6f_trace.py`（16 条，deep-reviewer 修复轮后）：
@@ -209,3 +211,8 @@ pytest：**16 passed**（test_m6f_trace.py 除真实 hold-out 例 15 passed ~4s�
 3. **human_outcome 回流**：M4 报告决策 0/20，本轮回流端点补填已接通（测试实证），生产标签积累是运营侧事项。
 4. **学习型门控器**（逻辑回归/小型 GBDT）：M7、标签 ≥20 例后；trace 的 rules_triggered/组件值即训练特征底账。
 5. **pipeline_stage 粒度**：student inference / multi-teacher 阶段不另记行（§2 说明其输出已入 input_refs/process_signals）；若 M7 需要推理级粒度（如逐步草稿 delta 回放），由 nninteractive 侧 provenance 承接，不在 DecisionTrace。
+
+## 12. 附录：M7-S2 补记（2026-11-14）
+
+- **学生门禁 0.8014 / `gate_status` passed 的来源与口径**（M4-REPORT §1.6 `27387c8`）：学生只训了 15 类（DISTILL_CLASSES，AMOS 15 类同源），门禁分口径评——**in-scope**（`gate_scope="student-15-classes"`）mean **0.8014**、passed True、failures 空、整类漏检空；naive 117 类对照（mean 0.1027、passed False，63 条每类下限失败）保留在 summary["scope_naive"] 留作口径对照，不删。首轮按 117 类评得 0.1027 FAIL 已落库是**口径错误**（102 个超范围类天然 dice=0，完美学生也永远 FAIL）；DB 已从 failed/0.1027 纠正为 passed/0.8014（读回核对），旧值在 M4-REPORT 与提交信息里写明，不掩盖。验收语料 = eval/holdout.txt 30 例 gate 集——**M7-S2 改标：0.8014 是样本内开发指标**（该批 case 同时用于蒸馏名单排除与门禁验收；derived_from_case_ids_hash = gate 30 例哈希，见 config/qc_thresholds.yaml note 与 M7-S2-REPORT）。
+- **三集分离改标**：M6-C/D/F 基于 30 例的门控比例已在 §6（本文件）与 M6-C/D-REPORT 相应节改标「样本内开发指标」；calib 集现状 pending/空，独立 calib 建好后须复核。

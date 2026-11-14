@@ -69,6 +69,8 @@ prostate 漏检 case 各自 rank/tier、auto 区清单、三档计数。）
   amos_0004（rank 1）、s0495（rank 3）、amos_0016（rank 4）——**全部
   forced**。
 
+**M7-S2 改标（2026-11-14）**：本节三档比例与验收基于 30 例 hold-out（gate 集）现算，该批 case 同时承担 w3/w4 定义校准与 priority 排序验证——**以上门控比例为「样本内开发指标」（in-sample dev），不得冒充独立验收**；分档比例本身仍是 cold_start 未校准（gating 节 source 未动）。派生统计来源哈希见 config/qc_thresholds.yaml note 与 M7-S2-REPORT，独立 calib 集建好后须复核。原数字与原结论不动。
+
 **prostate 漏检 case 与 M6-c zero_dice_cases 的出入（如实记录）**：任务书
 的验收 2 指 M6-c 报告 zero_dice_cases（amos_0004/0011/0014/0015/0016，M4
 教师离线评估教师 prostate dice=0）。本轮实测五例的教师/学生 prostate 体素：
