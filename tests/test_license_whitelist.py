@@ -78,10 +78,16 @@ def test_commercial_distill_whitelist_only_total() -> None:
 
 
 def test_bare_settings_fail_closed() -> None:
-    """无配置时白名单为空——fail-closed，任何任务都拒绝。"""
+    """无配置时白名单为空——未注册任务 fail-closed。
+
+    M7-S3：check_task 数据来源改读注册表（代码级静态条目，Apache-2.0 已核查），
+    注册表内 ready 条目放行；白名单外的未注册任务仍 fail-closed。
+    """
     t = Settings().teacher
     assert t.allowed_tasks == []
     ok, _ = LicenseRegistry(Settings()).check_task("total")
+    assert ok  # 注册表代码级条目，非配置
+    ok, _ = LicenseRegistry(Settings()).check_task("totally_unregistered_task")
     assert not ok
 
 
