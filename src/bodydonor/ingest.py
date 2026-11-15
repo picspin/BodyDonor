@@ -361,8 +361,9 @@ def _build_dicom_series(
             report.n_skipped += 1
         return None
 
-    # Series 元数据（W4：缺失标签 -> None，不是字符串 "None"）
-    modality = str(getattr(first_ds, "Modality", None) or None) or None
+    # Series 元数据（W4：缺失标签 -> Python None，不是字符串 "None"）
+    raw = getattr(first_ds, "Modality", None)
+    modality = (str(raw).strip() or None) if raw is not None else None
     if modality and requested_modality and modality != requested_modality:
         # W3：DICOM 头与显式入参冲突 -> 报告 warning（不静默以头为准）
         report.warnings.append(
