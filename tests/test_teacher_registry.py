@@ -3,7 +3,7 @@
 - 注册表字段完整性：mask 教师缺 class_map_ref / data_contract_version 拒绝登记；
   feature 教师缺 feature_schema 拒绝登记。
 - check_task 读注册表：total 套到 MR 被路由拒绝并带原因；未就绪任务拒绝；
-  blocked 仍一票否决；allowed_tasks 白名单仍兜底。
+  blocked 仍一票否决；白名单回退已退役（M7-S3F ②）——注册表无条目即拒绝。
 - 回退语义：planned/actual、跳过写原因、结构未覆盖 vs 输出缺失区分。
 
 纯合成 fixture，不依赖本地产物，CI 可跑。
@@ -37,9 +37,9 @@ def _settings(allowed: list[str] | None = None, blocked: list[str] | None = None
 
 
 def test_all_entries_pass_validation() -> None:
-    assert len(TEACHER_REGISTRY) == 12
+    assert len(TEACHER_REGISTRY) == 36
     seen = {(e["teacher_id"], e["task"]) for e in TEACHER_REGISTRY}
-    assert len(seen) == 12  # (teacher_id, task) 唯一
+    assert len(seen) == 36  # (teacher_id, task) 唯一
     for e in TEACHER_REGISTRY:
         validate_entry(e)  # 不 raise 即通过
 
@@ -181,14 +181,48 @@ def test_unknown_task_rejected() -> None:
     assert "registry" in msg
 
 
-def test_allowed_tasks_whitelist_fallback() -> None:
-    """注册表无条目、但 settings 白名单有 → 兜底放行（接口不变）。"""
-    ok, _ = LicenseRegistry(_settings(allowed=["legacy_task"])).check_task("legacy_task")
-    assert ok
+def test_whitelist_fallback_retired() -> None:
+    """M7-S3F ② 失败测试先行：白名单回退已退役——注册表无条目即拒绝带原因，
+    改 allowed_tasks 内容不再影响路由结果。"""
+    ok, msg = LicenseRegistry(_settings(allowed=["legacy_task"])).check_task("legacy_task")
+    assert not ok
+    assert "not in teacher registry" in msg
+    # blocked/ready 语义不受白名单影响：blocked 一票否决保持
+    ok, msg = LicenseRegistry(_settings(allowed=["brain_aneurysm"])).check_task("brain_aneurysm")
+    assert not ok
+    assert "BLOCKED" in msg
 
 
-def test_registered_task_works_without_whitelist() -> None:
-    """注册表条目路由不依赖 allowed_tasks（替换数据来源，接口保留）。"""
+def test_allowed_tasks_registered_tasks_route_via_registry() -> None:
+    """M7-S3F ② 失败测试先行：allowed_tasks 的分割任务已登记进注册表——
+    路由走注册表（ready=False 拒绝、unverified 标记、空配置可拒绝/可放行）。"""
+    from bodydonor.license_registry import TEACHER_REGISTRY as R
+
+    by_task = {e["task"]: e for e in R}
+    # 19 个 TS 任务（24 个待登记 - lung_vessels_LEGACY 不登记 - vertebrae_body 单列）
+    for t in (
+        "lung_vessels", "body", "cerebral_bleed", "hip_implant",
+        "pleural_pericard_effusion", "head_glands_cavities", "head_muscles",
+        "headneck_bones_vessels", "headneck_muscles", "liver_vessels",
+        "oculomotor_muscles", "lung_nodules", "kidney_cysts", "breasts",
+        "liver_segments", "craniofacial_structures", "abdominal_muscles",
+        "ventricle_parts", "teeth", "trunk_cavities", "liver_lesions",
+        "vertebrae_pp", "vertebrae_pp_refined", "vertebrae_body",
+    ):
+        e = by_task.get(t)
+        assert e is not None, f"{t} 应已登记进注册表"
+        assert e["teacher_id"] == "totalsegmentator"
+        assert e["ready"] is False  # 权重未部署，一律不造假 ready
+    # open 清单双证据齐全组 → allowed；仅 README 单证据组 → unverified
+    assert by_task["lung_vessels"]["research_use"] == "allowed"
+    assert by_task["teeth"]["research_use"] == "unverified"
+    assert by_task["vertebrae_body"]["research_use"] == "unverified"
+    assert any("commercial_models" in r for r in by_task["vertebrae_body"]["known_restrictions"])
+    # 空配置（allowed_tasks=[]）下已登记任务走注册表：ready=False 拒绝带原因
+    ok, msg = LicenseRegistry(_settings(allowed=[])).check_task("lung_vessels", modality="CT")
+    assert not ok
+    assert "not ready" in msg
+    # ready 条目（total）不依赖白名单
     ok, _ = LicenseRegistry(_settings(allowed=[])).check_task("total", modality="CT")
     assert ok
 

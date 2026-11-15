@@ -210,6 +210,111 @@ TEACHER_REGISTRY: list[dict] = [
         "class_map_ref": "flexray-classes/v1 (待建)",
         "data_contract_version": "v1",
     },
+] + [
+    # TS 公开 subtasks 第二批（M7-S3F ②）：allowed_tasks 全量登记进注册表，
+    # 路由只走注册表。本组：README open 清单 + TS 2.10.0 安装包双证据齐全。
+    {
+        "teacher_id": "totalsegmentator",
+        "task": t,
+        "checkpoint_id": "unpinned (权重未下载)",
+        "modalities": ("CT",),
+        "output_type": "mask",
+        "research_use": "allowed",
+        "known_restrictions": [],
+        "provenance": {
+            "source": "https://github.com/wasserth/TotalSegmentator/ (README Subtasks open 清单)",
+            "version": "2.10.0",
+            "verified": "M7-S3F ②：LICENSES-THIRD-PARTY.md §1.2 open 清单（访问 2026-11-06，"
+            "Apache-2.0 权重）+ TS 2.10.0 安装包 map_to_binary.class_map 含该任务且 "
+            "commercial_models 不含",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "class_map_ref": "ts-classes/v1 (TS 2.10.0 map_to_binary.class_map)",
+        "data_contract_version": "v1",
+    }
+    for t in (
+        "lung_vessels",
+        "body",
+        "cerebral_bleed",
+        "hip_implant",
+        "pleural_pericard_effusion",
+        "head_glands_cavities",
+        "head_muscles",
+        "headneck_bones_vessels",
+        "headneck_muscles",
+        "liver_vessels",
+        "oculomotor_muscles",
+        "lung_nodules",
+        "kidney_cysts",
+        "breasts",
+        "liver_segments",
+        "craniofacial_structures",
+        "abdominal_muscles",
+        "ventricle_parts",
+    )
+] + [
+    # 本组仅在 README open 清单（LICENSES-THIRD-PARTY.md §1.2），本地 TS 2.10.0
+    # 安装包 class_map 不含（ vertebrae_pp_refined 在 2.10.0 无此类）——许可证据
+    # 单一来源，结构未核实。licens 摘要：仍按 open 清单登记 allowed，
+    # ready=False（未核实），注册表 provenance 记明差异。
+    {
+        "teacher_id": "totalsegmentator",
+        "task": t,
+        "checkpoint_id": "unpinned (权重未下载；2.10.0 安装包 class_map 不含该任务)",
+        "modalities": ("CT",),
+        "output_type": "mask",
+        "research_use": "unverified",
+        "known_restrictions": [
+            "仅 README open 清单（Apache-2.0 权重，访问 2026-11-06）；"
+            "本地 TS 2.10.0 安装包 class_map 不含，结构输出未核实"
+        ],
+        "provenance": {
+            "source": "https://github.com/wasserth/TotalSegmentator/ (README Subtasks open 清单)",
+            "version": "2.10.0",
+            "verified": "M7-S3F ②：LICENSES-THIRD-PARTY.md §1.2 open 清单；安装包未核实 "
+            "（class_map 不含）——结构未核实",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "class_map_ref": "ts-classes/v1 (待落地：2.10.0 class_map 不含，需按 README 定义建)",
+        "data_contract_version": "v1",
+    }
+    for t in (
+        "teeth",
+        "trunk_cavities",
+        "liver_lesions",
+        "vertebrae_pp",
+        "vertebrae_pp_refined",
+    )
+] + [
+    # vertebrae_body：TS 2.10.0 安装包 commercial_models 含（id 305，需 license，
+    # 与 M0 核查时上游 README 有出入）——按安装包实况登记 unverified + 限制注明。
+    # lung_vessels_LEGACY 不登记：README 标注 "..."（含义不明），本地 TS 2.10.0
+    # 安装包 class_map 不含——不准猜，留白名单历史记录（settings.yaml），见报告。
+    {
+        "teacher_id": "totalsegmentator",
+        "task": "vertebrae_body",
+        "checkpoint_id": "unpinned (权重未下载)",
+        "modalities": ("CT",),
+        "output_type": "mask",
+        "research_use": "unverified",
+        "known_restrictions": [
+            "TS 2.10.0 安装包 commercial_models 含该任务（id 305，需 license）："
+            "非商用走 academic license 渠道；与 README open 清单出入已注记"
+        ],
+        "provenance": {
+            "source": "TS 2.10.0 安装包 totalsegmentator/map_to_binary.py commercial_models",
+            "version": "2.10.0",
+            "verified": "M7-S3F ②：安装包实测 commercial_models['vertebrae_body']=305 "
+            "（需 license）；README open 清单（访问 2026-11-06）称 open——按安装包实况 "
+            "登记 unverified",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "class_map_ref": "ts-classes/v1 (TS 2.10.0 map_to_binary.class_map)",
+        "data_contract_version": "v1",
+    },
 ]
 
 
@@ -347,12 +452,11 @@ class LicenseRegistry:
     def check_task(self, task: str, modality: str | None = None) -> tuple[bool, str]:
         """教师路由判定（worker 分发层与 CI 负测试共用）。
 
-        数据来源改读注册表（M7-S3 做法 5 号项，接口不变）：
+        注册表唯一来源（M7-S3F ②：白名单回退退役）：
         - settings.teacher.blocked_tasks 仍一票否决（blocked 是许可硬约束）。
         - 注册表有条目且 ready 且模态匹配 → 放行。
         - 注册表有条目但模态不符 / 未就绪 → 拒绝并带原因（回退语义 §2.2.3）。
-        - 注册表无条目且不在 allowed_tasks 白名单 → 拒绝（白名单只记录已知条款，
-          不作准入天花板 §2.3——新教师按条目登记后即可路由）。
+        - 注册表无条目 → 拒绝并带原因（新任务走注册表登记，不走白名单旁路）。
         """
         if task in self.settings.teacher.blocked_tasks:
             return False, f"task '{task}' is BLOCKED (license: see LICENSES-THIRD-PARTY.md)"
@@ -379,10 +483,8 @@ class LicenseRegistry:
                     f"(checkpoint 未部署；见注册表 ready=False)",
                 )
             return True, "allowed"
-        if task in self.settings.teacher.allowed_tasks:
-            return True, "allowed"
         return (
             False,
-            f"task '{task}' not in teacher registry and not in teacher.allowed_tasks "
-            f"whitelist (register as a registry entry, see LICENSES-THIRD-PARTY.md)",
+            f"task '{task}' not in teacher registry "
+            f"(register as a registry entry, see LICENSES-THIRD-PARTY.md)",
         )
