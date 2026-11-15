@@ -24,7 +24,13 @@ _REGISTRY_FIELDS = (
     "provenance",
     "ready",
     "weight_integrity",
+    "research_distill",
+    "restriction_basis",
+    "output_license_inherits",
 )
+
+# 研究蒸馏资格枚举（M7-PLAN v3 §2.2.1 新增三字段行；S3 收口轮 ④）
+RESEARCH_DISTILL_VALUES = ("allowed", "conditional", "blocked", "unverified")
 
 # 首批条目（M7-LICENSE-CHECK §二/四/八 + M7-PLAN v3.2 §二；provenance 即核查依据）
 TEACHER_REGISTRY: list[dict] = [
@@ -45,6 +51,10 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "ready": True,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "allowed",
+        "restriction_basis": "许可明文：Apache-2.0（LICENSE-CHECK §四，total 在 "
+        "'Openly available for any usage (Apache-2.0)' 清单内）",
+        "output_license_inherits": [],
         "class_map_ref": "ontology/v1/map.yaml",
         "data_contract_version": "v1",
     },
@@ -64,6 +74,10 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "allowed",
+        "restriction_basis": "许可明文：Apache-2.0（LICENSE-CHECK §四，公开 _mr 任务 "
+        "同在 Apache-2.0 清单内）",
+        "output_license_inherits": [],
         "class_map_ref": "ts-mr-classes/v1 (TS MR 50 类，待落地为 ontology 条目)",
         "data_contract_version": "v1",
     }
@@ -92,6 +106,10 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "allowed",
+        "restriction_basis": "许可明文：Apache-2.0（LICENSE-CHECK §二，README 'code and "
+        "models' 声明；仓库无 LICENSE 文件已注记）",
+        "output_license_inherits": [],
         "feature_schema": {"embed_dim": 768, "patch": 16, "space": "image"},
     },
     # nnInteractive：交互式提示分割教师（LICENSE-CHECK §八；两处证据链接）
@@ -125,6 +143,11 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "class_map_ref": "prompt-targets/v1 (目标由交互提示决定，无固定类映射)",
         "data_contract_version": "v1",
+        "research_distill": "conditional",
+        "restriction_basis": "项目政策：修正产物不进蒸馏（M6 已记录边界，S3 后续三项③ "
+        "用户定）+ 许可明文 CC BY-NC-SA 4.0（LICENSE-CHECK §八：研究路由允许、"
+        "派生物标 SA 并传播署名、商用须法务）",
+        "output_license_inherits": ["CC-BY-NC-SA 4.0（ShareAlike：派生物须同许可并传播署名）"],
     },
     # SynthSeg / MOOSE：QC/研究路由，蒸馏须先走法务，不写成可蒸馏（§五/§六）
     {
@@ -146,6 +169,13 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "conditional",
+        "restriction_basis": "许可明文 + 法务未决：FreeSurfer Software License Agreement "
+        "v1.0 明示允许并入专有程序、商业化风险自担（LICENSE-CHECK §六），不禁止本地"
+        "科研蒸馏；保留在第 3 条第三方权利条款与 ADNI DUA 未决（§六未解决项 1/2），"
+        "法务澄清后可升级 allowed",
+        "output_license_inherits": ["FreeSurfer Software License Agreement v1.0 "
+        "(attribution + 修改标识条款，§六 Part B 1(c)/(d))"],
         "class_map_ref": "synthseg-classes/v1 (待建)",
         "data_contract_version": "v1",
     },
@@ -166,6 +196,11 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "conditional",
+        "restriction_basis": "许可明文 + 法务未决：权重 CC BY 4.0 本身允许商用（含衍生），"
+        "不禁止本地科研蒸馏（LICENSE-CHECK §五）；保留在 NC 训练数据溯源（AutoPET）与"
+        "'Commercial Version' 关系两项未决（§五未解决项 2/3），法务澄清后可升级 allowed",
+        "output_license_inherits": ["CC BY 4.0（署名条款，MODEL_LICENSE）"],
         "class_map_ref": "moose-classes/v1 (待建)",
         "data_contract_version": "v1",
     },
@@ -188,6 +223,10 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "unverified",
+        "restriction_basis": "许可明文：框架条目不附带权重，不产生蒸馏资格（LICENSE-CHECK "
+        "§七）；具体任务模型须逐任务登记核实后才有资格",
+        "output_license_inherits": [],
     },
     # FleXray：X-ray 模态约束（非许可问题；权重 CC BY-NC 4.0，§三）
     {
@@ -207,6 +246,10 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "conditional",
+        "restriction_basis": "许可明文：权重 CC BY-NC 4.0 禁止商业目的使用，QC/研究路由"
+        "（输出不进商用蒸馏训练）允许（LICENSE-CHECK §三资格判断理由）",
+        "output_license_inherits": ["CC-BY-NC 4.0（NC：派生物不得用于商业目的）"],
         "class_map_ref": "flexray-classes/v1 (待建)",
         "data_contract_version": "v1",
     },
@@ -230,6 +273,10 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "allowed",
+        "restriction_basis": "许可明文：Apache-2.0（M7-S3F ②，LICENSES-THIRD-PARTY.md "
+        "§1.2 open 清单 + TS 2.10.0 安装包双证据）",
+        "output_license_inherits": [],
         "class_map_ref": "ts-classes/v1 (TS 2.10.0 map_to_binary.class_map)",
         "data_contract_version": "v1",
     }
@@ -277,6 +324,10 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "unverified",
+        "restriction_basis": "许可证据单一来源：仅 README open 清单（LICENSES-THIRD-PARTY.md "
+        "§1.2），安装包结构未核实——资格未核实待双证据",
+        "output_license_inherits": [],
         "class_map_ref": "ts-classes/v1 (待落地：2.10.0 class_map 不含，需按 README 定义建)",
         "data_contract_version": "v1",
     }
@@ -312,6 +363,10 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "unverified",
+        "restriction_basis": "许可明文出入：安装包 commercial_models 含该任务（id 305，需 "
+        "license）与 README open 清单有出入（M7-S3F ②）——按安装包实况资格未核实",
+        "output_license_inherits": [],
         "class_map_ref": "ts-classes/v1 (TS 2.10.0 map_to_binary.class_map)",
         "data_contract_version": "v1",
     },
@@ -331,6 +386,13 @@ def validate_entry(entry: dict) -> None:
         raise ValueError(f"output_type 非法：{entry['output_type']!r}")
     if entry["research_use"] not in ("allowed", "restricted", "unverified"):
         raise ValueError(f"research_use 非法：{entry['research_use']!r}")
+    if entry["research_distill"] not in RESEARCH_DISTILL_VALUES:
+        raise ValueError(f"research_distill 非法：{entry['research_distill']!r}")
+    rb = entry["restriction_basis"]
+    if not isinstance(rb, str) or not rb.strip():
+        raise ValueError("restriction_basis 必填（限制依据：许可明文或项目政策，附出处）")
+    if not isinstance(entry["output_license_inherits"], list):
+        raise ValueError("output_license_inherits 必须是列表（无需保留条款则显式空列表）")
     if not isinstance(entry["known_restrictions"], list):
         raise ValueError("known_restrictions 必须是列表（无限制则显式空列表）")
     p = entry["provenance"]

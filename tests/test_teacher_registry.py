@@ -58,6 +58,9 @@ def test_mask_entry_missing_class_map_ref_rejected() -> None:
                 "provenance": {"source": "s", "verified": "v"},
                 "ready": True,
                 "weight_integrity": {},
+                "research_distill": "allowed",
+                "restriction_basis": "s",
+                "output_license_inherits": [],
             }
         )
 
@@ -74,6 +77,9 @@ def test_mask_entry_missing_data_contract_version_rejected() -> None:
         "provenance": {"source": "s", "verified": "v"},
         "ready": True,
         "weight_integrity": {},
+        "research_distill": "allowed",
+        "restriction_basis": "s",
+        "output_license_inherits": [],
         "class_map_ref": "m",
     }
     with pytest.raises(ValueError, match="data_contract_version"):
@@ -94,6 +100,9 @@ def test_feature_entry_missing_feature_schema_rejected() -> None:
                 "provenance": {"source": "s", "verified": "v"},
                 "ready": True,
                 "weight_integrity": {},
+                "research_distill": "allowed",
+                "restriction_basis": "s",
+                "output_license_inherits": [],
             }
         )
 
@@ -119,6 +128,9 @@ def test_ready_with_placeholder_class_map_ref_rejected_both_wordings() -> None:
         "provenance": {"source": "s", "verified": "v"},
         "ready": True,
         "weight_integrity": {},
+        "research_distill": "allowed",
+        "restriction_basis": "s",
+        "output_license_inherits": [],
         "class_map_ref": "ts-classes/v1 (待建)",
         "data_contract_version": "v1",
     }

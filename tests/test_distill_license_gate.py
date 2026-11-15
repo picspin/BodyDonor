@@ -152,26 +152,127 @@ def test_research_profile_restricted_teacher_derives_sa():
 
 
 def test_research_profile_restricted_non_nninteractive_no_sa_label():
-    """B2：synthseg/moose 蒸馏阻断（known_restrictions 明写，必须阻断）；
-    flexray 按 LICENSE-CHECK §三研究路由允许放行，但许可标签是 CC-BY-NC
-    （权重 CC BY-NC 4.0）非 CC-BY-NC-SA——非 nnInteractive restricted 教师
-    不得返回 CC-BY-NC-SA 标记（M7-PLAN §6.3：只有 nnInteractive 是 SA）。"""
+    """S3 收口轮 ④：synthseg/moose 判定读 research_distill=conditional（不因
+    商业政策模糊自动禁止本地科研蒸馏），放行且按 output_license_inherits 写
+    条款；known_restrictions 里的"蒸馏阻断"文字不再参与判定。flexray 条款
+    是 CC-BY-NC 非 CC-BY-NC-SA——非 nnInteractive 教师不得返回 SA 标记
+    （M7-PLAN §6.3：只有 nnInteractive 是 SA）。"""
     from bodydonor.ontology import mask_allowed_in_distill_training
 
-    # synthseg / moose：known_restrictions 明写蒸馏阻断待法务复核 → 阻断
-    for task in ("brain_mri_qc", "moose_qc"):
+    # synthseg / moose：research_distill=conditional → 放行，条款逐条写出
+    for task, lic in (("brain_mri_qc", "FreeSurfer"), ("moose_qc", "CC BY 4.0")):
         ok, reason = mask_allowed_in_distill_training(
             {"experimental": False, "source": "teacher", "task": task}
         )
-        assert not ok, f"{task} 应阻断（known_restrictions 蒸馏阻断）: {reason}"
+        assert ok, f"{task} conditional 应放行: {reason}"
+        assert lic in reason
         assert "CC-BY-NC-SA" not in reason
-    # flexray：§三 研究路由允许，但标签逐条写出 = CC-BY-NC（非 SA）
+    # flexray：conditional 放行，条款 = CC-BY-NC（非 SA）
     ok, reason = mask_allowed_in_distill_training(
         {"experimental": False, "source": "teacher", "task": "flexray_xray"}
     )
     assert ok, reason
     assert "CC-BY-NC" in reason
     assert "CC-BY-NC-SA" not in reason
+
+
+def test_known_restrictions_substring_no_longer_decides():
+    """S3 收口轮 ④：known_restrictions 写"蒸馏阻断"不再改变判定结果
+    （子串匹配退役，判定只读 research_distill）。"""
+    from bodydonor import license_registry as lr
+    from bodydonor.ontology import mask_allowed_in_distill_training
+
+    entries = [e for e in lr.TEACHER_REGISTRY if e["task"] == "brain_mri_qc"]
+    assert len(entries) == 1
+    orig = entries[0]["known_restrictions"]
+    try:
+        entries[0]["known_restrictions"] = [
+            "蒸馏阻断", "禁止蒸馏", "不得登记为可蒸馏",
+        ]
+        ok, reason = mask_allowed_in_distill_training(
+            {"experimental": False, "source": "teacher", "task": "brain_mri_qc"}
+        )
+        assert ok, f"known_restrictions 文字不应参与判定: {reason}"
+    finally:
+        entries[0]["known_restrictions"] = orig
+
+
+def test_research_distill_blocked_and_unverified_block():
+    """research_distill=blocked/unverified 阻断（临时改内存条目验证，不动注册表）。"""
+    from bodydonor import license_registry as lr
+    from bodydonor.ontology import mask_allowed_in_distill_training
+
+    entries = [e for e in lr.TEACHER_REGISTRY if e["task"] == "brain_mri_qc"]
+    orig = entries[0]["research_distill"]
+    try:
+        entries[0]["research_distill"] = "blocked"
+        ok, reason = mask_allowed_in_distill_training(
+            {"experimental": False, "source": "teacher", "task": "brain_mri_qc"}
+        )
+        assert not ok
+        assert "blocked" in reason
+        entries[0]["research_distill"] = "unverified"
+        ok2, reason2 = mask_allowed_in_distill_training(
+            {"experimental": False, "source": "teacher", "task": "brain_mri_qc"}
+        )
+        assert not ok2
+        assert "unverified" in reason2
+    finally:
+        entries[0]["research_distill"] = orig
+
+
+def test_registry_36_entries_new_fields_complete():
+    """S3 收口轮 ④：全部条目新三字段齐全且枚举合法（逐项计数断言）。"""
+    from bodydonor.license_registry import (
+        RESEARCH_DISTILL_VALUES,
+        TEACHER_REGISTRY,
+        validate_entry,
+    )
+
+    n = len(TEACHER_REGISTRY)
+    assert n == 36, f"条目数应为 36：{n}"
+    for i, e in enumerate(TEACHER_REGISTRY):
+        assert e["research_distill"] in RESEARCH_DISTILL_VALUES, (
+            f"条目 {i} {e['teacher_id']}/{e['task']} research_distill 非法"
+        )
+        assert isinstance(e["restriction_basis"], str) and e["restriction_basis"].strip(), (
+            f"条目 {i} {e['teacher_id']}/{e['task']} 缺 restriction_basis"
+        )
+        assert isinstance(e["output_license_inherits"], list), (
+            f"条目 {i} {e['teacher_id']}/{e['task']} output_license_inherits 非列表"
+        )
+    # 计数：全部条目三字段齐全
+    n_rd = sum(1 for e in TEACHER_REGISTRY if e["research_distill"] in RESEARCH_DISTILL_VALUES)
+    n_rb = sum(1 for e in TEACHER_REGISTRY if e["restriction_basis"].strip())
+    n_ol = sum(1 for e in TEACHER_REGISTRY if isinstance(e["output_license_inherits"], list))
+    assert (n_rd, n_rb, n_ol) == (36, 36, 36)
+    validate_entry(TEACHER_REGISTRY[0])
+
+
+def test_validate_entry_rejects_bad_new_fields():
+    """validate_entry 跟进新字段：缺失/非法枚举/空 basis/非列表即拒绝。"""
+    from copy import deepcopy
+
+    from bodydonor.license_registry import TEACHER_REGISTRY, validate_entry
+
+    base = deepcopy(TEACHER_REGISTRY[0])
+    for field in ("research_distill", "restriction_basis", "output_license_inherits"):
+        e = deepcopy(base)
+        del e[field]
+        with pytest.raises(ValueError, match="缺字段"):
+            validate_entry(e)
+    e = deepcopy(base)
+    e["research_distill"] = "maybe"
+    with pytest.raises(ValueError, match="research_distill 非法"):
+        validate_entry(e)
+    e = deepcopy(base)
+    e["restriction_basis"] = "  "
+    with pytest.raises(ValueError, match="restriction_basis"):
+        validate_entry(e)
+    e = deepcopy(base)
+    e["output_license_inherits"] = "Apache-2.0"
+    with pytest.raises(ValueError, match="output_license_inherits"):
+        validate_entry(e)
 
 
 def test_research_profile_empty_task_blocked():
