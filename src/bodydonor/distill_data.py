@@ -82,22 +82,35 @@ REJECTED_SOURCES: dict[str, str] = {
 }
 
 # 商用蒸馏教师白名单（settings.teacher.commercial_distill_tasks 同源，代码内
-# 固化为常量以独立于 settings 加载；两处不一致由测试锁定）
+# 固化为常量以独立于 settings 加载；两处不一致由测试锁定）。
+# 仅商用路径使用——研究蒸馏路径不查它（M7-S3F ③ 用户定）
 COMMERCIAL_DISTILL_TASKS = frozenset({"total"})
+
+# 研究蒸馏路径的商用白名单脱钩标志：仅供测试注入验证 research_use 路径
+# 不读 COMMERCIAL_DISTILL_TASKS（M7-S3F ③）
 
 
 def check_distill_source(
     source: str,
     teacher_task: str = "",
     experimental: bool = False,
+    profile: str = "commercial",
 ) -> tuple[bool, str]:
     """蒸馏训练集准入检查（LICENSES §8.3 约束 1 的代码强制）。
 
     返回 (allowed, reason)。拒绝一律给出精确理由，不静默跳过。
 
+    profile：
+    - "commercial"（默认，行为与 HEAD 一致）：teacher 任务必须在
+      COMMERCIAL_DISTILL_TASKS（仅 total）；
+    - "research"：teacher 任务走注册表 research_use（ontology.
+      mask_allowed_in_distill_training 同语义；不由 commercial_distill_tasks
+      把关——S3 后续三项③）。
+
     - source 必须在 ALLOWED_TRAIN_SOURCES（total 教师 mask 或纯人工修正）
     - nnInteractive / SegVol / experimental 来源显式拒绝（REJECTED_SOURCES）
-    - teacher mask 的任务必须在 COMMERCIAL_DISTILL_TASKS（仅 total）
+    - teacher mask 的任务按 commercial_distill_tasks 白名单校验
+      （profile="commercial"，仅 total；研究路径走 ontology 版 research_use 门）
     """
     if source in REJECTED_SOURCES:
         return False, REJECTED_SOURCES[source]
@@ -108,6 +121,13 @@ def check_distill_source(
         )
     if experimental:
         return False, "experimental 标记产物不进蒸馏训练集（逃生通道隔离）"
+    if profile == "research" and source == "teacher":
+        # 研究路径：资格读注册表 research_use（不查 commercial_distill_tasks）
+        from .ontology import mask_allowed_in_distill_training
+
+        return mask_allowed_in_distill_training(
+            {"source": "teacher", "task": teacher_task, "experimental": False}
+        )
     if source == "total" and teacher_task and teacher_task not in COMMERCIAL_DISTILL_TASKS:
         return False, (
             f"teacher 任务 '{teacher_task}' 不在商用蒸馏白名单 "
@@ -118,6 +138,7 @@ def check_distill_source(
 
 def mask_allowed_in_distill_training_strict(
     mask_meta: dict[str, Any],
+    profile: str = "commercial",
 ) -> tuple[bool, str]:
     """扩展 ontology.mask_allowed_in_distill_training：M4 商用蒸馏的严格版。
 
@@ -126,12 +147,16 @@ def mask_allowed_in_distill_training_strict(
       legacy 别名 manual-correction-nninteractive / nninteractive）
     - SegVol 逃生通道产物（source=segvol / segvol-escape）
     - 未知来源（不在 ALLOWED_TRAIN_SOURCES 也不在 REJECTED_SOURCES）
+
+    profile 透传 check_distill_source："commercial"（默认，与 HEAD 一致）/
+    "research"（研究路径，teacher 任务走注册表 research_use）。
     """
     if mask_meta.get("experimental"):
         return False, "experimental 标记的 mask 不进蒸馏训练集（逃生通道产物隔离）"
     return check_distill_source(
         str(mask_meta.get("source", "")),
         teacher_task=str(mask_meta.get("task", "")),
+        profile=profile,
     )
 
 

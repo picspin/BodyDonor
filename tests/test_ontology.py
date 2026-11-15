@@ -223,12 +223,14 @@ class TestDistillIsolation:
         assert "experimental" in reason
 
     def test_commercial_distill_only_total(self) -> None:
-        """商用蒸馏只允许 total 任务（白名单强制点）。"""
+        """商用蒸馏只允许 total 任务（M7-S3F ③：研究路径不查 commercial_distill_tasks，
+        本测试改验证注册表 unverified 任务阻断——commercial 白名单回归见
+        test_distill_license_gate.py test_commercial_distill_tasks_only_total）。"""
         ok, reason = mask_allowed_in_distill_training(
-            {"experimental": False, "source": "teacher", "task": "lung_vessels"}
+            {"experimental": False, "source": "teacher", "task": "vertebrae_body"}
         )
         assert ok is False
-        assert "total" in reason
+        assert "unverified" in reason
 
     def test_normal_teacher_total_allowed(self) -> None:
         ok, _ = mask_allowed_in_distill_training(

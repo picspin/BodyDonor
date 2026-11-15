@@ -36,6 +36,7 @@ from typing import Any, Literal, Protocol
 import yaml
 
 from .config import Settings
+from .license_registry import TEACHER_REGISTRY
 
 ONTOLOGY_VERSION = "v1"
 ONTOLOGY_DIR = Path(__file__).resolve().parents[2] / "ontology"
@@ -589,19 +590,24 @@ class OntologyService:
 # ---------------------------------------------------------------------------
 
 def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, str]:
-    """蒸馏训练集准入检查：experimental / nnInteractive 来源的 mask 绝不进训练集。
+    """研究蒸馏训练集准入检查（M7-S3F ③：资格读注册表 research_use）。
 
     mask_meta 需含 'experimental'（bool）与 'source'（teacher/student/manual/...）。
     返回 (allowed, reason)。worker/训练路径在入集前必须调用此函数
     （与任务白名单 check_task 同级的硬约束）。
 
+    研究路径资格来源 = TEACHER_REGISTRY.research_use（不由
+    commercial_distill_tasks 把关——那只是商用路径，S3 后续三项③ 用户定）：
+    - allowed → 可进研究蒸馏；
+    - restricted → 可进研究蒸馏，派生物标 SA（license_inherits: CC-BY-NC-SA，
+      传播署名；如 nnInteractive）；
+    - unverified / 注册表无条目 → 阻断待核实。
+
     nnInteractive 来源（M4 阶段 3 补缺口；命名 v1→v2 用户 2026-11-09 决定）：
-    权重 CC BY-NC-SA 4.0 ShareAlike 传染（LICENSES-THIRD-PARTY.md §2.2/§8.1），
     修正产物 source=nninteractive_guided（规范名，v2；nnInteractive 产物绝不用
     source=human）与 legacy 别名 manual-correction-nninteractive（v1，阶段 2a
-    sidecar 用过）、nninteractive 一律拒绝（与 distill_data.check_distill_source /
-    REJECTED_SOURCES 同语义）。legacy 别名永不再由新代码写出，但拒绝清单保留
-    （删拒绝是安全倒退）。
+    sidecar 用过）、nninteractive 不在本研究路径（修正产物走 QC，不进蒸馏）。
+    legacy 别名永不再由新代码写出，但拒绝保留（删拒绝是安全倒退）。
     """
     if mask_meta.get("experimental"):
         return False, "experimental 标记的 mask 不进蒸馏训练集（逃生通道产物隔离）"
@@ -613,15 +619,30 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
     ):
         return False, (
             f"nnInteractive 来源（source={source}）不进蒸馏训练集：权重 "
-            "CC BY-NC-SA 4.0 ShareAlike 传染，不进商用蒸馏训练集"
-            "（LICENSES-THIRD-PARTY.md §2.2/§8.1）"
+            "CC BY-NC-SA 4.0 ShareAlike 传染（LICENSES-THIRD-PARTY.md §2.2/§8.1）"
         )
     if source == "teacher":
-        # teacher mask 还要看任务是否在商用蒸馏白名单（调用方传 task）
+        # 研究蒸馏资格读注册表 research_use（非 commercial_distill_tasks）
         task = mask_meta.get("task", "")
-        if task and task != "total":
-            # 商用蒸馏只允许 total（license_registry / settings.teacher）
-            return False, f"teacher 任务 '{task}' 不在商用蒸馏白名单（仅 total）"
+        if task:
+            entries = [e for e in TEACHER_REGISTRY if e["task"] == task]
+            if not entries:
+                return False, (
+                    f"teacher 任务 '{task}' 无注册表条目：研究蒸馏阻断，"
+                    "走注册表登记（M7-S3F ③）"
+                )
+            uses = {e["research_use"] for e in entries}
+            if "unverified" in uses:
+                return False, (
+                    f"teacher 任务 '{task}' research_use=unverified：研究蒸馏阻断待核实"
+                    "（M7-S3F ③）"
+                )
+            if "restricted" in uses:
+                return True, (
+                    "license_inherits: CC-BY-NC-SA（restricted 教师可进研究蒸馏，"
+                    "派生物标 SA 并传播署名）"
+                )
+        return True, "ok"
     return True, "ok"
 
 
