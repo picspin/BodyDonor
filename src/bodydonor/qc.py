@@ -138,7 +138,9 @@ def _modality_skip(
     # 与 review_session.py 同口径
     m = modality.strip().upper()
     if allowed is not None and m not in allowed:
-        return {"skipped": "modality unsupported"}
+        # W7：unknown 与 None/空同语义（B1 后 ingest 层不再产出 unknown，
+        # 旧数据仍可能回读）——归 modality_unknown，不再混用两种 skip 文案
+        return {"skipped": "modality_unknown"} if m == "UNKNOWN" else {"skipped": "modality unsupported"}
     return None
 
 
