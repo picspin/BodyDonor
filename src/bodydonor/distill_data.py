@@ -121,7 +121,7 @@ def check_distill_source(
         )
     if experimental:
         return False, "experimental 标记产物不进蒸馏训练集（逃生通道隔离）"
-    if profile == "research" and source == "teacher":
+    if profile == "research" and source == "total":
         # 研究路径：资格读注册表 research_use（不查 commercial_distill_tasks）
         from .ontology import mask_allowed_in_distill_training
 

@@ -129,6 +129,83 @@ def test_strict_gate_rejects_licensed_meta():
 
 
 # ---------------------------------------------------------------------------
+# 研究蒸馏路径（M7-S3F ③：资格读注册表 research_use，非 commercial_distill_tasks）
+# ---------------------------------------------------------------------------
+
+def test_research_profile_allows_non_total_registry_teacher():
+    """research_use: allowed 的非 total 教师（liver_lesions_mr 等同组）可进研究蒸馏。"""
+    ok, reason = check_distill_source(
+        "total", teacher_task="total_mr", profile="research"
+    )
+    assert ok, reason
+
+
+def test_research_profile_restricted_teacher_derives_sa():
+    """restricted 教师（interactive_correction=nnInteractive）可进研究蒸馏且派生物标 SA。"""
+    from bodydonor.ontology import mask_allowed_in_distill_training
+
+    ok, reason = mask_allowed_in_distill_training(
+        {"experimental": False, "source": "teacher", "task": "interactive_correction"}
+    )
+    assert ok, reason
+    assert "CC-BY-NC-SA" in reason
+
+
+def test_research_profile_blocks_unverified_teacher():
+    """unverified 教师（vertebrae_body）研究蒸馏阻断待核实。"""
+    ok, reason = check_distill_source(
+        "total", teacher_task="vertebrae_body", profile="research"
+    )
+    assert not ok
+    assert "unverified" in reason
+
+
+def test_research_profile_blocks_missing_registry_entry():
+    """注册表无条目任务研究蒸馏阻断（与第 2 轮"无条目即拒绝"一致）。"""
+    ok, reason = check_distill_source(
+        "total", teacher_task="no_such_task", profile="research"
+    )
+    assert not ok
+    assert "无注册表条目" in reason
+
+
+def test_research_profile_ignores_commercial_distill_tasks(monkeypatch):
+    """commercial_distill_tasks 内容改动不影响研究路径（脱钩证明）。"""
+    import bodydonor.distill_data as dd
+
+    monkeypatch.setattr(dd, "COMMERCIAL_DISTILL_TASKS", frozenset({"coronary_arteries"}))
+    # coronary_arteries 无注册表条目：若研究路径查商用白名单会放行，实际必须阻断
+    ok, reason = check_distill_source(
+        "total", teacher_task="coronary_arteries", profile="research"
+    )
+    assert not ok
+    assert "无注册表条目" in reason
+    # 反向：total 在商用白名单之外也不影响研究路径放行
+    monkeypatch.setattr(dd, "COMMERCIAL_DISTILL_TASKS", frozenset())
+    ok2, reason2 = check_distill_source(
+        "total", teacher_task="total", profile="research"
+    )
+    assert ok2, reason2
+
+
+def test_commercial_profile_regression_only_total():
+    """回归对照：commercial profile 行为与 HEAD 一致（teacher 任务只放行 total）。"""
+    ok, _ = check_distill_source("total", teacher_task="total")
+    assert ok
+    ok2, reason2 = check_distill_source("total", teacher_task="coronary_arteries")
+    assert not ok2
+    assert "商用蒸馏白名单" in reason2
+
+
+def test_strict_gate_research_profile_passthrough():
+    """strict 版 profile 透传：research 路径 unverified 任务阻断。"""
+    meta = {"source": "total", "task": "vertebrae_body", "experimental": False}
+    ok, reason = mask_allowed_in_distill_training_strict(meta, profile="research")
+    assert not ok
+    assert "unverified" in reason
+
+
+# ---------------------------------------------------------------------------
 # 教师任务白名单（check_teacher_task_commercial，纵深防线）
 # ---------------------------------------------------------------------------
 
