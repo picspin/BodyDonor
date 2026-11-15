@@ -7,13 +7,13 @@
 
 | 提交 | 内容 |
 |------|------|
-| `842c713` | feat：`check_task` 白名单回退退役 + 24 个 TS 任务登记进 `TEACHER_REGISTRY` |
+| `842c713` | feat：`check_task` 白名单回退退役 + 24 个 TS 任务登记进 `TEACHER_REGISTRY`（提交标题写 25，含未登记 LEGACY，口径注记见 §3.4） |
 | `40a5839` | test：seg worker 拒绝断言跟随注册表语义（`not in teacher registry`） |
 | `b76f24e` | test：mock 分发层拒绝消息对齐注册表语义 |
 
 ## 2. 白名单回退退役（任务 1）
 
-`license_registry.py` `check_task`（`src/bodydonor/license_registry.py:347`）：
+`license_registry.py` `check_task`（`src/bodydonor/license_registry.py:452`）：
 
 - **删除**回退分支 `if task in self.settings.teacher.allowed_tasks: return True, "allowed"`。
 - 注册表无条目即拒绝，消息改为 `task '{task}' not in teacher registry (register as a
@@ -62,6 +62,13 @@
 **有出入**（上游 2.10.0 之后可能调整过归属）；按安装包实况登记 `unverified`，
 出入在 `known_restrictions` 与 `provenance` 双处注记。**不按 README 报 allowed。**
 
+**行为变更明示（W15）**：24 个登记条目 `ready` 一律 False（权重未部署/未核实，
+不造假），故旧 `allowed_tasks` 白名单放行的任务（`lung_vessels`、`body`、
+`vertebrae_mr` 等）在 worker 分发层现一律 "not ready" 拒绝——这是有意的行为
+变更：登记语义（ready=False 不派发）优先于白名单历史放行。权重部署并核实
+`weight_integrity` 后置 ready=True 即恢复派发（`test_teacher_registry.py:194、249`
+"not ready" 拒绝断言已锁）。
+
 ### 3.3 不登记 1 个：`lung_vessels_LEGACY`
 
 - README open 清单里该项标注为 `...`（原文如此，含义不明）。
@@ -72,8 +79,10 @@
 
 ### 3.4 模态
 
-25 个均按 TS 任务定义登记 CT（无 `_mr` 后缀即 CT 路线；`_mr` 族 5 个第 1 轮已
-在注册表，不重复登记）。`ready` 一律 False（权重未部署/未核实，不造假）。
+实际登记 24 个，均按 TS 任务定义登记 CT（无 `_mr` 后缀即 CT 路线；`_mr` 族 5 个
+第 1 轮已在注册表，不重复登记；25 = 含未登记的 `lung_vessels_LEGACY`——提交标题
+`842c713` "25 任务登记" 口径含 LEGACY，本报告统一按实际登记 24 计，W17）。
+`ready` 一律 False（权重未部署/未核实，不造假）。
 
 ## 4. `allowed_tasks` 配置项去留（任务 1 附属）
 
@@ -95,7 +104,7 @@
   纵深"。
 - `segmentation.py`：`check_worker_task` 直通 `check_task`，无白名单逻辑。
 - `cli.py` `license check`：直通 `check_task`，跟随新语义。
-- `segmentation.py:360` 分发处 `check_worker_task(task, settings, modality=...)`：
+- `segmentation.py:361` 分发处 `check_worker_task(task, settings, modality=...)`：
   行为跟随，未改。
 
 ## 6. 测试
@@ -112,7 +121,8 @@
 - **更新**：`test_not_in_whitelist_rejected`（`whitelist`→`not in teacher
   registry`）；mock 分发层拒绝消息对齐；两文件 docstring。
 - **结果**：受影响 7 文件（license_whitelist / teacher_registry / storage_config /
-  api / segmentation / ts_runner / export_seg）共 **88 passed / 0 F/E，exit 0**；
+  api / segmentation / ts_runner / export_seg）共 **71 passed / 0 F/E，exit 0**
+  （`--collect-only` 三次实测一致：7 文件 71 tests collected；无 parametrize 展开）；
   ruff 3 文件全绿。无 skipif 跳过的逻辑测试（纯合成 fixture，CI 可跑）。
 
 ## 7. 红线核对（任务 6）
