@@ -281,7 +281,7 @@ class TestSubmitNniPersistence:
 
         path = make_nifti(tmp_path / "img.nii.gz", shape=(40, 32, 32))
         settings.database.url = isolate_db_url
-        outcome = scan(path, settings)
+        outcome = scan(path, settings, modality="CT")
         storage = LocalFsStorage(tmp_path / "storage")
         monkeypatch.setattr(app_module, "storage", storage)
         committed = commit(outcome, settings, storage)
@@ -644,7 +644,7 @@ class TestCorrectSubmitE2E:
         from bodydonor.db import init_db
 
         init_db(tmp_url)
-        outcome = scan(patch, settings)
+        outcome = scan(patch, settings, modality="CT")
         storage = LocalFsStorage(tmp_path / "storage")
         monkeypatch.setattr(app_module, "storage", storage)
         committed = commit(outcome, settings, storage)

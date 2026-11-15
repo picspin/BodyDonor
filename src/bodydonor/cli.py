@@ -45,6 +45,10 @@ def import_cmd(
         ..., exists=True, readable=True, help="NIfTI/DICOM 文件夹/zip 路径"
     ),
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r", help="递归扫描子目录"),
+    # NIfTI 头无模态信息：显式 --modality 必填，不默认按 CT（S3F）
+    modality: str = typer.Option(
+        ..., "--modality", help="NIfTI 输入的显式模态（必填，如 CT/MR/PET）"
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="只扫描出导入报告，不落库"),
     no_series_ui: bool = typer.Option(
         True, "--select/--no-select", help="应用 Series 选择器规则（默认开）"
@@ -72,7 +76,9 @@ def import_cmd(
         raise typer.Exit(1) from None
 
     try:
-        outcome = scan(path, settings, source_name=path.name, recursive=recursive)
+        outcome = scan(
+            path, settings, source_name=path.name, recursive=recursive, modality=modality.upper()
+        )
     except Exception as e:  # noqa: BLE001 — IngestError/ExtractLimitError 统一呈现
         err_console.print(f"[red]✘ 导入失败：{e}[/red]")
         raise typer.Exit(1) from None

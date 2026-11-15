@@ -23,7 +23,7 @@ class TestNiftiInput:
     def test_single_nifti_ingests_one_series(self, tmp_path) -> None:  # noqa: ANN001
         """输入 1：单个 NIfTI 直接入库，单元素列表。"""
         nii = make_nifti(tmp_path / "img.nii.gz")
-        report = ingest(nii)
+        report = ingest(nii, modality="CT")
         assert isinstance(report, ImportReport)
         assert report.input_kind == "nifti"
         assert report.n_series == 1
@@ -34,14 +34,14 @@ class TestNiftiInput:
     def test_nifti_geometry_anisotropic_warning(self, tmp_path) -> None:  # noqa: ANN001
         """几何校验：affine 各向异性（spacing 5mm x 0.5mm = 10x）警告。"""
         nii = make_nifti(tmp_path / "aniso.nii.gz", spacing=(0.5, 0.5, 5.0))
-        report = ingest(nii)
+        report = ingest(nii, modality="CT")
         warnings = report.series[0].geom_warnings
         assert any("各向异性" in w for w in warnings)
 
     def test_nifti_geometry_orthonormal_no_warning(self, tmp_path) -> None:  # noqa: ANN001
         """几何校验：正交轴位无警告。"""
         nii = make_nifti(tmp_path / "ortho.nii.gz")
-        report = ingest(nii)
+        report = ingest(nii, modality="CT")
         assert report.series[0].geom_warnings == []
 
     def test_nifti_geom_checker_units(self, tmp_path) -> None:  # noqa: ANN001

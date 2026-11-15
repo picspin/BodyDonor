@@ -24,6 +24,7 @@ def source() -> SourceSeriesInfo:
     return SourceSeriesInfo(
         series_uid="1.2.826.0.1.3680043.8.498.seg.src",
         study_uid="1.2.826.0.1.3680043.8.498.123",
+        modality="CT",
         rows=32,
         columns=32,
         pixel_spacing=(1.0, 1.0),
@@ -91,6 +92,7 @@ class TestSegExport:
         source_inst = SourceSeriesInfo(
             series_uid=source.series_uid,
             study_uid=source.study_uid,
+            modality="CT",
             rows=32,
             columns=32,
             source_instances=[{"sop_instance_uid": "1.2.3", "image_position_patient": [0, 0, 0]}],

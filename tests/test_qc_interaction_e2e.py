@@ -141,7 +141,7 @@ class TestReplayRealPath:
         from bodydonor.db import init_db
 
         init_db(tmp_url)
-        outcome = scan(patch, settings)
+        outcome = scan(patch, settings, modality="CT")
         # storage 根与 qc_series 统一（settings.resolved_data_dir / "storage" =
         # tmp/data/storage）：app._get_storage 返回模块级 storage（monkeypatch
         # 本属性），qc_series 自建 LocalFsStorage(settings.resolved_data_dir /

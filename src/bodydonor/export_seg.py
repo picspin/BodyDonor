@@ -41,12 +41,13 @@ class SourceSeriesInfo:
 
     最小集：源图像的几何三要素（方向/像素间距/切片位置），highdicom 用它把
     每帧标签钉回患者坐标系。source_instances 携带源 SOP 实例引用（有则写
-    ReferencedSOPInstanceUID，无则按合成源实例导出——合成 CT 联调用）。
+    ReferencedSOPInstanceUID，无则按合成源实例导出——合成联调用）。
+    modality 必填（合成源实例的 Modality 标签取此值，不默认 CT——S3F）。
     """
 
     series_uid: str
     study_uid: str
-    modality: str = "CT"
+    modality: str
     rows: int = 0
     columns: int = 0
     pixel_spacing: tuple[float, float] = (1.0, 1.0)  # (row, col) mm
@@ -84,7 +85,7 @@ def export_seg(
     mask 的 NIfTI 仿射必须与源 DICOM 几何一致（同方向、同 spacing、切片沿
     orientation_patient 法向均匀分布）——不一致直接 SegExportError，不静默重采样。
 
-    无 source_instances（合成源）时按源几何合成最小 CT 实例引用；真实联调时
+    无 source_instances（合成源）时按源几何合成最小源实例引用；真实联调时
     传 ingest 读到的源实例列表。
     """
     import highdicom as hd
@@ -121,7 +122,8 @@ def export_seg(
             f"mask 层数 {n_slices} 与源实例数 {n_src} 不一致（禁止静默重采样）"
         )
 
-    # 逐层生成源实例描述（真实引用或合成 CT）；highdicom 要求逐层 ImagePositionPatient
+    # 逐层生成源实例描述（真实引用或按 source.modality 合成）；
+    # highdicom 要求逐层 ImagePositionPatient
     # 单调不重复——合成源按均匀层距排布（真实联调时传 ingest 读到的源实例列表）
     src_images = _build_source_images(
         source, rows=source.rows, columns=source.columns, n_slices=n_slices
@@ -177,7 +179,7 @@ def export_seg(
 def _build_source_images(
     source: SourceSeriesInfo, rows: int, columns: int, n_slices: int
 ) -> list[Any]:
-    """构造逐层源实例（真实实例优先，合成 CT 按均匀层距排布）。
+    """构造逐层源实例（真实实例优先，合成源按均匀层距排布）。
 
     真实联调：source_instances 携带每层 SOPInstanceUID + ImagePositionPatient；
     合成联调：无实例信息时按源几何合成（z 方向均匀层距 = pixel_spacing[0] 毫米）。

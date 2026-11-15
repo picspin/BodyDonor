@@ -193,7 +193,7 @@ class TestPipelineCommit:
         storage = LocalFsStorage(data_dir / "storage")
 
         nii = make_nifti(tmp_path / "img.nii.gz")
-        outcome = scan(nii, settings)
+        outcome = scan(nii, settings, modality="CT")
         assert outcome.report.n_series == 1
         committed = commit(outcome, settings, storage)
         assert len(committed.case_ids) == 1
@@ -231,8 +231,8 @@ class TestPipelineCommit:
         storage = LocalFsStorage(data_dir / "storage")
 
         nii = make_nifti(tmp_path / "img.nii.gz")
-        o1 = commit(scan(nii, settings), settings, storage)
-        o2 = commit(scan(nii, settings), settings, storage)
+        o1 = commit(scan(nii, settings, modality="CT"), settings, storage)
+        o2 = commit(scan(nii, settings, modality="CT"), settings, storage)
         assert o1.usage["yearly_used"] == 1
         assert o2.usage["recorded"] is False
         assert o2.usage["yearly_used"] == 1

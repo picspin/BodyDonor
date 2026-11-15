@@ -171,46 +171,63 @@ def ingest(
     limits: ExtractLimits | None = None,
     source_name: str = "",
     recursive: bool = True,
+    modality: str | None = None,
 ) -> ImportReport:
     """Import Bundle 单一入口：三种输入 -> ImportReport（含 [SeriesRecord]）。
 
     - Path 指向 NIfTI 文件 / DICOM 文件夹 / zip（自动分派）
     - BinaryIO/bytes 视为 zip 流（API 上传通道）
     - recursive：文件夹树递归扫描（多序列批量）
+    - modality：NIfTI 输入必填（NIfTI 头无模态信息，不默认按 CT——S3F）；
+      DICOM 路径以头内 Modality 为准，忽略本参数
     """
     limits = limits or ExtractLimits()
     if isinstance(path_or_stream, (str, bytes)) and not isinstance(path_or_stream, Path):
         data = path_or_stream if isinstance(path_or_stream, bytes) else path_or_stream.read()
-        return _ingest_zip_stream(io.BytesIO(data), limits, source_name=source_name)
+        return _ingest_zip_stream(
+            io.BytesIO(data), limits, source_name=source_name, modality=modality
+        )
     if isinstance(path_or_stream, Path):
         p = path_or_stream
         if _is_zip(p):
-            return _ingest_zip_stream(p, limits, source_name=source_name or p.name)
+            return _ingest_zip_stream(
+                p, limits, source_name=source_name or p.name, modality=modality
+            )
         if p.is_dir():
             return _ingest_folder(p, limits, recursive=recursive)
         if _is_nifti(p):
-            return _ingest_nifti_file(p, limits)
+            return _ingest_nifti_file(p, limits, modality=modality)
         if _looks_like_dicom(p):
             # 单个 DICOM 文件 -> 当作单文件文件夹处理
             return _ingest_folder(p.parent, limits, recursive=False, extra_files=[p])
         raise IngestError(f"不支持的输入：{p}（期望 .nii/.nii.gz、DICOM 文件夹或 .zip）")
     # BinaryIO
-    return _ingest_zip_stream(path_or_stream, limits, source_name=source_name)
+    return _ingest_zip_stream(path_or_stream, limits, source_name=source_name, modality=modality)
 
 
 # ---------------------------------------------------------------------------
 # NIfTI
 # ---------------------------------------------------------------------------
 
-def _ingest_nifti_file(path: Path, limits: ExtractLimits) -> ImportReport:
+_NO_MODALITY = "unknown"  # zip 内 NIfTI 无显式 modality 时的显式占位（不冒充 CT）
+
+
+def _ingest_nifti_file(
+    path: Path, limits: ExtractLimits, modality: str | None = None
+) -> ImportReport:
+    if not modality:
+        raise IngestError(
+            f"显式 modality 必填：{path.name}（NIfTI 头无模态信息，不默认按 CT；"
+            "CLI --modality / API modality 参数）"
+        )
     img = sitk.ReadImage(str(path))
-    rec = _nifti_to_record(img, path.name)
+    rec = _nifti_to_record(img, path.name, modality=modality)
     report = ImportReport(n_series=1, n_files_scanned=1, input_kind="nifti")
     report.series.append(rec)
     return report
 
 
-def _nifti_to_record(img: sitk.Image, name: str) -> SeriesRecord:
+def _nifti_to_record(img: sitk.Image, name: str, modality: str) -> SeriesRecord:
     """sitk.Image -> SeriesRecord，带几何校验警告。"""
     import hashlib
 
@@ -252,7 +269,7 @@ def _nifti_to_record(img: sitk.Image, name: str) -> SeriesRecord:
     return SeriesRecord(
         series_id=series_id,
         case_key=Path(name).stem.removesuffix(".nii"),
-        modality="CT",
+        modality=modality,
         num_slices=int(size[2]) if len(size) == 3 else int(a.shape[0]),
         slice_thickness_mm=spacing[2] if len(spacing) == 3 else None,
         orientation=orientation,
@@ -512,7 +529,7 @@ _DEID_KW = list(DEID_TAG_KEYWORDS)
 # ---------------------------------------------------------------------------
 
 def _ingest_zip_stream(
-    src: BinaryIO | Path, limits: ExtractLimits, source_name: str = ""
+    src: BinaryIO | Path, limits: ExtractLimits, source_name: str = "", modality: str | None = None
 ) -> ImportReport:
     """zip 输入：safe_open_zip 三限预检 -> 流式落盘解压 -> 逐文件分派。
 
@@ -545,13 +562,13 @@ def _ingest_zip_stream(
 
             if nifti_files and not dicom_files:
                 report.input_kind = "nifti_zip"
-                return _finish_nifti_files(nifti_files, report)
+                return _finish_nifti_files(nifti_files, report, modality=modality)
             if dicom_files:
                 return _finish_dicom_files(dicom_files, report)
             if not nifti_files:
                 raise IngestError(f"zip {source_name!r} 内无 NIfTI/DICOM 成员")
             # 混合：NIfTI 与 DICOM 都有 —— 各自成 Series，都收
-            mixed = _finish_nifti_files(nifti_files, report)
+            mixed = _finish_nifti_files(nifti_files, report, modality=modality)
             return _finish_dicom_files(dicom_files, mixed)
     finally:
         zf.close()
@@ -632,7 +649,9 @@ def _has_dicm_magic(path: Path) -> bool:
         return False
 
 
-def _finish_nifti_files(members: list[Path], report: ImportReport) -> ImportReport:
+def _finish_nifti_files(
+    members: list[Path], report: ImportReport, modality: str | None = None
+) -> ImportReport:
     for f in members:
         try:
             img = sitk.ReadImage(str(f))
@@ -640,7 +659,7 @@ def _finish_nifti_files(members: list[Path], report: ImportReport) -> ImportRepo
             report.skipped.append({"file": f.name, "reason": f"NIfTI 读取失败: {type(e).__name__}"})
             report.n_skipped += 1
             continue
-        report.series.append(_nifti_to_record(img, f.name))
+        report.series.append(_nifti_to_record(img, f.name, modality=modality or _NO_MODALITY))
         report.n_series += 1
     return report
 

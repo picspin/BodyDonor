@@ -75,10 +75,17 @@ def scan(
     settings: Settings,
     source_name: str = "",
     recursive: bool = True,
+    modality: str | None = None,
 ) -> ImportOutcome:
     """扫描阶段（自检门）：ingest + 选择器规则，产出导入报告，不落库、不计数。"""
     limits = ExtractLimits.from_settings(settings)
-    report = ingest(path_or_stream, limits=limits, source_name=source_name, recursive=recursive)
+    report = ingest(
+        path_or_stream,
+        limits=limits,
+        source_name=source_name,
+        recursive=recursive,
+        modality=modality,
+    )
     candidates = apply_series_rules(report)
     return ImportOutcome(
         report=report,
