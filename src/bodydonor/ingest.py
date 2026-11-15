@@ -209,7 +209,7 @@ def ingest(
 # NIfTI
 # ---------------------------------------------------------------------------
 
-_NO_MODALITY = "unknown"  # zip 内 NIfTI 无显式 modality 时的显式占位（不冒充 CT）
+_NO_MODALITY = "unknown"  # app 演示路径缺省占位（/agent-context/preview）
 
 
 def _ingest_nifti_file(
@@ -336,7 +336,10 @@ def _ingest_folder(
 
 
 def _build_dicom_series(
-    uid: str, items: list[tuple[Path, Any]], report: ImportReport
+    uid: str,
+    items: list[tuple[Path, Any]],
+    report: ImportReport,
+    requested_modality: str | None = None,
 ) -> SeriesRecord | None:
 
     first_ds = items[0][1]
@@ -358,8 +361,14 @@ def _build_dicom_series(
             report.n_skipped += 1
         return None
 
-    # Series 元数据
-    modality = str(getattr(first_ds, "Modality", "") or None) or None
+    # Series 元数据（W4：缺失标签 -> None，不是字符串 "None"）
+    modality = str(getattr(first_ds, "Modality", None) or None) or None
+    if modality and requested_modality and modality != requested_modality:
+        # W3：DICOM 头与显式入参冲突 -> 报告 warning（不静默以头为准）
+        report.warnings.append(
+            f"modality 冲突：--modality {requested_modality} 被忽略，"
+            f"DICOM 头内 Modality={modality}（series {uid} 以头为准）"
+        )
     image_type = [str(v) for v in getattr(first_ds, "ImageType", [])] or []
     thickness = getattr(first_ds, "SliceThickness", None)
     thickness_mm = float(thickness) if thickness else None
@@ -564,12 +573,12 @@ def _ingest_zip_stream(
                 report.input_kind = "nifti_zip"
                 return _finish_nifti_files(nifti_files, report, modality=modality)
             if dicom_files:
-                return _finish_dicom_files(dicom_files, report)
+                return _finish_dicom_files(dicom_files, report, modality=modality)
             if not nifti_files:
                 raise IngestError(f"zip {source_name!r} 内无 NIfTI/DICOM 成员")
             # 混合：NIfTI 与 DICOM 都有 —— 各自成 Series，都收
             mixed = _finish_nifti_files(nifti_files, report, modality=modality)
-            return _finish_dicom_files(dicom_files, mixed)
+            return _finish_dicom_files(dicom_files, mixed, modality=modality)
     finally:
         zf.close()
 
@@ -659,12 +668,21 @@ def _finish_nifti_files(
             report.skipped.append({"file": f.name, "reason": f"NIfTI 读取失败: {type(e).__name__}"})
             report.n_skipped += 1
             continue
-        report.series.append(_nifti_to_record(img, f.name, modality=modality or _NO_MODALITY))
+        if not modality:
+            # B1：zip 内 NIfTI 无显式 modality -> 拒绝（IngestError，API 转 422），
+            # 不静默记 unknown 冒充已核查模态
+            raise IngestError(
+                f"显式 modality 必填：{f.name}（zip 内 NIfTI 头无模态信息，不默认按 CT；"
+                "CLI --modality / API modality 参数）"
+            )
+        report.series.append(_nifti_to_record(img, f.name, modality=modality))
         report.n_series += 1
     return report
 
 
-def _finish_dicom_files(members: list[Path], report: ImportReport) -> ImportReport:
+def _finish_dicom_files(
+    members: list[Path], report: ImportReport, modality: str | None = None
+) -> ImportReport:
     import pydicom
 
     by_series: dict[str, list[tuple[Path, Any]]] = {}
@@ -691,7 +709,7 @@ def _finish_dicom_files(members: list[Path], report: ImportReport) -> ImportRepo
         by_series.setdefault(uid, []).append((f, ds))
 
     for uid, items in by_series.items():
-        rec = _build_dicom_series(uid, items, report)
+        rec = _build_dicom_series(uid, items, report, requested_modality=modality)
         if rec is not None:
             report.series.append(rec)
             report.n_series += 1

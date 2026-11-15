@@ -2,7 +2,7 @@
 
 - NIfTI 摄入无显式 modality -> IngestError（不静默按 CT）
 - 显式 MR/PET/X-ray 走通，SeriesRecord.modality 取传入值（合成数据）
-- CLI --modality 必填；API /ingest/scan modality 缺省时 zip 内 NIfTI 记 unknown
+- CLI --modality 可选（纯 DICOM 不强制）；zip/API NIfTI 缺省 -> IngestError（B1）
 - app /agent-context/preview 演示元数据显式 modality 入参（缺省 unknown 占位）
 - export_seg.SourceSeriesInfo.modality 必填（无 "CT" 缺省）
 - 全部合成 fixture（无本地产物依赖，CI 可跑）
@@ -49,13 +49,12 @@ class TestNiftiExplicitModality:
             assert report.n_series == 1
             assert report.series[0].modality == mod
 
-    def test_zip_nifti_no_modality_marks_unknown(self, tmp_path) -> None:  # noqa: ANN001
-        """zip 内 NIfTI 无显式 modality -> 显式 unknown 占位（不冒充 CT）。"""
+    def test_zip_nifti_no_modality_raises(self, tmp_path) -> None:  # noqa: ANN001
+        """B1：zip 内 NIfTI 无显式 modality -> IngestError（不静默记 unknown）。"""
         nii = make_nifti(tmp_path / "img.nii.gz")
         data = zip_bytes({"c/img.nii.gz": nii.read_bytes()})
-        report = ingest(io.BytesIO(data))
-        assert report.n_series == 1
-        assert report.series[0].modality == "unknown"
+        with pytest.raises(IngestError, match="modality"):
+            ingest(io.BytesIO(data))
 
     def test_zip_nifti_explicit_modality(self, tmp_path) -> None:  # noqa: ANN001
         """zip 内 NIfTI 显式 modality -> 传入值。"""
@@ -72,6 +71,9 @@ class TestNiftiExplicitModality:
         r1 = ingest(root)
         r2 = ingest(root, modality="PET")
         assert r1.n_series == r2.n_series == 1
+        # W6：头内标签为准——modality 字段等于 DICOM 头内值，与入参无关
+        assert r1.series[0].modality == "CT"
+        assert r2.series[0].modality == "CT"
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +138,7 @@ class TestAppPreviewModality:
 
 class TestApiScanModality:
     def test_scan_zip_nifti_unknown_without_param(self, tmp_path, monkeypatch) -> None:  # noqa: ANN001
-        """API zip NIfTI 无 modality 参数 -> series.modality == unknown（非 CT）。"""
+        """B1：API zip NIfTI 无 modality 参数 -> 422（IngestError 转 422）；带参 200。"""
         from bodydonor import app as app_module
         from bodydonor.storage import LocalFsStorage
 
@@ -148,8 +150,8 @@ class TestApiScanModality:
         data = zip_bytes({"c/img.nii.gz": nii.read_bytes()})
         with TestClient(app) as c:
             r = c.post("/ingest/scan", files={"file": ("b.zip", data, "application/zip")})
-            assert r.status_code == 200
-            assert r.json()["report"]["series"][0]["modality"] == "unknown"
+            assert r.status_code == 422
+            assert "modality" in r.json()["detail"]
             r2 = c.post(
                 "/ingest/scan",
                 files={"file": ("b.zip", data, "application/zip")},

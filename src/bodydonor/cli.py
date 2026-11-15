@@ -45,9 +45,10 @@ def import_cmd(
         ..., exists=True, readable=True, help="NIfTI/DICOM 文件夹/zip 路径"
     ),
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r", help="递归扫描子目录"),
-    # NIfTI 头无模态信息：显式 --modality 必填，不默认按 CT（S3F）
+    # NIfTI 头无模态信息：NIfTI 输入必须显式给 --modality（缺失时 ingest 层报错，
+    # B1）；纯 DICOM 导入以头内 Modality 为准，不必填（W2）
     modality: str = typer.Option(
-        ..., "--modality", help="NIfTI 输入的显式模态（必填，如 CT/MR/PET）"
+        None, "--modality", help="NIfTI 输入的显式模态（NIfTI 必填；DICOM 忽略，以头为准）"
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="只扫描出导入报告，不落库"),
     no_series_ui: bool = typer.Option(
@@ -77,7 +78,8 @@ def import_cmd(
 
     try:
         outcome = scan(
-            path, settings, source_name=path.name, recursive=recursive, modality=modality.upper()
+            path, settings, source_name=path.name, recursive=recursive,
+            modality=modality.upper() if modality else None,
         )
     except Exception as e:  # noqa: BLE001 — IngestError/ExtractLimitError 统一呈现
         err_console.print(f"[red]✘ 导入失败：{e}[/red]")
