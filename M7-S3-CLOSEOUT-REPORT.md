@@ -21,7 +21,11 @@ S3R2：
 - `6c9e09f` docs(m7-s3r2): S3R2 轮次报告——③验证走通 + ④结构化 + ⑥导出修正汇总
 - `f71511f` docs(m7-s3r2): 报告补记实测数字——全量 671 passed / 0 F/E / 0 skipped（JUnit XML 存档）
 
-S3R3（审查轮，只审不改，清单入版本库）：
+S3R3（审查轮，只审不改，清单见 `M7-S3R-REVIEW.md`）：
+
+审查轮无代码提交。
+
+S3R4（修复轮）：
 
 - `993e753` fix(m7-s3r4): W-1/W-2 X-ray SOP Class 归一化 + verify_seg 源影像模态核对
 - `1390efd` fix(m7-s3r4): W-3/W-4/M-3 蒸馏门禁 fail-closed——total 缺 task 拒绝 + prepare_dataset 层测试
@@ -30,7 +34,9 @@ S3R3（审查轮，只审不改，清单入版本库）：
 - `188be7c` docs(m7-s3r4): W-7/M-5/M-6 报告修正——门控覆盖表述 + 行号注明 + TS 族计数
 - `95871cb` docs(m7-s3r4): S3R3 审查清单入版本库 + S3R4 轮次报告
 
-S3R5（本轮）：
+S3R5（本轮，`e874b2d`）：
+
+- `e874b2d` feat(m7-s3r5): W-2 接线收尾——export_and_verify 透传源模态核对 + 定稿报告
 
 - S3R5-W2：W-2 接线收尾——`export_and_verify` 透传 `expected_source_modality`（先失败测试 → 接线 → 跑绿）+ `_normalize_modality` 助手（"X-ray" 别名在导出与核对两侧同语义）
 - S3R5-REPORT：R4 报告计数更正（ontology 合计 31→26）+ 本定稿报告
