@@ -76,6 +76,20 @@ def test_accept_total_teacher_mask():
     assert reason == "ok"
 
 
+def test_total_without_task_rejected_fail_closed():
+    """S3R4 W-4：source=total 缺 task 即拒绝（fail-closed）——补录路径手写
+    {"source": "total", "backfill": true} 无 task 不再过门禁（来源必须实测）。"""
+    ok, reason = check_distill_source("total", teacher_task="", experimental=False)
+    assert not ok
+    assert "task" in reason
+    # 放行语义不变：commercial 仍只放行 total（带 task 时）
+    ok2, _ = check_distill_source("total", teacher_task="total", experimental=False)
+    assert ok2
+    # 未知 task 仍拒绝（原语义保留）
+    ok3, _ = check_distill_source("total", teacher_task="coronary_arteries")
+    assert not ok3
+
+
 def test_accept_pure_manual_correction():
     """纯人工修正（无第三方权重参与）：接受（LICENSES §8.2 推理 3）。"""
     ok, reason = check_distill_source("manual-correction")
@@ -141,14 +155,16 @@ def test_research_profile_allows_non_total_registry_teacher():
 
 
 def test_research_profile_restricted_teacher_derives_sa():
-    """restricted 教师（interactive_correction=nnInteractive）可进研究蒸馏且派生物标 SA。"""
+    """S3R4 W-6 修正后语义：nnInteractive 修正产物不进蒸馏（M6 项目政策边界）——
+    teacher 来源的 interactive_correction 任务在 ontology 判定层也拒绝
+    （restriction_basis 写"修正产物不进蒸馏"，边界须一致；注册表字段值不改）。"""
     from bodydonor.ontology import mask_allowed_in_distill_training
 
     ok, reason = mask_allowed_in_distill_training(
         {"experimental": False, "source": "teacher", "task": "interactive_correction"}
     )
-    assert ok, reason
-    assert "CC-BY-NC-SA" in reason
+    assert not ok
+    assert "修正产物不进蒸馏" in reason
 
 
 def test_research_profile_restricted_non_nninteractive_no_sa_label():
@@ -272,6 +288,22 @@ def test_validate_entry_rejects_bad_new_fields():
     e = deepcopy(base)
     e["output_license_inherits"] = "Apache-2.0"
     with pytest.raises(ValueError, match="output_license_inherits"):
+        validate_entry(e)
+
+
+def test_validate_entry_conditional_requires_inherits():
+    """S3R4 M-1：research_distill=conditional 时 output_license_inherits 必须
+    非空（空列表即 raise——ontology 判定层 conditional 空 inherits 落 "ok"，
+    条款静默丢弃，入口须拒绝登记）。"""
+    from copy import deepcopy
+
+    from bodydonor.license_registry import TEACHER_REGISTRY, validate_entry
+
+    base = deepcopy(TEACHER_REGISTRY[7])  # nninteractive：conditional 条目
+    assert base["research_distill"] == "conditional"
+    e = deepcopy(base)
+    e["output_license_inherits"] = []
+    with pytest.raises(ValueError, match="conditional"):
         validate_entry(e)
 
 
@@ -479,6 +511,25 @@ def test_provenance_backfill_records_basis(tmp_path):
         experimental=bool(prov.get("experimental", False)),
     )
     assert ok
+
+
+def test_provenance_backfill_without_task_rejected(tmp_path):
+    """S3R4 W-4：补录来源缺 task（{"source": "total", "backfill": true} 无 task）
+    ——补录校验同样要求 task 必填，空值 fail-closed。"""
+    case_dir = tmp_path / "amos_0002"
+    (case_dir / "ts_out").mkdir(parents=True)
+    (case_dir / "source.json").write_text(
+        '{"source": "total", "backfill": true, '
+        '"backfill_basis": "既有目录补录"}',
+        encoding="utf-8",
+    )
+    prov = read_teacher_provenance(case_dir / "ts_out")
+    ok, reason = check_distill_source(
+        str(prov.get("source", "")), teacher_task=str(prov.get("task", "")),
+        experimental=bool(prov.get("experimental", False)),
+    )
+    assert not ok
+    assert "task" in reason
 
 
 def test_provenance_reads_declared_nninteractive(tmp_path):
@@ -707,6 +758,43 @@ def test_prepare_dataset_profile_passthrough(tmp_path, monkeypatch):
     result = dd.prepare_dataset(out_root=out_root, dry_run=True, profile="commercial")
     assert result["n_cases"] == 1
     assert not (out_root / dd.DISTILL_DATASET_NAME / "manifest.json").exists()
+
+
+def test_prepare_dataset_rejects_missing_source_json(tmp_path, monkeypatch):
+    """S3R4 W-3：prepare_dataset 层——缺 source.json 的 case 预检拒绝
+    （DistillDataError 且消息含"来源清单缺失"），dry_run 不落盘。
+
+    门禁层（check_distill_source）对同一 case 也拒绝，但 prepare_dataset 的
+    预检 raise 是独立防线（删 :479 的 raise 后门禁层同样拒绝，两层须各钉住）。"""
+    from bodydonor import distill_data as dd
+
+    full_classes = sorted(DISTILL_CLASSES.values())
+    _, ts_no_prov = _make_case_fixture(tmp_path, "amos_9401", full_classes)
+    # 删掉 fixture 写下的 source.json（模拟失败 case / 未补录历史目录）
+    (ts_no_prov.parent / "source.json").unlink()
+    assert read_teacher_provenance(ts_no_prov).get("provenance_missing") is True
+
+    amos_train = tmp_path / "amos22_subset" / "train"
+    (amos_train / "imagesTr").mkdir(parents=True)
+    ct_root = tmp_path / "ct_lite"
+    (ct_root / "images").mkdir(parents=True)
+    monkeypatch.setattr(dd, "AMOS", amos_train)
+    monkeypatch.setattr(dd, "CT_LITE", ct_root)
+    cases = [
+        dd.DistillCase(case_id="amos_9401", source="amos",
+                       image_path=ts_no_prov.parent / "imagesTr" / "amos_9401.nii.gz",
+                       teacher_out=ts_no_prov),
+    ]
+    monkeypatch.setattr(dd, "build_train_pool", lambda holdout_path=None: cases)
+
+    out_root = tmp_path / "nnUNet_raw"
+    with pytest.raises(dd.DistillDataError, match="来源清单缺失"):
+        dd.prepare_dataset(out_root=out_root, dry_run=True)
+    with pytest.raises(dd.DistillDataError, match="来源清单缺失"):
+        dd.prepare_dataset(out_root=out_root, dry_run=False)
+    # 预检先行：两种模式都不落盘
+    assert not (out_root / dd.DISTILL_DATASET_NAME / "manifest.json").exists()
+    assert not (out_root / dd.DISTILL_DATASET_NAME / "dataset.json").exists()
 
 # ---------------------------------------------------------------------------
 # 推理成功后写 source.json（write_teacher_source_json，位置与读回约定一致）

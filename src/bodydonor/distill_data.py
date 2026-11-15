@@ -133,7 +133,14 @@ def check_distill_source(
         return mask_allowed_in_distill_training(
             {"source": "teacher", "task": teacher_task, "experimental": False}
         )
-    if source == "total" and teacher_task and teacher_task not in COMMERCIAL_DISTILL_TASKS:
+    if source == "total" and not teacher_task:
+        # S3R4 W-4：source=total 缺 task 即拒绝（fail-closed）——补录路径手写
+        # {"source": "total", "backfill": true} 无 task 不再过门禁（来源必须实测）
+        return False, (
+            "source='total' 缺 teacher_task：来源必须实测（补录须写 task；"
+            "空 task 不冒充已知——fail-closed）"
+        )
+    if source == "total" and teacher_task not in COMMERCIAL_DISTILL_TASKS:
         return False, (
             f"teacher 任务 '{teacher_task}' 不在商用蒸馏白名单 "
             f"{sorted(COMMERCIAL_DISTILL_TASKS)}（licensed 任务推定传染，LICENSES §8.1）"
@@ -226,8 +233,9 @@ class DistillCase:
     source: str  # amos | ct_lite（图像来源库，非标签来源）
     image_path: Path
     teacher_out: Path  # TS total 输出目录（每类一个 NIfTI）
-    label_source: str = "total"  # 标签来源（ts_out source.json 实测，非硬编码）
-    teacher_task: str = "total"  # 教师任务（ts_out source.json 实测）
+    # S3R4 M-3：默认空串——来源未知不冒充 total；prepare_dataset 门禁通过后实测覆盖
+    label_source: str = ""
+    teacher_task: str = ""
     n_classes_found: int = 0
     dropped_classes: list[str] = field(default_factory=list)
 
