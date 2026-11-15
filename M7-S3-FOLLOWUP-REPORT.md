@@ -19,7 +19,7 @@
 ## 2. 三项验收证据（S3F ①②③ 复述）
 
 - **① 显式 modality**：NIfTI 无显式 modality -> IngestError（ingest 单文件 `ingest.py:218`、zip `_finish_nifti_files`，API 422）——`test_m7_s3f_modality.py` 15 例全绿。
-- **② 注册表唯一来源**：`check_task` 白名单回退退役（`license_registry.py:452`）、24 任务登记、占位守卫匹配「待建/待落地」——`test_teacher_registry.py` 20 例全绿。
+- **② 注册表唯一来源**：`check_task` 白名单回退退役（`license_registry.py:454`）、24 任务登记、占位守卫匹配「待建/待落地」——`test_teacher_registry.py` 20 例全绿。
 - **③ 研究蒸馏脱钩**：`profile="research"` 走注册表 `research_use`，不读 `COMMERCIAL_DISTILL_TASKS`；商用路径行为不变——`test_distill_license_gate.py` 30+ 例全绿。
 
 ## 3. Blocker 修复逐条（3/3）
