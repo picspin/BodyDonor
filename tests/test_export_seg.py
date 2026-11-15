@@ -12,6 +12,7 @@ from bodydonor.export_seg import (
     SEG_MODALITY,
     SEG_SOP_CLASS_UID,
     SegExportError,
+    SegVerifyError,
     SourceSeriesInfo,
     _build_source_images,
     export_and_verify,
@@ -204,3 +205,22 @@ class TestXraySourcePreserved:
         rep2 = verify_seg(seg_path, source_mask_path=mask_path, expected_source_modality="CT")
         assert not rep2.ok
         assert any("源影像" in e for e in rep2.errors)
+
+    def test_export_and_verify_checks_source_modality(self, tmp_path) -> None:  # noqa: ANN001
+        """S3R5 W-2 收尾：export_and_verify 透传源模态核对——导出链路默认核对。
+
+        现状边界：MR 合成源实例的 SOP Class 落默认 CT Storage（与 W-1 同族的
+        已知未决项，见定稿报告未决清单）——接线前该不一致静默通过，接线后核对捕获。
+        """
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.mr5",
+            study_uid="1.2.826.0.1.3680043.8.498.mr5study",
+            modality="MR",
+            rows=32,
+            columns=32,
+            pixel_spacing=(1.0, 1.0),
+            slice_thickness_mm=1.0,
+        )
+        mask_path = _make_mask(tmp_path / "mask_mr5.nii.gz")
+        with pytest.raises(SegVerifyError, match="源影像"):
+            export_and_verify(mask_path, src, tmp_path / "seg_mr5.dcm")

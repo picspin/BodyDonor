@@ -73,6 +73,11 @@ class SegVerifyReport:
         return not self.errors and self.voxel_diff_nonzero == 0
 
 
+def _normalize_modality(modality: str) -> str:
+    """内部别名归一化："X-ray" → CR（非 DICOM CS 合法值，W-1 同一语义）。"""
+    return "CR" if modality == "X-ray" else modality
+
+
 def export_seg(
     mask_path: Path | str,
     source: SourceSeriesInfo,
@@ -211,7 +216,7 @@ def _build_source_images(
         # 是 CR 写 CR（合成源实例仅用于 highdicom 引用，模态标签取源值）
         # S3R4 W-1：先归一化模态再查 SOP Class 映射——内部别名 "X-ray" 非
         # DICOM CS 合法值，规范化为 CR 后同查映射（别名不落默认 CT Storage）
-        modality = "CR" if source.modality == "X-ray" else source.modality
+        modality = _normalize_modality(source.modality)
         sop_class_uid = {
             "DX": "1.2.840.10008.5.1.4.1.1.1.1",  # Digital X-Ray Image Storage - Presentation
             "CR": "1.2.840.10008.5.1.4.1.1.1",  # Computed Radiography Image Storage
@@ -386,7 +391,13 @@ def export_and_verify(
 ) -> SegVerifyReport:
     """导出 + 校验一步：diff 非零或任何错误 -> SegVerifyError。"""
     export_seg(mask_path, source, out_path, **kwargs)
-    rep = verify_seg(out_path, source_mask_path=mask_path, expected_series_uid=source.series_uid)
+    # S3R5 W-2 收尾：透传源模态核对——导出链路默认核对源影像模态（open item 1）
+    rep = verify_seg(
+        out_path,
+        source_mask_path=mask_path,
+        expected_series_uid=source.series_uid,
+        expected_source_modality=_normalize_modality(source.modality),
+    )
     if not rep.ok:
         raise SegVerifyError("; ".join(rep.errors))
     return rep

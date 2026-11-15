@@ -30,7 +30,7 @@
 ## 测试数字
 
 - 受影响测试文件（7 个）合并跑：**133 passed / 0 failed / 0 error**，exit=0（`-p no:warnings -rN`，pytest 9.2.0）。
-  - tests/test_m7_s3f_modality.py（15）+ tests/test_export_seg.py（11）+ tests/test_distill_license_gate.py（55）+ tests/test_teacher_registry.py（21）+ tests/test_m5e.py（5）+ tests/test_ontology.py + tests/test_api_ontology.py（合计 31）
+  - tests/test_m7_s3f_modality.py（15）+ tests/test_export_seg.py（11）+ tests/test_distill_license_gate.py（55）+ tests/test_teacher_registry.py（21）+ tests/test_m5e.py（5）+ tests/test_ontology.py + tests/test_api_ontology.py（合计 26；S3R5 实测更正：test_ontology.py 20 + test_api_ontology.py 6，此前误写 31）
 - tests/test_nninteractive_backend.py（30 passed，158.83s，真实 CPU 推理慢路径）：W-6 改动后实跑通过（W-6 拒绝分支只在直接 API 命中，nni 后端自身测试不依赖该分支）。
 - ruff：9 个改动文件全绿（`All checks passed!`，E501 修一处）。
 - 未跑全量 + JUnit XML（最后一轮）。
