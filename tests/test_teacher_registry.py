@@ -204,6 +204,21 @@ def test_mr_task_not_ready_rejected() -> None:
     ok, msg = LicenseRegistry(_settings()).check_task("body_mr", modality="MR")
     assert not ok
     assert "not ready" in msg
+    # S3R4 M-7：ready=False 拒绝消息纯技术原因——不含许可措辞
+    # （R2 报告声称的断言落地：'许可'/'BLOCKED'/'license' 不在消息内）
+    assert "许可" not in msg
+    assert "BLOCKED" not in msg.upper()
+    assert "license" not in msg.lower()
+
+
+def test_lung_vessels_not_ready_message_clean() -> None:
+    """S3R4 M-7：注册条目 ready=False（lung_vessels）拒绝消息同样纯技术原因。"""
+    ok, msg = LicenseRegistry(_settings(allowed=[])).check_task("lung_vessels", modality="CT")
+    assert not ok
+    assert "not ready" in msg
+    assert "许可" not in msg
+    assert "BLOCKED" not in msg.upper()
+    assert "license" not in msg.lower()
 
 
 def test_blocked_task_still_vetoed() -> None:
@@ -216,6 +231,10 @@ def test_unknown_task_rejected() -> None:
     ok, msg = LicenseRegistry(_settings(allowed=[])).check_task("no_such_task")
     assert not ok
     assert "registry" in msg
+    # S3R4 M-4：未注册任务拒绝消息不带许可措辞（分层承诺只对 ready=False 成立，
+    # 未注册消息只指登记路径，不引用 LICENSE 文档）
+    assert "LICENSE" not in msg.upper()
+    assert "BLOCKED" not in msg.upper()
 
 
 def test_whitelist_fallback_retired() -> None:

@@ -622,6 +622,17 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
             "CC BY-NC-SA 4.0 ShareAlike 传染（LICENSES-THIRD-PARTY.md §2.2/§8.1）"
         )
     if source == "teacher":
+        task = mask_meta.get("task", "")
+        if task == "interactive_correction":
+            # S3R4 W-6：nnInteractive 修正产物不进蒸馏（M6 项目政策边界，
+            # restriction_basis 明文）——teacher 来源同拒（与 nninteractive_guided
+            # 来源一致；修正产物走 QC，仅直接 API 会命中本分支）
+            return False, (
+                "teacher 任务 'interactive_correction'（nnInteractive 修正产物）"
+                "不进蒸馏训练集：项目政策边界——修正产物不进蒸馏（M6 已记录），"
+                "权重 CC BY-NC-SA 4.0 ShareAlike 传染"
+                "（LICENSES-THIRD-PARTY.md §2.2/§8.1）"
+            )
         # 研究蒸馏资格读注册表 research_use（非 commercial_distill_tasks）；
         # B3 fail-closed：teacher_task 为空即阻断（不跳过注册表检查直接放行）
         task = mask_meta.get("task", "")

@@ -1,6 +1,11 @@
 """许可注册表：从 config 读白名单，输出 status 报告（CLI 与 API 共用）。
 
 许可事实来源：LICENSES-THIRD-PARTY.md（M0 联网核查结论）。
+
+判定优先级（S3R4 M-2 文档澄清，非重构）：蒸馏资格唯一来源是条目的
+``research_distill`` 字段（ontology.mask_allowed_in_distill_training 判定层读它；
+``research_use`` 只作路由/说明文字，不参与蒸馏判定——两字段在 unverified 上
+当前一致，长期以 research_distill 为准）。
 """
 
 from __future__ import annotations
@@ -149,7 +154,8 @@ TEACHER_REGISTRY: list[dict] = [
         "派生物标 SA 并传播署名、商用须法务）",
         "output_license_inherits": ["CC-BY-NC-SA 4.0（ShareAlike：派生物须同许可并传播署名）"],
     },
-    # SynthSeg / MOOSE：QC/研究路由，蒸馏须先走法务，不写成可蒸馏（§五/§六）
+    # SynthSeg / MOOSE：QC/研究路由，research_distill=conditional（S3 收口轮 ④
+    # 用户定方向：不因商业政策模糊自动禁止本地科研蒸馏；§五/§六）
     {
         "teacher_id": "synthseg",
         "task": "brain_mri_qc",
@@ -158,8 +164,11 @@ TEACHER_REGISTRY: list[dict] = [
         "output_type": "mask",
         "research_use": "restricted",
         "known_restrictions": [
-            "QC-only：权重适用 FreeSurfer Software License Agreement v1.0，"
-            "蒸馏阻断待法务复核；不得登记为可蒸馏"
+            "research_distill=conditional：权重适用 FreeSurfer Software License "
+            "Agreement v1.0，本地科研蒸馏按 conditional 放行（派生物按 "
+            "output_license_inherits 保留条款）；商用蒸馏须先走法务——未决项："
+            "FreeSurfer 第 3 条第三方权利条款 + ADNI DUA（§六未解决项 1/2），"
+            "法务澄清前不升级 allowed"
         ],
         "provenance": {
             "source": "https://github.com/BBillot/SynthSeg; "
@@ -187,7 +196,10 @@ TEACHER_REGISTRY: list[dict] = [
         "output_type": "mask",
         "research_use": "restricted",
         "known_restrictions": [
-            "QC-only：训练数据含 CC BY-NC 4.0 部分，蒸馏阻断待法务复核；不得登记为可蒸馏"
+            "research_distill=conditional：训练数据含 NC 部分（AutoPET 溯源未决），"
+            "本地科研蒸馏按 conditional 放行（派生物按 output_license_inherits "
+            "保留条款）；商用蒸馏须先走法务——未决项：NC 训练数据溯源 + "
+            "'Commercial Version' 关系（§五未解决项 2/3），法务澄清前不升级 allowed"
         ],
         "provenance": {
             "source": "https://github.com/ENHANCE-PET/MOOSE (DATA_CARD.md §6)",
@@ -393,6 +405,14 @@ def validate_entry(entry: dict) -> None:
         raise ValueError("restriction_basis 必填（限制依据：许可明文或项目政策，附出处）")
     if not isinstance(entry["output_license_inherits"], list):
         raise ValueError("output_license_inherits 必须是列表（无需保留条款则显式空列表）")
+    # S3R4 M-1：conditional 且 inherits 空列表 -> 条款被静默丢弃（ontology 判定
+    # 落 "ok"）——入口拒绝登记（派生物保留条款必须显式登记）
+    if entry["research_distill"] == "conditional" and not entry["output_license_inherits"]:
+        raise ValueError(
+            f"{entry['teacher_id']}/{entry['task']} research_distill=conditional 但 "
+            "output_license_inherits 为空：conditional 派生物须按保留条款登记"
+            "（无需条款则改登记 allowed/unverified，不静默丢条款）"
+        )
     if not isinstance(entry["known_restrictions"], list):
         raise ValueError("known_restrictions 必须是列表（无限制则显式空列表）")
     p = entry["provenance"]
@@ -550,5 +570,5 @@ class LicenseRegistry:
         return (
             False,
             f"task '{task}' not in teacher registry "
-            f"(register as a registry entry, see LICENSES-THIRD-PARTY.md)",
+            "(register as a registry entry, see registry docs)",
         )
