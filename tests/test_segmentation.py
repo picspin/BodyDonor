@@ -140,12 +140,12 @@ class TestSegmentApi:
         # 由 mock 抛 SegmentWorkerError（与真实分发层 check_worker_task 一致）
         def _fake_segment(sid, s, task="total", device="gpu"):  # noqa: ANN001
             if task not in ("total", "total_mr", "body"):
-                # 模拟 license_registry.check_task 的白名单拒绝（BLOCKED/not in）
+                # 模拟 license_registry.check_task 的注册表拒绝（BLOCKED/not in）
                 raise SegmentWorkerError(
                     f"任务白名单拒绝：task '{task}' is BLOCKED (license: see "
                     "LICENSES-THIRD-PARTY.md)"
                     if task == "brain_aneurysm"
-                    else f"任务白名单拒绝：task '{task}' not in whitelist"
+                    else f"任务白名单拒绝：task '{task}' not in teacher registry"
                 )
             return _FakeResult(sid, task)
 
