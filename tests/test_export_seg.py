@@ -134,8 +134,6 @@ class TestSegExport:
 class TestXraySourcePreserved:
     def test_dx_source_stays_dx(self, tmp_path) -> None:  # noqa: ANN001
         """DX 源的合成源实例 Modality 保留 DX（不一律转 CR）。"""
-        import pydicom
-
         src = SourceSeriesInfo(
             series_uid="1.2.826.0.1.3680043.8.498.dx",
             study_uid="1.2.826.0.1.3680043.8.498.dxstudy",
