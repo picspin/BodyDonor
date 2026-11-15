@@ -182,3 +182,25 @@ class TestXraySourcePreserved:
         assert ds.ReferencedSeriesSequence[0].ReferencedInstanceSequence[
             0
         ].ReferencedSOPClassUID == "1.2.840.10008.5.1.4.1.1.1.1"  # DX Storage
+
+    def test_verify_seg_checks_source_modality(self, tmp_path) -> None:  # noqa: ANN001
+        """S3R4 W-2：verify_seg 从 ReferencedSOPClassUID 反查源影像模态并核对
+        （DX 源 SEG 通过；期望模态与引用不符时报错）。"""
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.dx3",
+            study_uid="1.2.826.0.1.3680043.8.498.dx3study",
+            modality="DX",
+            rows=32,
+            columns=32,
+            pixel_spacing=(1.0, 1.0),
+            slice_thickness_mm=1.0,
+        )
+        mask_path = _make_mask(tmp_path / "mask_dx3.nii.gz")
+        seg_path = export_seg(mask_path, src, tmp_path / "seg_dx3.dcm")
+        # 期望模态与源一致 -> 通过
+        rep = verify_seg(seg_path, source_mask_path=mask_path, expected_source_modality="DX")
+        assert rep.ok, rep.errors
+        # 期望模态与引用不符（DX 源被声称 CT）-> 报错
+        rep2 = verify_seg(seg_path, source_mask_path=mask_path, expected_source_modality="CT")
+        assert not rep2.ok
+        assert any("源影像" in e for e in rep2.errors)

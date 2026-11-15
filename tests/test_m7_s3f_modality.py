@@ -179,6 +179,11 @@ class TestSourceSeriesInfoModality:
         )
         images = _build_source_images(src, rows=32, columns=32, n_slices=4)
         assert all(str(i.Modality) == "CR" for i in images)
+        # S3R4 W-1：SOP Class 与 Modality 一致——X-ray 先归一化为 CR 再查映射，
+        # 不得落默认 CT Storage（同一实例 Modality=CR 而 SOPClass=CT 自相矛盾）
+        assert all(
+            str(i.SOPClassUID) == "1.2.840.10008.5.1.4.1.1.1" for i in images
+        )
 
 
 # ---------------------------------------------------------------------------

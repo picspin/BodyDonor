@@ -209,10 +209,13 @@ def _build_source_images(
         meta = FileMetaDataset()
         # S3 收口轮 ⑥：DX/CR 保留源信息，不一律转 CR——源模态是 DX 写 DX、
         # 是 CR 写 CR（合成源实例仅用于 highdicom 引用，模态标签取源值）
+        # S3R4 W-1：先归一化模态再查 SOP Class 映射——内部别名 "X-ray" 非
+        # DICOM CS 合法值，规范化为 CR 后同查映射（别名不落默认 CT Storage）
+        modality = "CR" if source.modality == "X-ray" else source.modality
         sop_class_uid = {
             "DX": "1.2.840.10008.5.1.4.1.1.1.1",  # Digital X-Ray Image Storage - Presentation
             "CR": "1.2.840.10008.5.1.4.1.1.1",  # Computed Radiography Image Storage
-        }.get(source.modality, "1.2.840.10008.5.1.4.1.1.2")  # 其余默认 CT Image Storage
+        }.get(modality, "1.2.840.10008.5.1.4.1.1.2")  # 其余默认 CT Image Storage
         meta.MediaStorageSOPClassUID = sop_class_uid
         meta.MediaStorageSOPInstanceUID = sop_uid
         meta.TransferSyntaxUID = ExplicitVRLittleEndian
@@ -223,8 +226,7 @@ def _build_source_images(
         ds.SOPInstanceUID = sop_uid
         ds.StudyInstanceUID = source.study_uid
         ds.SeriesInstanceUID = source.series_uid
-        # 内部别名 "X-ray" 非合法 CS 值，规范化为 CR；真实 DX/CR 源各自保留
-        ds.Modality = "CR" if source.modality == "X-ray" else source.modality
+        ds.Modality = modality
         ds.Rows = rows
         ds.Columns = columns
         ds.PixelSpacing = [
@@ -271,11 +273,14 @@ def verify_seg(
     seg_path: Path | str,
     source_mask_path: Path | str | None = None,
     expected_series_uid: str = "",
+    expected_source_modality: str = "",
 ) -> SegVerifyReport:
     """SEG 三道校验：pydicom 重读 + highdicom 解析 + 与源 mask 逐体素 diff。
 
     expected_series_uid 非空时同时断言引用了该源 series。source_mask_path
     非空时做逐体素 diff（体素语义：SEG 帧像素 = mask，形状一致才可比）。
+    expected_source_modality 非空时从 ReferencedSOPClassUID 反查源影像模态
+    并核对（S3R4 W-2：与报告 ⑥ 描述一致，与 SEG 自身模态分开）。
     """
     import highdicom as hd
     import pydicom
@@ -321,6 +326,28 @@ def verify_seg(
     # 源影像模态从 ReferencedSeriesSequence 每实例取回，与 SourceSeriesInfo 对照
     if getattr(seg, "Modality", "") != SEG_MODALITY:
         rep.errors.append(f"SEG 自身 Modality 非 SEG：{seg.Modality}")
+
+    # S3R4 W-2：源影像模态从 ReferencedSOPClassUID 反查（与 _build_source_images
+    # 同一映射），期望模态非空时核对——SEG 引用的源实例与声称的源模态一致
+    if expected_source_modality:
+        try:
+            ref_sop_class = str(
+                seg.ReferencedSeriesSequence[0]
+                .ReferencedInstanceSequence[0]
+                .ReferencedSOPClassUID
+            )
+        except (AttributeError, IndexError):
+            rep.errors.append("SEG 无源实例引用（ReferencedInstanceSequence 缺失）")
+        else:
+            src_modality = {
+                "1.2.840.10008.5.1.4.1.1.1.1": "DX",  # Digital X-Ray Image Storage
+                "1.2.840.10008.5.1.4.1.1.1": "CR",  # Computed Radiography Image Storage
+                "1.2.840.10008.5.1.4.1.1.2": "CT",  # CT Image Storage
+            }.get(ref_sop_class, ref_sop_class)  # 未知 UID 原样带出（不猜模态）
+            if src_modality != expected_source_modality:
+                rep.errors.append(
+                    f"SEG 源影像模态 {src_modality} != 期望 {expected_source_modality}"
+                )
 
     # 3. 逐体素 diff：SEG 帧 -> mask 重建，与源 mask 对比
     if source_mask_path is not None:
