@@ -1,4 +1,4 @@
-# M7-S3-FOLLOWUP-REPORT.md — S3F 第 5 轮：deep-reviewer findings 修复 + 报告定稿
+# M7-S3-FOLLOWUP-REPORT.md — S3F 第 5–6 轮：deep-reviewer findings 修复 + 报告定稿
 
 日期：2026-11-15。分支：`feat/m7-s3-followup-3items`。
 基线：第 4 轮审查（HEAD `62ed47b`，清单 `M7-S3F-REVIEW.md`：3 Blocker / 17 Warning / 8 Minor，全部经复现确认）。
@@ -20,7 +20,7 @@
 
 - **① 显式 modality**：NIfTI 无显式 modality -> IngestError（ingest 单文件 `ingest.py:218`、zip `_finish_nifti_files`，API 422）——`test_m7_s3f_modality.py` 15 例全绿。
 - **② 注册表唯一来源**：`check_task` 白名单回退退役（`license_registry.py:454`）、24 任务登记、占位守卫匹配「待建/待落地」——`test_teacher_registry.py` 20 例全绿。
-- **③ 研究蒸馏脱钩**：`profile="research"` 走注册表 `research_use`，不读 `COMMERCIAL_DISTILL_TASKS`；商用路径行为不变——`test_distill_license_gate.py` 30+ 例全绿。
+- **③ 研究蒸馏脱钩**：`profile="research"` 走注册表 `research_use`，不读 `COMMERCIAL_DISTILL_TASKS`；商用路径行为不变——`test_distill_license_gate.py` 45 例全绿（collect-only 实测）。
 
 ## 3. Blocker 修复逐条（3/3）
 
@@ -62,7 +62,8 @@
 
 ## 6. 测试数字与验证
 
-- 受影响测试文件（14 个）+ ruff：**211 passed / 0 F/E**，ruff **All checks passed**。
+- 受影响测试文件（14 个）+ ruff：ruff **All checks passed**。受影响文件集的「211 passed」无法按文件集复核（未注明是哪 14 个文件），废弃；以第 6 轮全量 657 / exit 0 为准（见第 6 轮一节）。
+- S3F 改动测试文件 collect 数（协调方 `--collect-only` 实测，18 个文件共 290 项，逐文件：api_ingest 13、deid_usage 13、distill_license_gate 45、export_seg 7、ingest 17、interaction_metrics 40、license_whitelist 8、m7_s3f_modality 15、nifti_geom_strict 8、ontology 20、qc_interaction_e2e 7、review_api 34、segmentation 11、selector_guard 7、storage_config 11、teacher_registry 20、zip_bomb 7、zip_streaming 7）。
 - 本轮新增/改写测试：B1（2 条改断言）、B2（2 条，先红后绿）、B3（1 条，先红后绿）、W5（3 条 CliRunner）、W7、W8/W9d（2 条）、W10（1 条透传）、W16（1 条双措辞）、M1（1 条 CR 规范化）。
 - 无 skipif 跳过的逻辑测试（全合成 fixture，CI 可跑）；真实数据测试（AMOS/hold-out）由协调方独立重跑（不并行 pytest）。
 - 修复过程中的连带更新：`test_api_ingest.py` 3 条 POST `/ingest/scan` NIfTI-zip 无参用例改带 `modality=CT`（B1 契约变更）；`test_m7_s3f_modality.py` API 用例改 422 断言。
@@ -72,5 +73,12 @@
 - **FleXray 放行的边界**：`known_restrictions` 机制依赖「蒸馏阻断」子串匹配——后续登记新 restricted 教师时须显式写明是否阻断蒸馏（不能靠省略放行）。
 - **`_restricted_license_label` 是查表非派生**：新 restricted 条目须同步补表项，否则标签为 `unknown（待逐条核实）`（fail-safe，不猜许可）。
 - **商用路径空 `teacher_task` 放行**（`distill_data.py:131`）：HEAD 既有行为，本轮未动；实际风险受 `read_teacher_provenance` 缺省 `{"source": "total", "task": "total"}` 限制（缺 source.json 的历史目录）。
-- **全量 pytest**：协调方独立重跑（GPU 锁持有者），本轮只跑受影响文件 + ruff。
+- **全量 pytest**：协调方独立重跑（GPU 锁持有者），本轮只跑受影响文件 + ruff（最终全量见第 6 轮一节）。
+- **全量日志尾行缺失**：`s3f-fullrun2.log` 尾行 counts 行缺失（两轮均如此，原因未查）；以点数 657 + exit 0 为准。
 - M7-S3F2-REPORT.md §4 中 `config.py is_task_allowed()` 的引用（W1 删除后）已由本轮 `2b16c01` 使该行过时——报告 §4 列的是"改后调用方"，其中 config.py 一行现已不成立，见 `M7-S3F-REVIEW.md` W1 修复。
+
+## 8. 第 6 轮：全量重跑 5 失败收口 + 最终全量
+
+- **协调方首轮全量**：657 项，652 passed / 5 failed / 0 skipped。5 失败全是旧测试直接调 `ingest()`/`scan()` 传 NIfTI 不带 modality（`test_nifti_geom_strict.py` 1、`test_zip_bomb.py` 1、`test_zip_streaming.py` 3）；生产行为（无 modality 抛 IngestError）符合事项①验收，未改。
+- **第 6 轮修复**：`7de475b`（5 处调用点显式传 `modality="CT"`，3 文件 22 passed）+ `49eca79`（check_task 行号 452→454）。
+- **协调方最终全量重跑**：**657 passed / 0 failed / 0 skipped，exit 0**（PYTHONPATH 指 worktree src 修正后重跑；首轮曾因主 venv editable 安装指向主 checkout src 而测错代码，该轮结果废弃——教训：worktree 重跑前先核 PYTHONPATH 指向 worktree src）。
