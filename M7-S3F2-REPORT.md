@@ -121,8 +121,9 @@
 - **更新**：`test_not_in_whitelist_rejected`（`whitelist`→`not in teacher
   registry`）；mock 分发层拒绝消息对齐；两文件 docstring。
 - **结果**：受影响 7 文件（license_whitelist / teacher_registry / storage_config /
-  api / segmentation / ts_runner / export_seg）共 **71 passed / 0 F/E，exit 0**
-  （`--collect-only` 三次实测一致：7 文件 71 tests collected；无 parametrize 展开）；
+  api / segmentation / ts_runner / export_seg）共 **71 tests collected**
+  （`--collect-only` 三次实测一致；无 parametrize 展开）。全量跑 + exit 0 记录见
+  S3 收口最后一轮；本轮不重复宣称 71 passed；
   ruff 3 文件全绿。无 skipif 跳过的逻辑测试（纯合成 fixture，CI 可跑）。
 
 ## 7. 红线核对（任务 6）

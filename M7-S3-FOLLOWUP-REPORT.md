@@ -20,7 +20,7 @@
 
 - **① 显式 modality**：NIfTI 无显式 modality -> IngestError（ingest 单文件 `ingest.py:218`、zip `_finish_nifti_files`，API 422）——`test_m7_s3f_modality.py` 15 例全绿。
 - **② 注册表唯一来源**：`check_task` 白名单回退退役（`license_registry.py:454`）、24 任务登记、占位守卫匹配「待建/待落地」——`test_teacher_registry.py` 20 例全绿。
-- **③ 研究蒸馏脱钩**：`profile="research"` 走注册表 `research_use`，不读 `COMMERCIAL_DISTILL_TASKS`；商用路径行为不变——`test_distill_license_gate.py` 45 例全绿（collect-only 实测）。
+- **③ 研究蒸馏脱钩**：`profile="research"` 走注册表 `research_use`，不读 `COMMERCIAL_DISTILL_TASKS`；商用路径行为不变——`test_distill_license_gate.py` 45 collected（collect-only 实测；全量跑见 S3 收口最后一轮）。
 
 ## 3. Blocker 修复逐条（3/3）
 
@@ -47,7 +47,7 @@
 - **W15**：`M7-S3F2-REPORT.md` §3.2 明示 ready=False 拒绝为行为变更（24 TS 任务一律 "not ready"，权重核实后置 ready=True 恢复）。
 - **W16**：`validate_entry` 占位守卫匹配「待建」与「待落地」两者 + 双措辞测试。
 - **W17**：`M7-S3F2-REPORT.md` 统一按实际登记 24（提交标题 25 = 含未登记 LEGACY，注记口径）。
-- **另**：`M7-S3F2-REPORT.md` "88 passed" 改 **71**——协调方两次实测一致，本轮以 `--collect-only` 第三次核实（7 文件 `71 tests collected in 0.75s`，无 parametrize 展开）。
+- **另**：`M7-S3F2-REPORT.md` "88 passed" 改 **71 tests collected**——协调方两次实测一致，本轮以 `--collect-only` 第三次核实（7 文件 `71 tests collected in 0.75s`，无 parametrize 展开；collect-only 数字只写 collected，全量跑见 S3 收口最后一轮）。
 
 ## 5. Minor 修复逐条（8/8）
 
