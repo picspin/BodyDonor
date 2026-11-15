@@ -255,9 +255,9 @@ TEACHER_REGISTRY: list[dict] = [
     )
 ] + [
     # 本组仅在 README open 清单（LICENSES-THIRD-PARTY.md §1.2），本地 TS 2.10.0
-    # 安装包 class_map 不含（ vertebrae_pp_refined 在 2.10.0 无此类）——许可证据
-    # 单一来源，结构未核实。licens 摘要：仍按 open 清单登记 allowed，
-    # ready=False（未核实），注册表 provenance 记明差异。
+    # 安装包 class_map 不含（vertebrae_pp_refined 在 2.10.0 无此类）——许可证据
+    # 单一来源，结构未核实。许可摘要：登记 unverified，ready=False（未核实），
+    # 注册表 provenance 记明差异。
     {
         "teacher_id": "totalsegmentator",
         "task": t,
@@ -343,7 +343,9 @@ def validate_entry(entry: dict) -> None:
             f"mask 教师 {entry['teacher_id']}/{entry['task']} 缺 class_map_ref 或 "
             "data_contract_version（无法判断结构覆盖与跨教师比较）"
         )
-    if entry.get("ready") and "待建" in str(entry.get("class_map_ref") or ""):
+    # W16：占位守卫匹配「待建」与「待落地」两种措辞——永远不能在类映射落地前 ready
+    cls_ref = str(entry.get("class_map_ref") or "")
+    if entry.get("ready") and ("待建" in cls_ref or "待落地" in cls_ref):
         raise ValueError(
             f"{entry['teacher_id']}/{entry['task']} ready=True 但 class_map_ref "
             f"是占位（{entry['class_map_ref']}）——先落地类映射再 ready"

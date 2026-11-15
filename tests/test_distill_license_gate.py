@@ -151,13 +151,49 @@ def test_research_profile_restricted_teacher_derives_sa():
     assert "CC-BY-NC-SA" in reason
 
 
+def test_research_profile_restricted_teacher_derives_sa():
+    """restricted 教师（interactive_correction=nnInteractive）可进研究蒸馏且派生物标 SA。"""
+    from bodydonor.ontology import mask_allowed_in_distill_training
+
+    ok, reason = mask_allowed_in_distill_training(
+        {"experimental": False, "source": "teacher", "task": "interactive_correction"}
+    )
+    assert ok, reason
+    assert "CC-BY-NC-SA" in reason
+
+
+def test_research_profile_restricted_non_nninteractive_no_sa_label():
+    """B2：synthseg/moose 蒸馏阻断（known_restrictions 明写，必须阻断）；
+    flexray 按 LICENSE-CHECK §三研究路由允许放行，但许可标签是 CC-BY-NC
+    （权重 CC BY-NC 4.0）非 CC-BY-NC-SA——非 nnInteractive restricted 教师
+    不得返回 CC-BY-NC-SA 标记（M7-PLAN §6.3：只有 nnInteractive 是 SA）。"""
+    from bodydonor.ontology import mask_allowed_in_distill_training
+
+    # synthseg / moose：known_restrictions 明写蒸馏阻断待法务复核 → 阻断
+    for task in ("brain_mri_qc", "moose_qc"):
+        ok, reason = mask_allowed_in_distill_training(
+            {"experimental": False, "source": "teacher", "task": task}
+        )
+        assert not ok, f"{task} 应阻断（known_restrictions 蒸馏阻断）: {reason}"
+        assert "CC-BY-NC-SA" not in reason
+    # flexray：§三 研究路由允许，但标签逐条写出 = CC-BY-NC（非 SA）
+    ok, reason = mask_allowed_in_distill_training(
+        {"experimental": False, "source": "teacher", "task": "flexray_xray"}
+    )
+    assert ok, reason
+    assert "CC-BY-NC" in reason
+    assert "CC-BY-NC-SA" not in reason
+
+
+def test_research_profile_empty_task_blocked():
+    """B3：研究路径 fail-closed——teacher_task 为空即阻断带原因（不跳过注册表检查）。"""
+    ok, reason = check_distill_source("total", teacher_task="", profile="research")
+    assert not ok
+    assert "无注册表条目" in reason
+
+
 def test_research_profile_blocks_unverified_teacher():
     """unverified 教师（vertebrae_body）研究蒸馏阻断待核实。"""
-    ok, reason = check_distill_source(
-        "total", teacher_task="vertebrae_body", profile="research"
-    )
-    assert not ok
-    assert "unverified" in reason
 
 
 def test_research_profile_blocks_missing_registry_entry():
@@ -203,6 +239,17 @@ def test_strict_gate_research_profile_passthrough():
     ok, reason = mask_allowed_in_distill_training_strict(meta, profile="research")
     assert not ok
     assert "unverified" in reason
+
+
+def test_invalid_profile_raises():
+    """W9d：非法 profile raise ValueError（不静默落商用分支放行）。"""
+    with pytest.raises(ValueError, match="profile 非法"):
+        check_distill_source("total", teacher_task="total", profile="Research")
+    with pytest.raises(ValueError, match="profile 非法"):
+        check_distill_source("total", teacher_task="total", profile="")
+    meta = {"source": "total", "task": "total", "experimental": False}
+    with pytest.raises(ValueError, match="profile 非法"):
+        mask_allowed_in_distill_training_strict(meta, profile="Research")
 
 
 # ---------------------------------------------------------------------------

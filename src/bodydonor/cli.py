@@ -224,8 +224,8 @@ def license_status() -> None:
         table.add_row(name, fact.get("license", "?"), fact.get("usage", fact.get("note", "")))
     console.print(table)
 
-    t2 = Table(title="任务白名单（teacher.allowed_tasks）")
-    t2.add_column("白名单任务数", style="green")
+    t2 = Table(title="任务白名单（仅展示；路由判定唯一来源 = 许可注册表）")
+    t2.add_column("已核查任务数", style="green")
     t2.add_column("商用蒸馏白名单")
     t2.add_column("禁用任务", style="red")
     t2.add_column("参考文件")
@@ -595,7 +595,9 @@ def status() -> None:
     table.add_row("database", settings.database.url)
     table.add_row("teacher engine", settings.teacher.engine)
     table.add_row(
-        "任务白名单", f"{len(settings.teacher.allowed_tasks)} 个（bodydonor license status 查看）"
+        "已核查任务数",
+        f"{len(settings.teacher.allowed_tasks)} 个（仅展示；路由走许可注册表，"
+        "bodydonor license status 查看）",
     )
     escape = (
         "enabled" if settings.experimental_text_prompt.enabled else "disabled（显式开启才可用）"

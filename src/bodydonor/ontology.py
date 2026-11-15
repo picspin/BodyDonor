@@ -589,6 +589,22 @@ class OntologyService:
 # 蒸馏训练集准入检查（experimental 隔离的强制点）
 # ---------------------------------------------------------------------------
 
+def _restricted_license_label(task: str) -> str:
+    """restricted 条目的许可标签按条目实际许可逐条写出（B2）。
+
+    仅 nnInteractive 是 CC BY-NC-SA（M7-PLAN §6.3）；flexray=CC BY-NC 4.0
+    （LICENSE-CHECK §三：研究路由允许、商用蒸馏禁止）；synthseg=FreeSurfer
+    SLA、moose=数据含 CC BY-NC（两者 known_restrictions 蒸馏阻断，标签不外露，
+    仅存档）；未知条目不猜，返回 unknown 待核实。
+    """
+    return {
+        "interactive_correction": "CC-BY-NC-SA",  # nnInteractive（§八）
+        "flexray_xray": "CC-BY-NC",  # 权重 CC BY-NC 4.0（§三）
+        "brain_mri_qc": "FreeSurfer-SLA",  # synthseg（§六，蒸馏阻断）
+        "moose_qc": "CC-BY-NC",  # 训练数据含 CC BY-NC 4.0（§五，蒸馏阻断）
+    }.get(task, "unknown（restricted 条目许可待逐条核实）")
+
+
 def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, str]:
     """研究蒸馏训练集准入检查（M7-S3F ③：资格读注册表 research_use）。
 
@@ -599,15 +615,14 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
     研究路径资格来源 = TEACHER_REGISTRY.research_use（不由
     commercial_distill_tasks 把关——那只是商用路径，S3 后续三项③ 用户定）：
     - allowed → 可进研究蒸馏；
-    - restricted → 可进研究蒸馏，派生物标 SA（license_inherits: CC-BY-NC-SA，
-      传播署名；如 nnInteractive）；
+    - restricted → 逐条目判定（known_restrictions 蒸馏阻断的不放行；放行条目
+      license_inherits 按实际许可写出）；
     - unverified / 注册表无条目 → 阻断待核实。
 
     nnInteractive 来源（M4 阶段 3 补缺口；命名 v1→v2 用户 2026-11-09 决定）：
     修正产物 source=nninteractive_guided（规范名，v2；nnInteractive 产物绝不用
     source=human）与 legacy 别名 manual-correction-nninteractive（v1，阶段 2a
-    sidecar 用过）、nninteractive 不在本研究路径（修正产物走 QC，不进蒸馏）。
-    legacy 别名永不再由新代码写出，但拒绝保留（删拒绝是安全倒退）。
+    sidecar 用过）。legacy 别名永不再由新代码写出，但拒绝保留（删拒绝是安全倒退）。
     """
     if mask_meta.get("experimental"):
         return False, "experimental 标记的 mask 不进蒸馏训练集（逃生通道产物隔离）"
@@ -617,31 +632,46 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
         "manual-correction-nninteractive",
         "nninteractive",
     ):
+        # nnInteractive 修正产物走 QC，不进蒸馏（含研究路径）；权重 CC BY-NC-SA
+        # 4.0 ShareAlike 传染（LICENSES-THIRD-PARTY.md §2.2/§8.1）
         return False, (
             f"nnInteractive 来源（source={source}）不进蒸馏训练集：权重 "
             "CC BY-NC-SA 4.0 ShareAlike 传染（LICENSES-THIRD-PARTY.md §2.2/§8.1）"
         )
     if source == "teacher":
-        # 研究蒸馏资格读注册表 research_use（非 commercial_distill_tasks）
+        # 研究蒸馏资格读注册表 research_use（非 commercial_distill_tasks）；
+        # B3 fail-closed：teacher_task 为空即阻断（不跳过注册表检查直接放行）
         task = mask_meta.get("task", "")
-        if task:
-            entries = [e for e in TEACHER_REGISTRY if e["task"] == task]
-            if not entries:
+        entries = [e for e in TEACHER_REGISTRY if e["task"] == task] if task else []
+        if not entries:
+            return False, (
+                f"teacher 任务 '{task or '(空)'}' 无注册表条目：研究蒸馏阻断，"
+                "走注册表登记（M7-S3F ③；空 task 不放行——研究路径 fail-closed）"
+            )
+        uses = {e["research_use"] for e in entries}
+        if "unverified" in uses:
+            return False, (
+                f"teacher 任务 '{task}' research_use=unverified：研究蒸馏阻断待核实"
+                "（M7-S3F ③）"
+            )
+        if "restricted" in uses:
+            # B2：restricted 逐条目判定——known_restrictions 明写蒸馏阻断的
+            # （synthseg/moose：待法务复核）不放行；nnInteractive 按条目实际
+            # 许可（CC BY-NC-SA 4.0，M7-PLAN §6.3）写 license_inherits，
+            # 不按 research_use 枚举硬编码许可标签
+            blocked = [
+                e for e in entries
+                if any("蒸馏阻断" in r for r in e["known_restrictions"])
+            ]
+            if blocked:
                 return False, (
-                    f"teacher 任务 '{task}' 无注册表条目：研究蒸馏阻断，"
-                    "走注册表登记（M7-S3F ③）"
+                    f"teacher 任务 '{task}' known_restrictions 声明蒸馏阻断待法务复核："
+                    "研究蒸馏阻断（M7-S3F ⑤ B2）"
                 )
-            uses = {e["research_use"] for e in entries}
-            if "unverified" in uses:
-                return False, (
-                    f"teacher 任务 '{task}' research_use=unverified：研究蒸馏阻断待核实"
-                    "（M7-S3F ③）"
-                )
-            if "restricted" in uses:
-                return True, (
-                    "license_inherits: CC-BY-NC-SA（restricted 教师可进研究蒸馏，"
-                    "派生物标 SA 并传播署名）"
-                )
+            return True, (
+                f"license_inherits: {_restricted_license_label(task)}（restricted "
+                "教师可进研究蒸馏，派生物标 SA 并传播署名）"
+            )
         return True, "ok"
     return True, "ok"
 

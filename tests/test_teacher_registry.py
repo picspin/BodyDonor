@@ -105,6 +105,31 @@ def test_missing_required_field_rejected() -> None:
         validate_entry(e)
 
 
+def test_ready_with_placeholder_class_map_ref_rejected_both_wordings() -> None:
+    """W16：ready=True × 占位 class_map_ref 拒绝——「待建」与「待落地」都触发守卫
+    （永远不能在类映射落地前 ready，M7-S3F2-REPORT §3.3 陈述成立）。"""
+    base = {
+        "teacher_id": "x",
+        "task": "t",
+        "checkpoint_id": "c",
+        "modalities": ("CT",),
+        "output_type": "mask",
+        "research_use": "allowed",
+        "known_restrictions": [],
+        "provenance": {"source": "s", "verified": "v"},
+        "ready": True,
+        "weight_integrity": {},
+        "class_map_ref": "ts-classes/v1 (待建)",
+        "data_contract_version": "v1",
+    }
+    with pytest.raises(ValueError, match="占位"):
+        validate_entry(base)
+    e2 = dict(base)
+    e2["class_map_ref"] = "ts-classes/v1 (待落地：2.10.0 class_map 不含，需按 README 定义建)"
+    with pytest.raises(ValueError, match="占位"):
+        validate_entry(e2)
+
+
 # --- check_task 读注册表 ---
 
 
@@ -199,7 +224,7 @@ def test_allowed_tasks_registered_tasks_route_via_registry() -> None:
     from bodydonor.license_registry import TEACHER_REGISTRY as R
 
     by_task = {e["task"]: e for e in R}
-    # 19 个 TS 任务（24 个待登记 - lung_vessels_LEGACY 不登记 - vertebrae_body 单列）
+    # 24 个 TS 任务（组一 18 + 组二 5 + 组三 vertebrae_body 单列；LEGACY 不登记）
     for t in (
         "lung_vessels", "body", "cerebral_bleed", "hip_implant",
         "pleural_pericard_effusion", "head_glands_cavities", "head_muscles",

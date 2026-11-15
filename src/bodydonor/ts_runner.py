@@ -16,7 +16,7 @@
   `torch.cuda.max_memory_allocated()` 结束，换算 MiB。这是主值（分配器口径）；
   主进程的 nvidia-smi 轮询是交叉核对值（全局口径，两者都记录）。
 - **白名单**：主进程先做（check_worker_task）；runner 收到任务后再查一次
-  config 白名单（纵深防线，runner 不信任 stdin 输入）。
+  RUNNER_BLOCKED_TASKS（纵深防线，runner 不信任 stdin 输入）。
 
 用法（主进程不直接跑本文件，由 segmentation.build_runner_cmd 组装命令）：
 
@@ -37,8 +37,8 @@ from typing import Any
 # 可用，主 .venv 隔离——Q7）。主 .venv import 本模块只拿任务/结果契约常量，
 # 不触发 TS import（延迟到 run_task/main 内）。
 
-# runner 侧白名单纵深：与 config/settings.yaml 的 commercial+research 白名单同源
-# （主进程 check_worker_task 是第一道；这里第二道，防绕过）
+# runner 侧白名单纵深：只查本黑名单（主进程 check_worker_task 是第一道，
+# 走许可注册表；这里第二道，防绕过）
 RUNNER_BLOCKED_TASKS = {"brain_aneurysm"}
 
 

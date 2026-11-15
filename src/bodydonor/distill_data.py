@@ -86,8 +86,9 @@ REJECTED_SOURCES: dict[str, str] = {
 # 仅商用路径使用——研究蒸馏路径不查它（M7-S3F ③ 用户定）
 COMMERCIAL_DISTILL_TASKS = frozenset({"total"})
 
-# 研究蒸馏路径的商用白名单脱钩标志：仅供测试注入验证 research_use 路径
-# 不读 COMMERCIAL_DISTILL_TASKS（M7-S3F ③）
+# 研究蒸馏路径不读 COMMERCIAL_DISTILL_TASKS（M7-S3F ③，测试注入验证脱钩）
+
+_DISTILL_PROFILES = ("commercial", "research")
 
 
 def check_distill_source(
@@ -100,7 +101,8 @@ def check_distill_source(
 
     返回 (allowed, reason)。拒绝一律给出精确理由，不静默跳过。
 
-    profile：
+    profile（W8：非法值 raise ValueError，不静默落商用分支——CLI 已有 choices，
+    Python API 由本检查防护）：
     - "commercial"（默认，行为与 HEAD 一致）：teacher 任务必须在
       COMMERCIAL_DISTILL_TASKS（仅 total）；
     - "research"：teacher 任务走注册表 research_use（ontology.
@@ -109,9 +111,12 @@ def check_distill_source(
 
     - source 必须在 ALLOWED_TRAIN_SOURCES（total 教师 mask 或纯人工修正）
     - nnInteractive / SegVol / experimental 来源显式拒绝（REJECTED_SOURCES）
-    - teacher mask 的任务按 commercial_distill_tasks 白名单校验
-      （profile="commercial"，仅 total；研究路径走 ontology 版 research_use 门）
     """
+    if profile not in _DISTILL_PROFILES:
+        raise ValueError(
+            f"profile 非法：{profile!r}（期望 {list(_DISTILL_PROFILES)}；"
+            "大小写敏感，'Research' 不放行也不落商用分支）"
+        )
     if source in REJECTED_SOURCES:
         return False, REJECTED_SOURCES[source]
     if source not in ALLOWED_TRAIN_SOURCES:
@@ -149,7 +154,8 @@ def mask_allowed_in_distill_training_strict(
     - 未知来源（不在 ALLOWED_TRAIN_SOURCES 也不在 REJECTED_SOURCES）
 
     profile 透传 check_distill_source："commercial"（默认，与 HEAD 一致）/
-    "research"（研究路径，teacher 任务走注册表 research_use）。
+    "research"（研究路径，teacher 任务走注册表 research_use）；
+    非法值 raise ValueError（W8，透传层防护）。
     """
     if mask_meta.get("experimental"):
         return False, "experimental 标记的 mask 不进蒸馏训练集（逃生通道产物隔离）"

@@ -144,6 +144,7 @@ def status() -> dict[str, object]:
         "queue_size": queue.qsize(),
         "storage_backend": settings.storage.backend,
         "teacher_engine": settings.teacher.engine,
+        # W12：仅展示已核查任务数；路由判定唯一来源 = 许可注册表
         "allowed_tasks": len(settings.teacher.allowed_tasks),
     }
 

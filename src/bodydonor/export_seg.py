@@ -217,7 +217,7 @@ def _build_source_images(
         ds.SOPInstanceUID = sop_uid
         ds.StudyInstanceUID = source.study_uid
         ds.SeriesInstanceUID = source.series_uid
-        ds.Modality = source.modality
+        ds.Modality = "CR" if source.modality == "X-ray" else source.modality
         ds.Rows = rows
         ds.Columns = columns
         ds.PixelSpacing = [

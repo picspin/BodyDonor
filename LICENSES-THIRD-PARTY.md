@@ -72,6 +72,22 @@
 （代码级佐证：`totalsegmentator/map_to_binary.py` 的 `commercial_models` 字典外的任务均为 open，
 https://raw.githubusercontent.com/wasserth/TotalSegmentator/master/totalsegmentator/map_to_binary.py ，访问日期 2026-11-06。）
 
+**与注册表的差异注记**（M7-S3F ② 安装包实测，M7-S3F ⑤ W13 同步；`license_registry.py`）：
+上表 README 清单与注册表 `research_use` 状态并非一一对应——
+
+- **注册表 `allowed`（双证据齐全：README open + 本地 TS 2.10.0 安装包 `class_map` 含该任务
+  且 `commercial_models` 不含）**：`lung_vessels`、`body`、`cerebral_bleed`、`hip_implant`、
+  `pleural_pericard_effusion`、`head_glands_cavities`、`head_muscles`、`headneck_bones_vessels`、
+  `headneck_muscles`、`liver_vessels`、`oculomotor_muscles`、`lung_nodules`、`kidney_cysts`、
+  `breasts`、`liver_segments`、`craniofacial_structures`、`abdominal_muscles`、`ventricle_parts`
+  （18 个）。
+- **注册表 `unverified`（仅 README 单证据，本地安装包 `class_map` 不含，结构未核实）**：
+  `teeth`、`trunk_cavities`、`liver_lesions`、`vertebrae_pp`、`vertebrae_pp_refined`（5 个）。
+- **注册表 `unverified`（安装包实测 `commercial_models['vertebrae_body']=305` 需 license，
+  与 README open 清单出入已注记）**：`vertebrae_body`。
+- **不登记（README 标注 "..." 含义不明，本地安装包 `class_map` 不含，不准猜）**：
+  `lung_vessels_LEGACY`（仅 `settings.yaml` 历史记录）。
+
 ### 1.3 需 license 的任务清单（Checklist #2）
 
 **原文引用**（`README.md`，访问日期 2026-11-06）：

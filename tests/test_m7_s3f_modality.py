@@ -106,6 +106,20 @@ class TestSourceSeriesInfoModality:
         images = _build_source_images(src, rows=32, columns=32, n_slices=4)
         assert all(str(i.Modality) == "MR" for i in images)
 
+    def test_xray_normalized_to_cr_in_export(self) -> None:
+        """M1：X-ray 非 DICOM CS 合法值——导出实例规范化为 CR。"""
+        from bodydonor.export_seg import _build_source_images
+
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.cr.src",
+            study_uid="1.2.826.0.1.cr.study",
+            modality="X-ray",
+            rows=32,
+            columns=32,
+        )
+        images = _build_source_images(src, rows=32, columns=32, n_slices=4)
+        assert all(str(i.Modality) == "CR" for i in images)
+
 
 # ---------------------------------------------------------------------------
 # app 演示路径：/agent-context/preview modality 显式入参
