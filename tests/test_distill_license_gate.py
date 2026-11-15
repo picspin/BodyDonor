@@ -537,6 +537,53 @@ def test_prepare_dataset_manifest_records_n_classes_found(tmp_path, monkeypatch)
     # dropped = 117 全量类里不在 keep 的（pad 占位文件 102 个，逐 case 实测）
     assert by_id["amos_9101"]["dropped_classes"] == [f"ts_extra_{i:03d}" for i in range(102)]
 
+
+def test_prepare_dataset_profile_passthrough(tmp_path, monkeypatch):
+    """W10：prepare_dataset(profile=...) 透传 check_distill_source——research 口径
+    unverified 来源清单即拒绝；非法 profile raise。dry_run 不落盘。"""
+    import pytest as _pytest
+
+    from bodydonor import distill_data as dd
+
+    full_classes = sorted(DISTILL_CLASSES.values())
+    _, ts_full = _make_case_fixture(tmp_path, "amos_9111", full_classes)
+    img_full = tmp_path / "amos_9111" / "imagesTr" / "amos_9111.nii.gz"
+    # 来源清单声明 unverified 任务：research 口径必须拒绝（透传证明）
+    (ts_full.parent / "source.json").write_text(
+        '{"source": "total", "task": "vertebrae_body"}', encoding="utf-8"
+    )
+
+    amos_train = tmp_path / "amos22_subset" / "train"
+    (amos_train / "imagesTr").mkdir(parents=True)
+    ct_root = tmp_path / "ct_lite"
+    (ct_root / "images").mkdir(parents=True)
+    monkeypatch.setattr(dd, "AMOS", amos_train)
+    monkeypatch.setattr(dd, "CT_LITE", ct_root)
+    cases = [
+        dd.DistillCase(case_id="amos_9111", source="amos", image_path=img_full,
+                       teacher_out=ts_full),
+    ]
+    monkeypatch.setattr(dd, "build_train_pool", lambda holdout_path=None: cases)
+
+    out_root = tmp_path / "nnUNet_raw"
+    # research 口径：unverified 任务在写第一个文件之前拒绝
+    with _pytest.raises(dd.DistillDataError, match="unverified"):
+        dd.prepare_dataset(out_root=out_root, dry_run=True, profile="research")
+    assert not (out_root / dd.DISTILL_DATASET_NAME).exists()
+    # commercial 口径：同一来源清单被商用白名单拒绝（口径差异可见）
+    with _pytest.raises(dd.DistillDataError, match="商用蒸馏白名单"):
+        dd.prepare_dataset(out_root=out_root, dry_run=True, profile="commercial")
+    # 非法 profile：raise ValueError（W8 入口防护）
+    with _pytest.raises(ValueError, match="profile 非法"):
+        dd.prepare_dataset(out_root=out_root, dry_run=True, profile="Research")
+    # 干跑成功路径（total 任务）：manifest 仍不落盘（dry_run）
+    (ts_full.parent / "source.json").write_text(
+        '{"source": "total", "task": "total"}', encoding="utf-8"
+    )
+    result = dd.prepare_dataset(out_root=out_root, dry_run=True, profile="commercial")
+    assert result["n_cases"] == 1
+    assert not (out_root / dd.DISTILL_DATASET_NAME / "manifest.json").exists()
+
 # ---------------------------------------------------------------------------
 # 推理成功后写 source.json（write_teacher_source_json，位置与读回约定一致）
 # ---------------------------------------------------------------------------

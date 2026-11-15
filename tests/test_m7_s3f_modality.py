@@ -76,9 +76,67 @@ class TestNiftiExplicitModality:
         assert r2.series[0].modality == "CT"
 
 
+class TestCliImportModality:
+    def test_cli_dicom_import_without_modality_ok(self, tmp_path, monkeypatch) -> None:  # noqa: ANN001
+        """W5/W2：纯 DICOM 导入不带 --modality 走通（CLI 参数可选，头内为准）。"""
+        from typer.testing import CliRunner
+
+        import bodydonor.cli as cli_mod
+        from tests.factories import make_dicom_folder
+
+        root = make_dicom_folder(tmp_path / "dicom", n_series=1, slices_per_series=10)
+        monkeypatch.setattr(cli_mod, "_settings", _settings_no_write(tmp_path))
+        runner = CliRunner()
+        result = runner.invoke(cli_mod.app, ["import", str(root), "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "Series" in result.output
+
+    def test_cli_nifti_import_without_modality_fails(self, tmp_path, monkeypatch) -> None:  # noqa: ANN001
+        """W5/B1：NIfTI 导入不带 --modality -> ingest 层报错，exit 1。"""
+        from typer.testing import CliRunner
+
+        import bodydonor.cli as cli_mod
+        from tests.factories import make_nifti
+
+        nii = make_nifti(tmp_path / "img.nii.gz")
+        monkeypatch.setattr(cli_mod, "_settings", _settings_no_write(tmp_path))
+        runner = CliRunner()
+        result = runner.invoke(cli_mod.app, ["import", str(nii), "--dry-run"])
+        assert result.exit_code == 1
+        assert "modality" in result.output
+
+    def test_cli_nifti_import_with_modality_ok(self, tmp_path, monkeypatch) -> None:  # noqa: ANN001
+        """W5：NIfTI 导入带 --modality MR 走通（dry-run）。"""
+        from typer.testing import CliRunner
+
+        import bodydonor.cli as cli_mod
+        from tests.factories import make_nifti
+
+        nii = make_nifti(tmp_path / "img.nii.gz")
+        monkeypatch.setattr(cli_mod, "_settings", _settings_no_write(tmp_path))
+        runner = CliRunner()
+        result = runner.invoke(
+            cli_mod.app, ["import", str(nii), "--dry-run", "--modality", "MR"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "MR" in result.output
+
+
 # ---------------------------------------------------------------------------
 # export_seg.SourceSeriesInfo.modality 必填
 # ---------------------------------------------------------------------------
+
+
+def _settings_no_write(tmp_path):  # noqa: ANN001
+    """CLI 测试 settings：data_dir 指 tmp（dry-run 不落盘，不读项目真实配置）。"""
+    from bodydonor.config import load_settings
+
+    def _f():
+        s = load_settings()
+        s.data_dir = str(tmp_path / "data")
+        return s
+
+    return _f
 
 
 class TestSourceSeriesInfoModality:
