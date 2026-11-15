@@ -425,10 +425,12 @@ def prepare_dataset(
     holdout_path: Path | None = None,
     dry_run: bool = False,
     job_id: str = "",
+    profile: str = "commercial",
 ) -> dict[str, Any]:
     """蒸馏数据集准备主入口：训练池 -> 泄漏重查 -> 逐 case 合并 -> nnU-Net 目录。
 
-    - 训练标签只来自 TS total 教师 mask（许可门禁逐 case 强制）
+    - 训练标签只来自 TS total 教师 mask（许可门禁逐 case 强制，profile 透传
+      check_distill_source：commercial 默认 / research 走注册表 research_use）
     - AMOS labelsTr / CT-Lite masks/ 绝不读入训练标签
     - 输出 nnUNet_raw/Dataset501_BodyDonorDistill：imagesTr/ labelsTr/
       dataset.json + manifest.json（逐 case 来源清单，ModelVersion 审计用）
@@ -470,7 +472,7 @@ def prepare_dataset(
         # 许可门禁逐 case 强制：来源清单实测值（非硬编码）过白名单
         ok, reason = check_distill_source(
             str(prov.get("source", "")), teacher_task=str(prov.get("task", "")),
-            experimental=bool(prov.get("experimental", False)),
+            experimental=bool(prov.get("experimental", False)), profile=profile,
         )
         if not ok:
             raise DistillDataError(f"许可门禁拒绝 {c.case_id}：{reason}")
