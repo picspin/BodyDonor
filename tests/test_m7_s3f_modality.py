@@ -164,8 +164,10 @@ class TestSourceSeriesInfoModality:
         images = _build_source_images(src, rows=32, columns=32, n_slices=4)
         assert all(str(i.Modality) == "MR" for i in images)
 
-    def test_xray_normalized_to_cr_in_export(self) -> None:
-        """M1：X-ray 非 DICOM CS 合法值——导出实例规范化为 CR。"""
+    def test_xray_internal_alias_maps_to_cr(self) -> None:
+        """S3 收口轮 ⑥：内部别名 "X-ray" 非 DICOM CS 合法值——合成源实例按
+        CR 规范化（源信息保留语义见 test_export_seg.py DX/CR 用例：真实 DX/CR
+        源各自保留，不再一律转 CR）。"""
         from bodydonor.export_seg import _build_source_images
 
         src = SourceSeriesInfo(

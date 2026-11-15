@@ -13,6 +13,7 @@ from bodydonor.export_seg import (
     SEG_SOP_CLASS_UID,
     SegExportError,
     SourceSeriesInfo,
+    _build_source_images,
     export_and_verify,
     export_seg,
     verify_seg,
@@ -124,3 +125,62 @@ class TestSegExport:
         # export_and_verify 对同一 mask/seg 配对自洽 -> 通过
         rep2 = export_and_verify(mask_path, source, tmp_path / "seg8.dcm")
         assert rep2.ok
+
+
+# ---------------------------------------------------------------------------
+# S3 收口轮 ⑥：X-ray 导出修正——DX/CR 保留源信息，SEG 自身模态与源影像模态分开
+# ---------------------------------------------------------------------------
+
+class TestXraySourcePreserved:
+    def test_dx_source_stays_dx(self, tmp_path) -> None:  # noqa: ANN001
+        """DX 源的合成源实例 Modality 保留 DX（不一律转 CR）。"""
+        import pydicom
+
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.dx",
+            study_uid="1.2.826.0.1.3680043.8.498.dxstudy",
+            modality="DX",
+            rows=32,
+            columns=32,
+        )
+        images = _build_source_images(src, 32, 32, 1)
+        assert len(images) == 1
+        assert images[0].Modality == "DX"
+        assert images[0].SOPClassUID == "1.2.840.10008.5.1.4.1.1.1.1"  # DX Storage
+
+    def test_cr_source_stays_cr(self, tmp_path) -> None:  # noqa: ANN001
+        """CR 源保留 CR。"""
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.cr",
+            study_uid="1.2.826.0.1.3680043.8.498.crstudy",
+            modality="CR",
+            rows=32,
+            columns=32,
+        )
+        images = _build_source_images(src, 32, 32, 1)
+        assert images[0].Modality == "CR"
+        assert images[0].SOPClassUID == "1.2.840.10008.5.1.4.1.1.1"  # CR Storage
+
+    def test_xray_seg_roundtrip_preserves_source_info(self, tmp_path) -> None:  # noqa: ANN001
+        """DX 源 SEG 导出 roundtrip：SEG 自身 Modality 恒为 SEG，源影像模态另记。"""
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.dx2",
+            study_uid="1.2.826.0.1.3680043.8.498.dx2study",
+            modality="DX",
+            rows=32,
+            columns=32,
+            pixel_spacing=(1.0, 1.0),
+            slice_thickness_mm=1.0,
+        )
+        mask_path = _make_mask(tmp_path / "mask_dx.nii.gz")
+        seg_path = export_seg(mask_path, src, tmp_path / "seg_dx.dcm")
+        rep = verify_seg(seg_path, source_mask_path=mask_path)
+        assert rep.ok, rep.errors
+        import pydicom
+
+        ds = pydicom.dcmread(str(seg_path))
+        # SEG 对象自身模态恒为 SEG；源影像模态（DX）从引用序列分开核对
+        assert ds.Modality == SEG_MODALITY
+        assert ds.ReferencedSeriesSequence[0].ReferencedInstanceSequence[
+            0
+        ].ReferencedSOPClassUID == "1.2.840.10008.5.1.4.1.1.1.1"  # DX Storage
