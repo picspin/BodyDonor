@@ -40,8 +40,8 @@ class TestWhitelist:
             check_worker_task("brain_aneurysm", settings)
 
     def test_not_in_whitelist_rejected(self, settings: Settings) -> None:
-        """不在白名单的任务拒绝（licensed tasks 需显式批准）。"""
-        with pytest.raises(SegmentWorkerError, match="whitelist"):
+        """注册表无条目任务拒绝（M7-S3F ②：白名单回退退役，注册表唯一来源）。"""
+        with pytest.raises(SegmentWorkerError, match="not in teacher registry"):
             check_worker_task("coronary_arteries", settings)
 
     def test_whitelist_negative_tests_still_pass(self, settings: Settings) -> None:
