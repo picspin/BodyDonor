@@ -140,7 +140,9 @@ def _modality_skip(
     if allowed is not None and m not in allowed:
         # W7：unknown 与 None/空同语义（B1 后 ingest 层不再产出 unknown，
         # 旧数据仍可能回读）——归 modality_unknown，不再混用两种 skip 文案
-        return {"skipped": "modality_unknown"} if m == "UNKNOWN" else {"skipped": "modality unsupported"}
+        if m == "UNKNOWN":
+            return {"skipped": "modality_unknown"}
+        return {"skipped": "modality unsupported"}
     return None
 
 

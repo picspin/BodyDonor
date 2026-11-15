@@ -151,17 +151,6 @@ def test_research_profile_restricted_teacher_derives_sa():
     assert "CC-BY-NC-SA" in reason
 
 
-def test_research_profile_restricted_teacher_derives_sa():
-    """restricted 教师（interactive_correction=nnInteractive）可进研究蒸馏且派生物标 SA。"""
-    from bodydonor.ontology import mask_allowed_in_distill_training
-
-    ok, reason = mask_allowed_in_distill_training(
-        {"experimental": False, "source": "teacher", "task": "interactive_correction"}
-    )
-    assert ok, reason
-    assert "CC-BY-NC-SA" in reason
-
-
 def test_research_profile_restricted_non_nninteractive_no_sa_label():
     """B2：synthseg/moose 蒸馏阻断（known_restrictions 明写，必须阻断）；
     flexray 按 LICENSE-CHECK §三研究路由允许放行，但许可标签是 CC-BY-NC
