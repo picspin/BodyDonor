@@ -39,7 +39,9 @@ modality = (str(raw).strip() or None) if raw is not None else None
 **grep 全仓同类 `str(getattr(...)` 模式**：其余均为 UID/描述类字符串字段（缺省
 `""`）或带 `"UNKNOWN"` 缺省的 BurnedInAnnotation——语义本就是"缺失得空串/UNKNOWN"，
 非 Modality 的 None 语义，无同款 bug，不动（deid.py:76、ingest.py:323/347/420/469/705、
-nni_runner.py:293、export_seg.py:286/290、burned_ocr.py:71/76）。export_seg.py:290
+nni_runner.py:293、export_seg.py:286/290（R1 提交时的行号；当前 HEAD 为
+export_seg.py:293/297——⑥ 提交 d91443f 在文件前部新增 7 行后偏移）、
+burned_ocr.py:71/76）。export_seg.py:290
 的 `str(getattr(ds, "Modality", "")) != SEG_MODALITY` 是 SEG 对象校验（缺省 `""` 不等于
 `"SEG"` 即拒绝），安全。
 

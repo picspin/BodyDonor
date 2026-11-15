@@ -22,6 +22,7 @@
 - **许可**：`TEACHER_REGISTRY.research_use`（allowed/restricted/unverified）+ 本轮新增 `research_distill`——注册表条目级字段，不参与部署判断。
 - **适配器/部署**：`LicenseRegistry.check_task` 的 `ready` + `modalities` 门控（`license_registry.py` check_task）：ready=False 拒绝带 "checkpoint 未部署" 技术原因；模态不符带 "not supported by registry"。
 - **机器权重可用性**：推理链路 `check_task`（白名单一票否决）→ runner 子进程加载 checkpoint，缺失报 FileNotFoundError。
+- **S3R4 W-7 更正**：上述"白名单一票否决"只覆盖 TS 教师路径（`run_total` → `check_worker_task`）；nnInteractive 修正路径（`nninteractive_backend.correct_image`）未接注册表门控——blocked/ready 判定对该路径失效（S3R3 审查确认的已知缺口，未在本轮加运行时门禁；蒸馏防线在数据侧 sidecar source 标签 + 蒸馏门禁拒绝）。
 
 ### ③ 验收证据
 
@@ -48,7 +49,8 @@
   - blocked/unverified/无条目 → 阻断待核实
   - **"蒸馏阻断"子串匹配已删**（`any("蒸馏阻断" in r ...)`）；`_restricted_license_label` 查表已删。`known_restrictions` 退役为说明文字，不再参与字符串判定。
 - **字段值依据（逐项按 M7-LICENSE-CHECK 原文 + 章节）**：
-  - **total / total_mr 等 TS 族（20 条目）**：allowed——许可明文 Apache-2.0（§四；S3F ② 双证据组同）
+  - **total / total_mr 等 TS 族（30 条目：allowed 24 / unverified 6）**：allowed 主力——许可明文 Apache-2.0（§四；S3F ② 双证据组同；S3R4 M-6 计数更正：原报告误写 20，实测 TEACHER_REGISTRY 中 teacher_id=totalsegmentator 共 30 条）
+  - **全部 36 条目计数（S3R4 M-6 核对）**：allowed 25 / unverified 7 / conditional 4（nnInteractive、SynthSeg、MOOSE、FleXray）
   - **teeth/trunk_cavities/liver_lesions/vertebrae_pp(+refined)（5 条目）**：unverified——许可证据单一来源（仅 README 清单），安装包结构未核实（S3F ② 组）
   - **vertebrae_body**：unverified——安装包 commercial_models 含（id 305 需 license）与 README open 清单出入（S3F ②）
   - **MRI-CORE（feature_encoding）**：allowed——Apache-2.0（§二，README "code and models"）
