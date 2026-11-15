@@ -247,9 +247,10 @@ class DistillCase:
 def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
     """读 ts_out 目录的来源清单（source.json，逐 case 可审计的事实源）。
 
-    - source.json 缺失 -> 默认 {"source": "total", "task": "total"}（M2/M3 既有
-      ts_out 目录都由 run_total task=total 产生，无 source.json；缺省即 total，
-      历史路径如实记录）
+    - source.json 缺失 -> {"provenance_missing": True}（S3R1：不默认
+      {"source": "total", "task": "total"}——"来源未知"不得变成"来源已知"；
+      调用方对缺失来源按缺失处理，prepare_dataset 预检拒绝）。历史目录可显式
+      补录来源并记录 backfill 依据，不删不重做
     - source.json 存在 -> 逐字段读出（source/task/experimental/created_by），
       prepare_dataset 把**实测来源**过许可门禁（不硬编码，防止 ts_out 目录里
       混入 nnInteractive 修正产物或 licensed 任务 mask 时门禁被绕过）
@@ -257,7 +258,7 @@ def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
     """
     meta_path = teacher_out.parent / "source.json"
     if not meta_path.exists():
-        return {"source": "total", "task": "total", "provenance_file": False}
+        return {"provenance_missing": True}
     try:
         doc = json.loads(meta_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
@@ -266,7 +267,7 @@ def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
         ) from e
     if not isinstance(doc, dict):
         raise DistillDataError(f"来源清单格式非法（非 dict）：{meta_path}")
-    doc["provenance_file"] = True
+    doc["provenance_missing"] = False
     return doc
 
 
@@ -275,7 +276,7 @@ def write_teacher_source_json(teacher_out: Path, case_id: str) -> None:
 
     推理脚本在 run_total 成功后调用：新跑出的 ts_out 不再靠"缺文件默认 total"，
     来源清单是实测写下的。失败 case 不写（目录里无 source.json = 该 case 未
-    成功产出，预检按默认 total 读回是历史路径的如实语义）。
+    成功产出，预检按 provenance_missing 拒绝——S3R1 不默认 total）。
 
     内容与 read_teacher_provenance 的实测读回约定对齐：
     {"source": "total", "task": "total", "created_by": ..., "case_id": ...}
@@ -475,6 +476,13 @@ def prepare_dataset(
     for c in pool:
         prov = read_teacher_provenance(c.teacher_out)
         provenances[c.case_id] = prov
+        if prov.get("provenance_missing"):
+            # S3R1：缺 source.json = 来源未知，不默认 total 进训练清单
+            # （历史目录先补录来源 + backfill 依据，再跑 prepare_dataset）
+            raise DistillDataError(
+                f"来源清单缺失 {c.case_id}：{c.teacher_out.parent / 'source.json'}"
+                "（不默认 total——来源未知不冒充已知；先补录来源并记录依据）"
+            )
         # 许可门禁逐 case 强制：来源清单实测值（非硬编码）过白名单
         ok, reason = check_distill_source(
             str(prov.get("source", "")), teacher_task=str(prov.get("task", "")),
@@ -533,7 +541,6 @@ def prepare_dataset(
 
         entry = c.manifest_entry()
         entry["dropped_classes"] = dropped
-        entry["provenance_file"] = provenances[c.case_id].get("provenance_file", False)
         entry["experimental_flag"] = bool(provenances[c.case_id].get("experimental", False))
         manifest_cases.append(entry)
 
@@ -598,9 +605,9 @@ def prepare_dataset(
             ),
         },
         "provenance_convention": (
-            "逐 case ts_out 旁 source.json 为来源事实源（缺失默认 source=total，"
-            "对应 M2/M3 run_total task=total 既有目录）；非白名单来源在 prepare_dataset "
-            "预检阶段即拒绝"
+            "逐 case ts_out 旁 source.json 为来源事实源（缺失即来源未知，不默认"
+            " total；缺失 case 在 prepare_dataset 预检阶段即拒绝，历史目录补录来源"
+            "须记 backfill 依据）；非白名单来源同在预检阶段即拒绝"
         ),
         "n_cases": n_written,
         "cases": manifest_cases,

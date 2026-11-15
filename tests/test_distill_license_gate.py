@@ -341,11 +341,43 @@ def test_build_train_pool_excludes_holdout(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_provenance_defaults_total_without_source_json(tmp_path):
-    """ts_out 旁无 source.json -> 默认 total（M2/M3 既有目录，历史路径如实）。"""
+    """ts_out 旁无 source.json -> provenance_missing（不默认 total，来源未知不冒充已知）。"""
     prov = read_teacher_provenance(tmp_path / "ts_out")
+    assert prov["provenance_missing"] is True
+    assert "source" not in prov
+    assert "task" not in prov
+
+
+def test_provenance_missing_case_rejected_by_gate(tmp_path):
+    """缺 source.json 的 case：来源按缺失处理（不默认 total），过不了门禁也不进训练清单。"""
+    prov = read_teacher_provenance(tmp_path / "ts_out")
+    ok, reason = check_distill_source(
+        str(prov.get("source", "")), teacher_task=str(prov.get("task", "")),
+        experimental=bool(prov.get("experimental", False)),
+    )
+    assert not ok
+    assert "'' 不在蒸馏训练白名单" in reason
+
+
+def test_provenance_backfill_records_basis(tmp_path):
+    """历史目录显式补录来源并记录补录依据（backfill 字段），不删不重做。"""
+    case_dir = tmp_path / "amos_0001"
+    (case_dir / "ts_out").mkdir(parents=True)
+    (case_dir / "source.json").write_text(
+        '{"source": "total", "task": "total", '
+        '"backfill": true, '
+        '"backfill_basis": "M2/M3 run_total task=total 既有目录，2026-11-15 补录"}',
+        encoding="utf-8",
+    )
+    prov = read_teacher_provenance(case_dir / "ts_out")
+    assert prov["provenance_missing"] is False
     assert prov["source"] == "total"
-    assert prov["task"] == "total"
-    assert prov["provenance_file"] is False
+    assert prov["backfill"] is True
+    ok, reason = check_distill_source(
+        str(prov.get("source")), teacher_task=str(prov.get("task")),
+        experimental=bool(prov.get("experimental", False)),
+    )
+    assert ok
 
 
 def test_provenance_reads_declared_nninteractive(tmp_path):
@@ -424,7 +456,8 @@ def _make_case_fixture(tmp_path, case_id: str, classes: list[str], pad_to: int =
 
     蒸馏类文件为真实小 NIfTI（merge 会 nib.load）；占位补齐文件只被 glob 计数
     （keep_classes 之外不加载），空字节即可。pad_to=0 不补齐（配合
-    _touch_ts_out 自造部分目录）。
+    _touch_ts_out 自造部分目录）。写 source.json（与 run_distill_teacher_inference
+    成功路径同形——fixture 模拟成功产出的 ts_out，S3R1 后缺它即来源未知被预检拒绝）。
     """
     import nibabel as nib
     import numpy as np
@@ -440,6 +473,7 @@ def _make_case_fixture(tmp_path, case_id: str, classes: list[str], pad_to: int =
                  str(ts_out / f"{cls}.nii.gz"))
     for i in range(max(0, pad_to - len(classes))):
         (ts_out / f"ts_extra_{i:03d}.nii.gz").write_bytes(b"")
+    write_teacher_source_json(ts_out, case_id)
     return img_path, ts_out
 
 
@@ -597,7 +631,7 @@ def test_write_teacher_source_json_roundtrip(tmp_path):
         "case_id": "amos_9301",
     }
     prov = read_teacher_provenance(ts_out)
-    assert prov["provenance_file"] is True
+    assert prov["provenance_missing"] is False
     assert prov["source"] == "total"
     assert prov["task"] == "total"
     assert prov["case_id"] == "amos_9301"
@@ -656,6 +690,7 @@ def test_prepare_dataset_rejects_partial_ts_out(tmp_path, monkeypatch):
     # 117 个文件（14 蒸馏类 + 占位补齐）但缺 prostate：被预检拒绝（缺蒸馏类）
     _touch_ts_out(ts_bad, partial_classes + [f"ts_extra_{i:03d}" for i in range(103)])
     assert len(list(ts_bad.glob("*.nii.gz"))) == 117
+    write_teacher_source_json(ts_bad, "amos_9202")  # 来源已知（缺的是蒸馏类）
     img_ok = tmp_path / "amos_9201" / "imagesTr" / "amos_9201.nii.gz"
     img_bad = tmp_path / "amos_9202" / "imagesTr" / "amos_9202.nii.gz"
 
