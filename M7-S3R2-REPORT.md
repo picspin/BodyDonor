@@ -107,13 +107,14 @@
 
 1. `research_distill` 当前无条目标 blocked——枚举保留，等法务明文禁止的条目（MOOSE/SynthSeg 法务澄清前维持 conditional）。
 2. nnInteractive conditional 的语义=项目政策边界（修正产物不进蒸馏）而非许可禁止研究蒸馏——下游若要放开修正产物进研究蒸馏，需用户重定边界，本轮未动。
-3. 全量测试 + JUnit XML 在后台跑，结果补记见文末。
+3. 全量测试 + JUnit XML 已实测完成（见文末补记）。
 4. ⑥ 只做导出修正，未扩大到 X-ray 摄入全面重审（按任务定义）。
 
 ---
 
 ## 补记：全量测试结果
 
-- 全量：**599 passed, 0 failed, 0 error**（`tests/` 45 文件，JUnit XML 已存 `/home/gogvf/data/BodyDonor/tmp/m7-s3r2-junit.xml`）。
+- 全量：**671 passed, 0 failed, 0 error, 0 skipped**（`tests/` 45 文件；JUnit XML 已存 `/home/gogvf/data/BodyDonor/tmp/m7-s3r2-junit.xml`，testsuite tests=671 failures=0 errors=0 skipped=0；pytest -q 100% 点数 + exit=0，日志 `/home/gogvf/data/BodyDonor/tmp/m7-s3r2-fulltest.log`）。
+- 首次后台跑被 10m 时限 kill（管道化 pytest 输出全丢）——重启后直接写日志文件 + 2h 时限跑完，与记忆中教训一致。
 - 本地真实数据用例（`@pytest.mark.local_artifacts`）在本机执行通过；CI 会跳过。
 - 导入模块核实：worktree src（见上）。
