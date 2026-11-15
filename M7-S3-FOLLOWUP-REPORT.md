@@ -82,3 +82,4 @@
 - **协调方首轮全量**：657 项，652 passed / 5 failed / 0 skipped。5 失败全是旧测试直接调 `ingest()`/`scan()` 传 NIfTI 不带 modality（`test_nifti_geom_strict.py` 1、`test_zip_bomb.py` 1、`test_zip_streaming.py` 3）；生产行为（无 modality 抛 IngestError）符合事项①验收，未改。
 - **第 6 轮修复**：`7de475b`（5 处调用点显式传 `modality="CT"`，3 文件 22 passed）+ `49eca79`（check_task 行号 452→454）。
 - **协调方最终全量重跑**：**657 passed / 0 failed / 0 skipped，exit 0**（PYTHONPATH 指 worktree src 修正后重跑；首轮曾因主 venv editable 安装指向主 checkout src 而测错代码，该轮结果废弃——教训：worktree 重跑前先核 PYTHONPATH 指向 worktree src）。
+- **行号残留说明**：`49eca79` 实际只改了定稿报告 §2，S3F2 报告 :16 的 452→454 由第 8 轮落地；§5 M7 条"第 5 轮 347→452"为历史记述，保持不变。

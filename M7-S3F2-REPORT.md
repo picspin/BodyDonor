@@ -13,7 +13,7 @@
 
 ## 2. 白名单回退退役（任务 1）
 
-`license_registry.py` `check_task`（`src/bodydonor/license_registry.py:452`）：
+`license_registry.py` `check_task`（`src/bodydonor/license_registry.py:454`）：
 
 - **删除**回退分支 `if task in self.settings.teacher.allowed_tasks: return True, "allowed"`。
 - 注册表无条目即拒绝，消息改为 `task '{task}' not in teacher registry (register as a
