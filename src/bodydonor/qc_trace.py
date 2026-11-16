@@ -121,6 +121,21 @@ def _priority_signals(
     return signals
 
 
+def _skip_reasons(rule_scores: dict[str, Any]) -> str | None:
+    """rule_scores 里各规则的 skipped 原文 → 去重 "; " 拼接（S3 skip_reason 列）。
+
+    "disabled" 是配置态不是本决策的回退原因，不记；全部是 disabled/无 skip
+    → None（不造假空串）。逐规则明细已在 QCReport.rule_scores，此处只记摘要。
+    """
+    seen: list[str] = []
+    for rs in rule_scores.values():
+        if isinstance(rs, dict) and "skipped" in rs:
+            reason = str(rs["skipped"])
+            if reason != "disabled" and reason not in seen:
+                seen.append(reason)
+    return "; ".join(seen) or None
+
+
 def record_qc_trace(
     *,
     case_id: str | None,
@@ -132,11 +147,14 @@ def record_qc_trace(
     interaction_metrics: dict[str, Any] | None,
     student_source: str | None,
     thresholds: dict[str, Any],
+    modality: str | None = None,
 ) -> DecisionTrace:
     """构造 qc_scoring 阶段 trace（qc_series 产 QCReport 的同一事务里 add）。
 
     rules_triggered = flags（同一来源变量，验收 b 的逐项一致由构造保证）；
     gate_decision 尚未发生 → null（gate_decision 阶段另记一条）。
+    S3 增列：modality 由调用方传入（qc_series 已查 Series.modality）；
+    skip_reason 从 rule_scores 的 skipped 原文提取（写入处已有，不新造 plumbing）。
     """
     return DecisionTrace(
         case_id=case_id,
@@ -155,6 +173,8 @@ def record_qc_trace(
         gate_decision=None,
         human_outcome=None,  # 尚无人工决策，不造假
         calibration=snapshot_calibration(thresholds),
+        modality=modality,
+        skip_reason=_skip_reasons(rule_scores),
     )
 
 
@@ -173,11 +193,15 @@ def record_gate_trace(
     review_task_id: str | None,
     sample_group: str | None,
     thresholds: dict[str, Any],
+    modality: str | None = None,
 ) -> DecisionTrace:
     """构造 gate_decision 阶段 trace（generate_review_tasks 分档+建任务同一事务）。
 
     gate_decision：{tier, review_task_generated, review_task_id?, sample_group?}；
     tier=auto → 不生成 ReviewTask（M6-d 语义）→ review_task_generated=False。
+    S3 W10：modality/skip_reason 与 qc_scoring trace 同源——modality 由
+    qc_pipeline 从 persisted QCReport.rule_scores 所属 Series 传入（generate_
+    review_tasks 候选池行含 Series.modality），skip_reason 从 rule_scores 提取。
     """
     return DecisionTrace(
         case_id=case_id,
@@ -202,6 +226,8 @@ def record_gate_trace(
         human_outcome=None,
         calibration=snapshot_calibration(thresholds),
         review_task_id=review_task_id,
+        modality=modality,
+        skip_reason=_skip_reasons(rule_scores),
     )
 
 
@@ -235,4 +261,5 @@ __all__ = [
     "record_qc_trace",
     "snapshot_calibration",
     "update_human_outcome",
+    "_skip_reasons",
 ]

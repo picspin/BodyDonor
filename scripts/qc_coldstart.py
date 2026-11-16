@@ -47,7 +47,10 @@ def ts_teacher_mask(
         job_id = f"coldstart-{image_path.stem[:16]}"
         lock = acquire(lock_path, reason="batch", task=task, job_id=job_id, wait=3600)
         try:
-            run_total(image_path, out_dir, task=task, device="gpu", settings=s, job_id=job_id)
+            run_total(
+                image_path, out_dir, task=task, device="gpu", settings=s,
+                job_id=job_id, modality="CT",
+            )
         finally:
             lock.release()
     merged, class_names = merge_ts_output(out_dir, image_path)
@@ -168,6 +171,7 @@ def main() -> int:
             series_id=case_id,
             hu_values=img_hu,
             totalseg_classes=idx_to_class,
+            modality="CT",  # 冷启动校准集是 CT-Lite（S3 模态门闩：HU 规则只 CT）
         )
         # teacher mask vs 公开集真值：逐类 Dice（真实体素计算）。
         # CT-Lite 真值 mask 用 **TS 标准 class_map 值**（liver=5 等），与

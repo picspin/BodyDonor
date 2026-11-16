@@ -148,7 +148,7 @@ class TestCommitPathReorientation:
         p = tmp_path / "img.nii.gz"
         sitk.WriteImage(img, str(p))
 
-        outcome = scan(p, settings)
+        outcome = scan(p, settings, modality="CT")
         rec = outcome.report.series[0]
         assert rec.num_slices == 40
 

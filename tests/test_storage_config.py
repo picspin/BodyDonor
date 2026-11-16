@@ -39,8 +39,10 @@ def test_data_dir_mnt_c_rejected() -> None:
 def test_load_settings_from_project_config() -> None:
     s = load_settings()  # 项目内 config/settings.yaml
     assert s.deployment_mode in ("cloud_demo", "on_prem")
-    assert s.teacher.is_task_allowed("total")
-    assert not s.teacher.is_task_allowed("brain_aneurysm")
+    # W1/W14：路由判定唯一来源是许可注册表（license_registry.check_task），
+    # 配置项只作展示——blocked_tasks 一票否决在注册表层，不在配置
+    assert "total" in s.teacher.allowed_tasks
+    assert "brain_aneurysm" in s.teacher.blocked_tasks
 
 
 # ---------------------------------------------------------------------------

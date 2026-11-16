@@ -45,6 +45,11 @@ def import_cmd(
         ..., exists=True, readable=True, help="NIfTI/DICOM 文件夹/zip 路径"
     ),
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r", help="递归扫描子目录"),
+    # NIfTI 头无模态信息：NIfTI 输入必须显式给 --modality（缺失时 ingest 层报错，
+    # B1）；纯 DICOM 导入以头内 Modality 为准，不必填（W2）
+    modality: str = typer.Option(
+        None, "--modality", help="NIfTI 输入的显式模态（NIfTI 必填；DICOM 忽略，以头为准）"
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="只扫描出导入报告，不落库"),
     no_series_ui: bool = typer.Option(
         True, "--select/--no-select", help="应用 Series 选择器规则（默认开）"
@@ -72,7 +77,10 @@ def import_cmd(
         raise typer.Exit(1) from None
 
     try:
-        outcome = scan(path, settings, source_name=path.name, recursive=recursive)
+        outcome = scan(
+            path, settings, source_name=path.name, recursive=recursive,
+            modality=modality.upper() if modality else None,
+        )
     except Exception as e:  # noqa: BLE001 — IngestError/ExtractLimitError 统一呈现
         err_console.print(f"[red]✘ 导入失败：{e}[/red]")
         raise typer.Exit(1) from None
@@ -216,8 +224,8 @@ def license_status() -> None:
         table.add_row(name, fact.get("license", "?"), fact.get("usage", fact.get("note", "")))
     console.print(table)
 
-    t2 = Table(title="任务白名单（teacher.allowed_tasks）")
-    t2.add_column("白名单任务数", style="green")
+    t2 = Table(title="任务白名单（仅展示；路由判定唯一来源 = 许可注册表）")
+    t2.add_column("已核查任务数", style="green")
     t2.add_column("商用蒸馏白名单")
     t2.add_column("禁用任务", style="red")
     t2.add_column("参考文件")
@@ -587,7 +595,9 @@ def status() -> None:
     table.add_row("database", settings.database.url)
     table.add_row("teacher engine", settings.teacher.engine)
     table.add_row(
-        "任务白名单", f"{len(settings.teacher.allowed_tasks)} 个（bodydonor license status 查看）"
+        "已核查任务数",
+        f"{len(settings.teacher.allowed_tasks)} 个（仅展示；路由走许可注册表，"
+        "bodydonor license status 查看）",
     )
     escape = (
         "enabled" if settings.experimental_text_prompt.enabled else "disabled（显式开启才可用）"

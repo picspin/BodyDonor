@@ -1,11 +1,470 @@
 """许可注册表：从 config 读白名单，输出 status 报告（CLI 与 API 共用）。
 
 许可事实来源：LICENSES-THIRD-PARTY.md（M0 联网核查结论）。
+
+判定优先级（S3R4 M-2 文档澄清，非重构）：蒸馏资格唯一来源是条目的
+``research_distill`` 字段（ontology.mask_allowed_in_distill_training 判定层读它；
+``research_use`` 只作路由/说明文字，不参与蒸馏判定——两字段在 unverified 上
+当前一致，长期以 research_distill 为准）。
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .config import Settings
+
+# ---------------------------------------------------------------------------
+# 教师注册表（M7-S3 做法 5 号项；字段集 M7-PLAN v3 §2.2.1 一字不差）
+# ---------------------------------------------------------------------------
+
+_REGISTRY_FIELDS = (
+    "teacher_id",
+    "task",
+    "checkpoint_id",
+    "modalities",
+    "output_type",
+    "research_use",
+    "known_restrictions",
+    "provenance",
+    "ready",
+    "weight_integrity",
+    "research_distill",
+    "restriction_basis",
+    "output_license_inherits",
+)
+
+# 研究蒸馏资格枚举（M7-PLAN v3 §2.2.1 新增三字段行；S3 收口轮 ④）
+RESEARCH_DISTILL_VALUES = ("allowed", "conditional", "blocked", "unverified")
+
+# 首批条目（M7-LICENSE-CHECK §二/四/八 + M7-PLAN v3.2 §二；provenance 即核查依据）
+TEACHER_REGISTRY: list[dict] = [
+    # TotalSegmentator 公开任务（TS CT 主力 + MRI _mr 族；Apache-2.0，§四）
+    {
+        "teacher_id": "totalsegmentator",
+        "task": "total",
+        "checkpoint_id": "unpinned (venv totalsegmentator==2.10.0)",
+        "modalities": ("CT",),
+        "output_type": "mask",
+        "research_use": "allowed",
+        "known_restrictions": [],
+        "provenance": {
+            "source": "https://github.com/wasserth/TotalSegmentator/ (LICENSE + README Subtasks)",
+            "version": "2.10.0",
+            "verified": "M0/M4 结论 + M7-LICENSE-CHECK §四（total 与 total_mr 同列 "
+            "'Openly available for any usage (Apache-2.0)' 清单）",
+        },
+        "ready": True,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "allowed",
+        "restriction_basis": "许可明文：Apache-2.0（LICENSE-CHECK §四，total 在 "
+        "'Openly available for any usage (Apache-2.0)' 清单内）",
+        "output_license_inherits": [],
+        "class_map_ref": "ontology/v1/map.yaml",
+        "data_contract_version": "v1",
+    },
+] + [
+    {
+        "teacher_id": "totalsegmentator",
+        "task": t,
+        "checkpoint_id": "unpinned (权重未下载)",
+        "modalities": ("MR",),
+        "output_type": "mask",
+        "research_use": "allowed",
+        "known_restrictions": [],
+        "provenance": {
+            "source": "https://github.com/wasserth/TotalSegmentator/ (README Subtasks 清单)",
+            "version": "2.10.0",
+            "verified": "M7-LICENSE-CHECK §四（公开 _mr 任务同在 Apache-2.0 清单内）",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "allowed",
+        "restriction_basis": "许可明文：Apache-2.0（LICENSE-CHECK §四，公开 _mr 任务 "
+        "同在 Apache-2.0 清单内）",
+        "output_license_inherits": [],
+        "class_map_ref": "ts-mr-classes/v1 (TS MR 50 类，待落地为 ontology 条目)",
+        "data_contract_version": "v1",
+    }
+    for t in (
+        "total_mr",
+        "body_mr",
+        "vertebrae_mr",
+        "liver_segments_mr",
+        "liver_lesions_mr",
+    )
+] + [
+    # MRI-CORE ViT-B：特征编码器，不是开箱分割教师（LICENSE-CHECK §二）
+    {
+        "teacher_id": "mri_core",
+        "task": "feature_encoding",
+        "checkpoint_id": "MRI_CORE_vitb.pth (~360MB, 未下载)",
+        "modalities": ("MR",),
+        "output_type": "feature",
+        "research_use": "allowed",
+        "known_restrictions": ["Duke-110K 训练数据不含脑 MRI（脑部不在覆盖内）"],
+        "provenance": {
+            "source": "https://github.com/mazurowski-lab/mri_foundation (README License 节)",
+            "version": "vitb",
+            "verified": "M7-LICENSE-CHECK §二：code and models 均 Apache-2.0（README 声明，"
+            "仓库无 LICENSE 文件已注记；不写 CC BY 4.0——那是论文 arXiv 许可）",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "allowed",
+        "restriction_basis": "许可明文：Apache-2.0（LICENSE-CHECK §二，README 'code and "
+        "models' 声明；仓库无 LICENSE 文件已注记）",
+        "output_license_inherits": [],
+        "feature_schema": {"embed_dim": 768, "patch": 16, "space": "image"},
+    },
+    # nnInteractive：交互式提示分割教师（LICENSE-CHECK §八；两处证据链接）
+    {
+        "teacher_id": "nninteractive",
+        "task": "interactive_correction",
+        "checkpoint_id": "nnInteractive_v1.0",
+        "modalities": ("CT", "MR", "PET"),
+        "output_type": "mask",
+        "research_use": "restricted",
+        "known_restrictions": [
+            "权重 CC BY-NC-SA 4.0：仅交互式标注辅助，产物不进商用蒸馏训练集"
+        ],
+        "provenance": {
+            "source": "https://github.com/MIC-DKFZ/nnInteractive (README License 节); "
+            "https://huggingface.co/MIC-DKFZ/nnInteractive (模型卡 License 节)",
+            "version": "v1.0",
+            "verified": "M7-LICENSE-CHECK §八：两处官方声明逐字一致；运行时以 checkpoint "
+            "文件夹 LICENSE 首行（nni_runner 暴露为 session.license）为准，"
+            "注册表 provenance 引用该运行时值",
+        },
+        "ready": True,
+        "weight_integrity": {
+            "sha256": "b3ac4421f85457bbd1aa0d87f5e67bcb7bc8e2ce6b824b6ac45077cc5d630ea9",
+            "size_bytes": 411387150,
+            "status": "verified",
+            "checkpoint_path": "~/data/BodyDonor/nninteractive-models/models/"
+            "nnInteractive_v1.0/fold_0/checkpoint_final.pth",
+            "license_runtime": "CC BY-NC-SA 4.0（checkpoint 文件夹 LICENSE 首行，"
+            "nni_runner 暴露为 session.license）",
+        },
+        "class_map_ref": "prompt-targets/v1 (目标由交互提示决定，无固定类映射)",
+        "data_contract_version": "v1",
+        "research_distill": "conditional",
+        "restriction_basis": "项目政策：修正产物不进蒸馏（M6 已记录边界，S3 后续三项③ "
+        "用户定）+ 许可明文 CC BY-NC-SA 4.0（LICENSE-CHECK §八：研究路由允许、"
+        "派生物标 SA 并传播署名、商用须法务）",
+        "output_license_inherits": ["CC-BY-NC-SA 4.0（ShareAlike：派生物须同许可并传播署名）"],
+    },
+    # SynthSeg / MOOSE：QC/研究路由，research_distill=conditional（S3 收口轮 ④
+    # 用户定方向：不因商业政策模糊自动禁止本地科研蒸馏；§五/§六）
+    {
+        "teacher_id": "synthseg",
+        "task": "brain_mri_qc",
+        "checkpoint_id": "FreeSurfer 分发 (未下载)",
+        "modalities": ("MR",),
+        "output_type": "mask",
+        "research_use": "restricted",
+        "known_restrictions": [
+            "research_distill=conditional：权重适用 FreeSurfer Software License "
+            "Agreement v1.0，本地科研蒸馏按 conditional 放行（派生物按 "
+            "output_license_inherits 保留条款）；商用蒸馏须先走法务——未决项："
+            "FreeSurfer 第 3 条第三方权利条款 + ADNI DUA（§六未解决项 1/2），"
+            "法务澄清前不升级 allowed"
+        ],
+        "provenance": {
+            "source": "https://github.com/BBillot/SynthSeg; "
+            "https://freesurfer.net/fswiki/FreeSurferSoftwareLicense",
+            "version": "synthseg",
+            "verified": "M7-LICENSE-CHECK §六",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "conditional",
+        "restriction_basis": "许可明文 + 法务未决：FreeSurfer Software License Agreement "
+        "v1.0 明示允许并入专有程序、商业化风险自担（LICENSE-CHECK §六），不禁止本地"
+        "科研蒸馏；保留在第 3 条第三方权利条款与 ADNI DUA 未决（§六未解决项 1/2），"
+        "法务澄清后可升级 allowed",
+        "output_license_inherits": ["FreeSurfer Software License Agreement v1.0 "
+        "(attribution + 修改标识条款，§六 Part B 1(c)/(d))"],
+        "class_map_ref": "synthseg-classes/v1 (待建)",
+        "data_contract_version": "v1",
+    },
+    {
+        "teacher_id": "moose",
+        "task": "moose_qc",
+        "checkpoint_id": "未下载",
+        "modalities": ("CT", "PET"),
+        "output_type": "mask",
+        "research_use": "restricted",
+        "known_restrictions": [
+            "research_distill=conditional：训练数据含 NC 部分（AutoPET 溯源未决），"
+            "本地科研蒸馏按 conditional 放行（派生物按 output_license_inherits "
+            "保留条款）；商用蒸馏须先走法务——未决项：NC 训练数据溯源 + "
+            "'Commercial Version' 关系（§五未解决项 2/3），法务澄清前不升级 allowed"
+        ],
+        "provenance": {
+            "source": "https://github.com/ENHANCE-PET/MOOSE (DATA_CARD.md §6)",
+            "version": "moose",
+            "verified": "M7-LICENSE-CHECK §五：代码 Apache-2.0，权重 CC BY 4.0（项目自述）",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "conditional",
+        "restriction_basis": "许可明文 + 法务未决：权重 CC BY 4.0 本身允许商用（含衍生），"
+        "不禁止本地科研蒸馏（LICENSE-CHECK §五）；保留在 NC 训练数据溯源（AutoPET）与"
+        "'Commercial Version' 关系两项未决（§五未解决项 2/3），法务澄清后可升级 allowed",
+        "output_license_inherits": ["CC BY 4.0（署名条款，MODEL_LICENSE）"],
+        "class_map_ref": "moose-classes/v1 (待建)",
+        "data_contract_version": "v1",
+    },
+    # nnUNet v2：框架条目，不附带权重，mask 任务逐任务登记
+    {
+        "teacher_id": "nnunet_v2",
+        "task": "framework",
+        "checkpoint_id": None,
+        "modalities": ("CT", "MR"),
+        "output_type": "framework",
+        "research_use": "unverified",
+        "known_restrictions": [
+            "框架条目：不附带权重，不产生蒸馏资格（LICENSE-CHECK §七）；"
+            "具体 mask 任务须逐任务登记"
+        ],
+        "provenance": {
+            "source": "https://github.com/MIC-DKFZ/nnUNet (LICENSE)",
+            "version": "v2",
+            "verified": "M0 结论 + M7-LICENSE-CHECK §一",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "unverified",
+        "restriction_basis": "许可明文：框架条目不附带权重，不产生蒸馏资格（LICENSE-CHECK "
+        "§七）；具体任务模型须逐任务登记核实后才有资格",
+        "output_license_inherits": [],
+    },
+    # FleXray：X-ray 模态约束（非许可问题；权重 CC BY-NC 4.0，§三）
+    {
+        "teacher_id": "flexray",
+        "task": "flexray_xray",
+        "checkpoint_id": "未下载",
+        "modalities": ("X-ray",),
+        "output_type": "mask",
+        "research_use": "restricted",
+        "known_restrictions": [
+            "模态约束：仅 X-ray；权重 CC BY-NC 4.0，合成数据集合集 CC BY-NC 4.0"
+        ],
+        "provenance": {
+            "source": "https://huggingface.co/VictorButoi/flexray (模型卡 Licenses 节)",
+            "version": "flexray",
+            "verified": "M7-LICENSE-CHECK §三：代码 MIT，权重 CC BY-NC 4.0",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "conditional",
+        "restriction_basis": "许可明文：权重 CC BY-NC 4.0 禁止商业目的使用，QC/研究路由"
+        "（输出不进商用蒸馏训练）允许（LICENSE-CHECK §三资格判断理由）",
+        "output_license_inherits": ["CC-BY-NC 4.0（NC：派生物不得用于商业目的）"],
+        "class_map_ref": "flexray-classes/v1 (待建)",
+        "data_contract_version": "v1",
+    },
+] + [
+    # TS 公开 subtasks 第二批（M7-S3F ②）：allowed_tasks 全量登记进注册表，
+    # 路由只走注册表。本组：README open 清单 + TS 2.10.0 安装包双证据齐全。
+    {
+        "teacher_id": "totalsegmentator",
+        "task": t,
+        "checkpoint_id": "unpinned (权重未下载)",
+        "modalities": ("CT",),
+        "output_type": "mask",
+        "research_use": "allowed",
+        "known_restrictions": [],
+        "provenance": {
+            "source": "https://github.com/wasserth/TotalSegmentator/ (README Subtasks open 清单)",
+            "version": "2.10.0",
+            "verified": "M7-S3F ②：LICENSES-THIRD-PARTY.md §1.2 open 清单（访问 2026-11-06，"
+            "Apache-2.0 权重）+ TS 2.10.0 安装包 map_to_binary.class_map 含该任务且 "
+            "commercial_models 不含",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "allowed",
+        "restriction_basis": "许可明文：Apache-2.0（M7-S3F ②，LICENSES-THIRD-PARTY.md "
+        "§1.2 open 清单 + TS 2.10.0 安装包双证据）",
+        "output_license_inherits": [],
+        "class_map_ref": "ts-classes/v1 (TS 2.10.0 map_to_binary.class_map)",
+        "data_contract_version": "v1",
+    }
+    for t in (
+        "lung_vessels",
+        "body",
+        "cerebral_bleed",
+        "hip_implant",
+        "pleural_pericard_effusion",
+        "head_glands_cavities",
+        "head_muscles",
+        "headneck_bones_vessels",
+        "headneck_muscles",
+        "liver_vessels",
+        "oculomotor_muscles",
+        "lung_nodules",
+        "kidney_cysts",
+        "breasts",
+        "liver_segments",
+        "craniofacial_structures",
+        "abdominal_muscles",
+        "ventricle_parts",
+    )
+] + [
+    # 本组仅在 README open 清单（LICENSES-THIRD-PARTY.md §1.2），本地 TS 2.10.0
+    # 安装包 class_map 不含（vertebrae_pp_refined 在 2.10.0 无此类）——许可证据
+    # 单一来源，结构未核实。许可摘要：登记 unverified，ready=False（未核实），
+    # 注册表 provenance 记明差异。
+    {
+        "teacher_id": "totalsegmentator",
+        "task": t,
+        "checkpoint_id": "unpinned (权重未下载；2.10.0 安装包 class_map 不含该任务)",
+        "modalities": ("CT",),
+        "output_type": "mask",
+        "research_use": "unverified",
+        "known_restrictions": [
+            "仅 README open 清单（Apache-2.0 权重，访问 2026-11-06）；"
+            "本地 TS 2.10.0 安装包 class_map 不含，结构输出未核实"
+        ],
+        "provenance": {
+            "source": "https://github.com/wasserth/TotalSegmentator/ (README Subtasks open 清单)",
+            "version": "2.10.0",
+            "verified": "M7-S3F ②：LICENSES-THIRD-PARTY.md §1.2 open 清单；安装包未核实 "
+            "（class_map 不含）——结构未核实",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "unverified",
+        "restriction_basis": "许可证据单一来源：仅 README open 清单（LICENSES-THIRD-PARTY.md "
+        "§1.2），安装包结构未核实——资格未核实待双证据",
+        "output_license_inherits": [],
+        "class_map_ref": "ts-classes/v1 (待落地：2.10.0 class_map 不含，需按 README 定义建)",
+        "data_contract_version": "v1",
+    }
+    for t in (
+        "teeth",
+        "trunk_cavities",
+        "liver_lesions",
+        "vertebrae_pp",
+        "vertebrae_pp_refined",
+    )
+] + [
+    # vertebrae_body：TS 2.10.0 安装包 commercial_models 含（id 305，需 license，
+    # 与 M0 核查时上游 README 有出入）——按安装包实况登记 unverified + 限制注明。
+    # lung_vessels_LEGACY 不登记：README 标注 "..."（含义不明），本地 TS 2.10.0
+    # 安装包 class_map 不含——不准猜，留白名单历史记录（settings.yaml），见报告。
+    {
+        "teacher_id": "totalsegmentator",
+        "task": "vertebrae_body",
+        "checkpoint_id": "unpinned (权重未下载)",
+        "modalities": ("CT",),
+        "output_type": "mask",
+        "research_use": "unverified",
+        "known_restrictions": [
+            "TS 2.10.0 安装包 commercial_models 含该任务（id 305，需 license）："
+            "非商用走 academic license 渠道；与 README open 清单出入已注记"
+        ],
+        "provenance": {
+            "source": "TS 2.10.0 安装包 totalsegmentator/map_to_binary.py commercial_models",
+            "version": "2.10.0",
+            "verified": "M7-S3F ②：安装包实测 commercial_models['vertebrae_body']=305 "
+            "（需 license）；README open 清单（访问 2026-11-06）称 open——按安装包实况 "
+            "登记 unverified",
+        },
+        "ready": False,
+        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        "research_distill": "unverified",
+        "restriction_basis": "许可明文出入：安装包 commercial_models 含该任务（id 305，需 "
+        "license）与 README open 清单有出入（M7-S3F ②）——按安装包实况资格未核实",
+        "output_license_inherits": [],
+        "class_map_ref": "ts-classes/v1 (TS 2.10.0 map_to_binary.class_map)",
+        "data_contract_version": "v1",
+    },
+]
+
+
+def validate_entry(entry: dict) -> None:
+    """注册表条目字段完整性（§2.2.1）：缺失/非法即拒绝登记。
+
+    mask 教师必须带版本化 class_map_ref 与 data_contract_version；feature 教师
+    必须带 feature_schema（不进 mask 投票）。
+    """
+    missing = [f for f in _REGISTRY_FIELDS if f not in entry]
+    if missing:
+        raise ValueError(f"注册表条目缺字段：{missing}")
+    if entry["output_type"] not in ("mask", "feature", "framework"):
+        raise ValueError(f"output_type 非法：{entry['output_type']!r}")
+    if entry["research_use"] not in ("allowed", "restricted", "unverified"):
+        raise ValueError(f"research_use 非法：{entry['research_use']!r}")
+    if entry["research_distill"] not in RESEARCH_DISTILL_VALUES:
+        raise ValueError(f"research_distill 非法：{entry['research_distill']!r}")
+    rb = entry["restriction_basis"]
+    if not isinstance(rb, str) or not rb.strip():
+        raise ValueError("restriction_basis 必填（限制依据：许可明文或项目政策，附出处）")
+    if not isinstance(entry["output_license_inherits"], list):
+        raise ValueError("output_license_inherits 必须是列表（无需保留条款则显式空列表）")
+    # S3R4 M-1：conditional 且 inherits 空列表 -> 条款被静默丢弃（ontology 判定
+    # 落 "ok"）——入口拒绝登记（派生物保留条款必须显式登记）
+    if entry["research_distill"] == "conditional" and not entry["output_license_inherits"]:
+        raise ValueError(
+            f"{entry['teacher_id']}/{entry['task']} research_distill=conditional 但 "
+            "output_license_inherits 为空：conditional 派生物须按保留条款登记"
+            "（无需条款则改登记 allowed/unverified，不静默丢条款）"
+        )
+    if not isinstance(entry["known_restrictions"], list):
+        raise ValueError("known_restrictions 必须是列表（无限制则显式空列表）")
+    p = entry["provenance"]
+    if not isinstance(p, dict) or not p.get("source") or not p.get("verified"):
+        raise ValueError("provenance 必须含 source 与 verified（核查依据）")
+    if entry["output_type"] == "mask" and not (
+        entry.get("class_map_ref") and entry.get("data_contract_version")
+    ):
+        raise ValueError(
+            f"mask 教师 {entry['teacher_id']}/{entry['task']} 缺 class_map_ref 或 "
+            "data_contract_version（无法判断结构覆盖与跨教师比较）"
+        )
+    # W16：占位守卫匹配「待建」与「待落地」两种措辞——永远不能在类映射落地前 ready
+    cls_ref = str(entry.get("class_map_ref") or "")
+    if entry.get("ready") and ("待建" in cls_ref or "待落地" in cls_ref):
+        raise ValueError(
+            f"{entry['teacher_id']}/{entry['task']} ready=True 但 class_map_ref "
+            f"是占位（{entry['class_map_ref']}）——先落地类映射再 ready"
+        )
+    if entry["output_type"] == "feature" and not entry.get("feature_schema"):
+        raise ValueError(f"feature 教师 {entry['teacher_id']} 缺 feature_schema")
+
+
+for _e in TEACHER_REGISTRY:
+    validate_entry(_e)
+
+
+@dataclass
+class FallbackRecord:
+    """回退语义（§2.2.3）：执行前记 planned、结束记 actual；跳过写原因。"""
+
+    planned: dict | None = None
+    actual: dict | None = None
+    status: str = "planned"  # planned | executed | skipped | failed
+    skip_reason: str | None = None
+
+
+def classify_missing_output(
+    requested_classes: list[str], returned_classes: list[str], teacher_coverage: list[str]
+) -> str:
+    """执行成功却没返回目标 mask：区分"结构未覆盖"与"输出缺失"（§2.2.3）。
+
+    请求的结构都不在教师类覆盖内 → structure_not_covered（教师本来就不出这些结构，
+    不计成 Dice/置信度 0）；覆盖内却没返回 → output_missing。
+    """
+    if not requested_classes:
+        return "output_missing"
+    if not any(c in teacher_coverage for c in requested_classes):
+        return "structure_not_covered"
+    if not returned_classes:
+        return "output_missing"
+    return "executed"
 
 # 与 LICENSES-THIRD-PARTY.md 同步的许可事实（此处只放判定用摘要，原文见该文件）
 LICENSE_FACTS: dict[str, dict[str, str]] = {
@@ -74,14 +533,42 @@ class LicenseRegistry:
             "reference_doc": "LICENSES-THIRD-PARTY.md",
         }
 
-    def check_task(self, task: str) -> tuple[bool, str]:
-        """任务白名单判定（worker 分发层与 CI 负测试共用）。"""
+    def check_task(self, task: str, modality: str | None = None) -> tuple[bool, str]:
+        """教师路由判定（worker 分发层与 CI 负测试共用）。
+
+        注册表唯一来源（M7-S3F ②：白名单回退退役）：
+        - settings.teacher.blocked_tasks 仍一票否决（blocked 是许可硬约束）。
+        - 注册表有条目且 ready 且模态匹配 → 放行。
+        - 注册表有条目但模态不符 / 未就绪 → 拒绝并带原因（回退语义 §2.2.3）。
+        - 注册表无条目 → 拒绝并带原因（新任务走注册表登记，不走白名单旁路）。
+        """
         if task in self.settings.teacher.blocked_tasks:
             return False, f"task '{task}' is BLOCKED (license: see LICENSES-THIRD-PARTY.md)"
-        if task in self.settings.teacher.allowed_tasks:
+        entries = [e for e in TEACHER_REGISTRY if e["task"] == task]
+        if entries:
+            if modality is not None:
+                # 归一化（W8）：与 qc.py 同口径（"mr"/" MR" 按 MR 处理）
+                m = modality.strip().upper()
+                ok = [e for e in entries if m in e["modalities"]]
+                if not ok:
+                    return (
+                        False,
+                        f"task '{task}' modality '{modality}' not supported by registry "
+                        f"(registered modalities: "
+                        f"{sorted({mm for e in entries for mm in e['modalities']})})",
+                    )
+            ready = [e for e in ok if e["ready"]] if modality is not None else [
+                e for e in entries if e["ready"]
+            ]
+            if not ready:
+                return (
+                    False,
+                    f"task '{task}' registered but not ready "
+                    f"(checkpoint 未部署；见注册表 ready=False)",
+                )
             return True, "allowed"
         return (
             False,
-            f"task '{task}' not in teacher.allowed_tasks whitelist "
-            f"(licensed tasks need explicit approval, see LICENSES-THIRD-PARTY.md)",
+            f"task '{task}' not in teacher registry "
+            "(register as a registry entry, see registry docs)",
         )

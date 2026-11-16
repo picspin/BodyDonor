@@ -144,6 +144,7 @@ def status() -> dict[str, object]:
         "queue_size": queue.qsize(),
         "storage_backend": settings.storage.backend,
         "teacher_engine": settings.teacher.engine,
+        # W12：仅展示已核查任务数；路由判定唯一来源 = 许可注册表
         "allowed_tasks": len(settings.teacher.allowed_tasks),
     }
 
@@ -215,15 +216,20 @@ def license_usage() -> dict[str, object]:
 
 
 @app.post("/agent-context/preview")
-def agent_context_preview(case_id: str, series_id: str) -> JSONResponse:
-    """演示 AgentContext 白名单构造 + PHI 自检。M2 起供编排层调用。"""
+def agent_context_preview(
+    case_id: str, series_id: str, modality: str = Query("unknown")
+) -> JSONResponse:
+    """演示 AgentContext 白名单构造 + PHI 自检。M2 起供编排层调用。
+
+    modality 显式入参（缺省 unknown 占位，不冒充真实 CT——S3F）。
+    """
     from .agent_context import build_series_context
 
     ctx = build_series_context(
         case_id=case_id,
         series_id=series_id,
         series_metadata={
-            "modality": "CT",
+            "modality": modality,
             "slice_thickness_mm": 1.0,
             "orientation": "axial",
             "num_slices": 300,
@@ -255,11 +261,13 @@ def _get_storage() -> LocalFsStorage:
 async def ingest_scan(
     file: UploadFile = File(...),  # noqa: B008
     recursive: bool = Query(True),
+    modality: str | None = Query(None),
 ) -> JSONResponse:
     """Import Bundle 上传通道（zip）：后端流式计数（100MB 限制三处之一，仅 cloud_demo）。
 
     流程：流式读取（超限即中断）-> safe_open_zip 三限预检 -> ingest 拆分 ->
     选择器规则 -> 导入报告（自检门）。返回 outcome_id 供 /ingest/commit 引用。
+    modality：NIfTI 成员的显式模态（缺省时 zip 内 NIfTI 记 unknown，不冒充 CT——S3F）。
     """
     from .extract_guard import UploadLimitError, read_upload_stream
     from .pipeline import scan
@@ -269,7 +277,10 @@ async def ingest_scan(
     except UploadLimitError as e:
         raise HTTPException(status_code=413, detail=str(e)) from None
     try:
-        outcome = scan(io.BytesIO(data), settings, source_name=file.filename or "upload.zip")
+        outcome = scan(
+            io.BytesIO(data), settings, source_name=file.filename or "upload.zip",
+            modality=modality,
+        )
     except Exception as e:  # noqa: BLE001 — ExtractLimitError/IngestError 统一 422
         raise HTTPException(status_code=422, detail=str(e)) from None
 

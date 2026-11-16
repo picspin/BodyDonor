@@ -32,7 +32,8 @@ extract_limits:
 #   AMOS22 40-case 子集已下载（hold-out 用，不进训练）
 #   TotalSegmentator dataset 全量延后（QC 冷启动 M3 前执行）
 
-# 教师任务白名单（许可核查结论，详见 LICENSES-THIRD-PARTY.md §6）
+# 教师任务清单（仅展示/历史记录；路由判定唯一来源 = 许可注册表，
+# license_registry.check_task；详见 LICENSES-THIRD-PARTY.md §6）
 # research: M0–M4 科研期可跑；commercial_distill: 商用蒸馏唯一安全教师
 teacher:
   engine: totalsegmentator

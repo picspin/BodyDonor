@@ -117,7 +117,7 @@ class TestSegExportRealReferences:
         # 模拟从 DB 读回（直接用 extract 结果；load_source_instances 已单测）
         study_uid = "1.2.826.0.1.3680043.8.498.123"
         series_uid = "1.2.826.0.1.3680043.8.498.srcinst"
-        source = source_info_from_persisted(persisted, series_uid, study_uid)
+        source = source_info_from_persisted(persisted, series_uid, study_uid, "CT")
 
         # 真实 SOP 引用进了 SourceSeriesInfo
         assert len(source.source_instances) == 5
@@ -149,7 +149,7 @@ class TestSegExportRealReferences:
         items = _items_from_dir(dicom_series_dir)
         persisted = extract_source_instances(items, rows=32, cols=32)
         source = source_info_from_persisted(
-            persisted, "1.2.826.0.1.3680043.8.498.srcinst", "1.2.826.0.1.3680043.8.498.123"
+            persisted, "1.2.826.0.1.3680043.8.498.srcinst", "1.2.826.0.1.3680043.8.498.123", "CT"
         )
 
         rng = np.random.default_rng(4)
@@ -177,6 +177,7 @@ class TestSegExportRealReferences:
             {"rows": 32, "columns": 32, "instances": []},
             "1.2.826.0.1.3680043.8.498.fallback",
             "1.2.826.0.1.3680043.8.498.123",
+            "CT",
         )
         # 空实例列表 -> source_instances 空 -> export_seg 走合成路径
         assert len(source.source_instances) == 0
@@ -189,6 +190,23 @@ class TestSegExportRealReferences:
         rep = verify_seg(seg_path, source_mask_path=mask_path)
         assert rep.ok, rep.errors
         assert rep.voxel_diff_nonzero == 0
+
+    def test_source_info_raises_on_missing_modality(self) -> None:
+        """S3 W9+N2：persisted/modality 为 None 时显式 raise（不静默缺省）。"""
+        with pytest.raises(ValueError, match="modality"):
+            source_info_from_persisted(
+                {"rows": 32, "columns": 32, "instances": []},
+                "1.2.826.0.1.3680043.8.498.fallback",
+                "1.2.826.0.1.3680043.8.498.123",
+                None,
+            )
+        with pytest.raises(ValueError, match="persisted"):
+            source_info_from_persisted(
+                None,
+                "1.2.826.0.1.3680043.8.498.fallback",
+                "1.2.826.0.1.3680043.8.498.123",
+                "CT",
+            )
 
 
 class TestCommitWithFixture:

@@ -67,6 +67,14 @@ RULE_LEFT_RIGHT = "left_right_symmetry"
 RULE_EMPTY_MASK = "empty_mask"
 RULE_FULL_MASK = "full_mask"
 
+# 模态门闩（S3）：规则适用的模态。不在名单里的模态 → 规则 skipped
+# {"skipped": "modality unsupported"}（不进 flags、不计入 enabled 分母）；
+# modality 未知（None/空）→ skipped {"skipped": "modality_unknown"}（§2.2.3
+# 跳过写原因，不静默按 CT 处理）。未声明的规则默认全模态适用（向后兼容）。
+RULE_MODALITIES: dict[str, tuple[str, ...]] = {
+    RULE_HU_DISTRIBUTION: ("CT",),  # HU 软组织窗只对 CT 有意义（MR 无 HU）
+}
+
 # 在线校准（proposal §7）：规则判别力下限（flag 组与 clean 组标签均值差下限，
 # 低于此说明规则无判别力，只更新注记不改数值）
 MIN_SEPARATION = 0.1
@@ -113,6 +121,29 @@ def _rule_cfg(thresholds: dict[str, Any], rule: str) -> dict[str, Any]:
 
 def _is_bone_class(totalseg_class: str) -> bool:
     return any(k in totalseg_class.lower() for k in BONE_CLASS_KEYWORDS)
+
+
+def _modality_skip(
+    rule: str, modality: str | None
+) -> dict[str, str] | None:
+    """模态门闩：规则不适用于该模态 / modality 未知时返回 skipped 注记。
+
+    返回 None = 规则可跑；返回 dict = rule_scores 记该 skipped（不进 flags、
+    不计入 enabled 分母，与 disabled 规则同处理）。
+    """
+    if not modality:
+        return {"skipped": "modality_unknown"}
+    allowed = RULE_MODALITIES.get(rule)
+    # 归一化（W8）：DICOM Modality 大小写/空白不齐（"ct"/" CT"）按 CT 处理，
+    # 与 review_session.py 同口径
+    m = modality.strip().upper()
+    if allowed is not None and m not in allowed:
+        # W7：unknown 与 None/空同语义（B1 后 ingest 层不再产出 unknown，
+        # 旧数据仍可能回读）——归 modality_unknown，不再混用两种 skip 文案
+        if m == "UNKNOWN":
+            return {"skipped": "modality_unknown"}
+        return {"skipped": "modality unsupported"}
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +468,7 @@ def run_qc(
     student_mask_arr: Any = None,
     student_classes: dict[int, str] | None = None,
     interaction_metrics: dict[str, dict[str, Any]] | None = None,
+    modality: str | None = None,
 ) -> QCResult:
     """对一张 mask 评分（proposal §7 全部规则）。
 
@@ -450,6 +482,11 @@ def run_qc(
       仅当 interaction_metrics 非空 dict（provenance.interactionMetrics，
       有 nnInteractive 交互）才真跑；enabled 但无/空 → 显式 skipped（不进
       flags、不计入 enabled 分母，与 disabled 规则同处理，纯自动 case 不造假）
+    - 模态门闩（S3）：modality 给出且规则不在 RULE_MODALITIES 适用名单 →
+      skipped {"skipped": "modality unsupported"}；modality 未知（None/空）
+      → skipped {"skipped": "modality_unknown"}（跳过写原因，不静默按 CT）。
+      未声明模态的规则不受影响（恒开检查、volume_prior 等照跑）——modality
+      未传/未知时 HU 规则跳过，不再静默按 CT。
     """
     import numpy as np
 
@@ -570,13 +607,17 @@ def run_qc(
     else:
         rule_scores[RULE_BOUNDARY_SMOOTHNESS] = {"skipped": "disabled"}
 
-    # hu_distribution（需要原图 HU + 类名）
+    # hu_distribution（需要原图 HU + 类名；模态门闩：只对 CT 有意义）
     cfg = _rule_cfg(th, RULE_HU_DISTRIBUTION)
     if cfg.get("enabled", True):
-        flagged, score, detail = rule_hu_distribution(
-            arr, hu_values, totalseg_classes, cfg
-        )
-        rule_outputs.append((RULE_HU_DISTRIBUTION, flagged, score, detail))
+        mskip = _modality_skip(RULE_HU_DISTRIBUTION, modality)
+        if mskip is not None:
+            rule_scores[RULE_HU_DISTRIBUTION] = mskip
+        else:
+            flagged, score, detail = rule_hu_distribution(
+                arr, hu_values, totalseg_classes, cfg
+            )
+            rule_outputs.append((RULE_HU_DISTRIBUTION, flagged, score, detail))
     else:
         rule_scores[RULE_HU_DISTRIBUTION] = {"skipped": "disabled"}
     # left_right_symmetry（需要类名）
@@ -809,6 +850,7 @@ def _today() -> str:
 
 __all__ = [
     "QCResult",
+    "RULE_MODALITIES",
     "RULE_BOUNDARY_SMOOTHNESS",
     "RULE_CONNECTED_COMPONENT",
     "RULE_EMPTY_MASK",

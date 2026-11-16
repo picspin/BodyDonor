@@ -37,7 +37,7 @@ class TestStreamingUnzip:
         """临时目录事后干净：处理完自动清理，无残留解压文件。"""
         nii = make_nifti(tmp_path / "img.nii.gz")
         data = zip_bytes({"c/img.nii.gz": nii.read_bytes()})
-        report = ingest(io.BytesIO(data))
+        report = ingest(io.BytesIO(data), modality="CT")
         assert report.n_series == 1
         # 临时根目录存在但无残留（TemporaryDirectory 已清理）
         leftovers = list(zip_tmp.rglob("*")) if zip_tmp.exists() else []
@@ -72,7 +72,7 @@ class TestStreamingUnzip:
             data = buf.getvalue()
 
             tracemalloc.start()
-            ingest(io.BytesIO(data))
+            ingest(io.BytesIO(data), modality="CT")
             _, peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()
             peaks[mi] = peak
@@ -114,7 +114,7 @@ class TestStreamingUnzip:
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("../evil.txt", b"bad")
             zf.writestr("img.nii.gz", nii.read_bytes())
-        report = ingest(io.BytesIO(buf.getvalue()))
+        report = ingest(io.BytesIO(buf.getvalue()), modality="CT")
         # evil 成员被跳过，NIfTI 成员正常导入
         assert report.n_series == 1
         assert any("路径穿越" in sk["reason"] for sk in report.skipped)

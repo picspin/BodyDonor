@@ -40,8 +40,8 @@ class TestWhitelist:
             check_worker_task("brain_aneurysm", settings)
 
     def test_not_in_whitelist_rejected(self, settings: Settings) -> None:
-        """不在白名单的任务拒绝（licensed tasks 需显式批准）。"""
-        with pytest.raises(SegmentWorkerError, match="whitelist"):
+        """注册表无条目任务拒绝（M7-S3F ②：白名单回退退役，注册表唯一来源）。"""
+        with pytest.raises(SegmentWorkerError, match="not in teacher registry"):
             check_worker_task("coronary_arteries", settings)
 
     def test_whitelist_negative_tests_still_pass(self, settings: Settings) -> None:
@@ -140,12 +140,12 @@ class TestSegmentApi:
         # 由 mock 抛 SegmentWorkerError（与真实分发层 check_worker_task 一致）
         def _fake_segment(sid, s, task="total", device="gpu"):  # noqa: ANN001
             if task not in ("total", "total_mr", "body"):
-                # 模拟 license_registry.check_task 的白名单拒绝（BLOCKED/not in）
+                # 模拟 license_registry.check_task 的注册表拒绝（BLOCKED/not in）
                 raise SegmentWorkerError(
                     f"任务白名单拒绝：task '{task}' is BLOCKED (license: see "
                     "LICENSES-THIRD-PARTY.md)"
                     if task == "brain_aneurysm"
-                    else f"任务白名单拒绝：task '{task}' not in whitelist"
+                    else f"任务白名单拒绝：task '{task}' not in teacher registry"
                 )
             return _FakeResult(sid, task)
 

@@ -23,7 +23,7 @@ class TestNiftiInput:
     def test_single_nifti_ingests_one_series(self, tmp_path) -> None:  # noqa: ANN001
         """输入 1：单个 NIfTI 直接入库，单元素列表。"""
         nii = make_nifti(tmp_path / "img.nii.gz")
-        report = ingest(nii)
+        report = ingest(nii, modality="CT")
         assert isinstance(report, ImportReport)
         assert report.input_kind == "nifti"
         assert report.n_series == 1
@@ -34,14 +34,14 @@ class TestNiftiInput:
     def test_nifti_geometry_anisotropic_warning(self, tmp_path) -> None:  # noqa: ANN001
         """几何校验：affine 各向异性（spacing 5mm x 0.5mm = 10x）警告。"""
         nii = make_nifti(tmp_path / "aniso.nii.gz", spacing=(0.5, 0.5, 5.0))
-        report = ingest(nii)
+        report = ingest(nii, modality="CT")
         warnings = report.series[0].geom_warnings
         assert any("各向异性" in w for w in warnings)
 
     def test_nifti_geometry_orthonormal_no_warning(self, tmp_path) -> None:  # noqa: ANN001
         """几何校验：正交轴位无警告。"""
         nii = make_nifti(tmp_path / "ortho.nii.gz")
-        report = ingest(nii)
+        report = ingest(nii, modality="CT")
         assert report.series[0].geom_warnings == []
 
     def test_nifti_geom_checker_units(self, tmp_path) -> None:  # noqa: ANN001
@@ -112,6 +112,52 @@ class TestDicomFolderInput:
         assert report.n_series == 0
         assert report.n_skipped == 40
         assert all("烧录" in sk["reason"] for sk in report.skipped)
+
+
+class TestDicomModalityMissing:
+    """W4 真修：DICOM Modality 标签五类 -> SeriesRecord.modality。"""
+
+    def _ingest_one(self, tmp_path, ds) -> ImportReport:
+        from tests.factories import save_dicom
+
+        root = tmp_path / "dcm"
+        for i in range(40):
+            d = ds if i == 0 else ds.copy()
+            d.InstanceNumber = i + 1
+            save_dicom(d, root / f"slice{i:04d}.dcm")
+        report = ingest(root)
+        assert report.n_series == 1
+        return report
+
+    @pytest.mark.parametrize(
+        ("modality_kw", "expected"),
+        [
+            ("CT", "CT"),  # 正常
+            ("", None),  # 空串
+            ("  ", None),  # 空白
+            (None, None),  # None
+        ],
+    )
+    def test_modality_label_values(self, tmp_path, modality_kw, expected) -> None:
+        from tests.factories import make_dicom_dataset
+
+        ds = make_dicom_dataset(series_uid="1.2.826.0.1.3680043.8.498.99")
+        if modality_kw is None:
+            del ds.Modality  # 标签缺失（pydicom 缺 tag，getattr 回 None）
+        else:
+            ds.Modality = modality_kw
+        report = self._ingest_one(tmp_path, ds)
+        assert report.series[0].modality == expected
+
+    def test_modality_missing_tag_is_none_not_string(self, tmp_path) -> None:
+        """缺失标签 -> Python None，不是字符串 "None"（W4 修复点）。"""
+        from tests.factories import make_dicom_dataset
+
+        ds = make_dicom_dataset(series_uid="1.2.826.0.1.3680043.8.498.98")
+        del ds.Modality
+        report = self._ingest_one(tmp_path, ds)
+        rec = report.series[0]
+        assert rec.modality is None
 
 
 class TestZipInput:

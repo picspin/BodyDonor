@@ -102,5 +102,5 @@ class TestIngestIntegration:
 
         nii = make_nifti(tmp_path / "case1" / "img.nii.gz")
         members = {"case1/img.nii.gz": nii.read_bytes()}
-        report = ingest(io.BytesIO(zip_bytes(members)))
+        report = ingest(io.BytesIO(zip_bytes(members)), modality="CT")
         assert report.n_series == 1

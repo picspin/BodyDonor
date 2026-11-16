@@ -82,23 +82,41 @@ REJECTED_SOURCES: dict[str, str] = {
 }
 
 # 商用蒸馏教师白名单（settings.teacher.commercial_distill_tasks 同源，代码内
-# 固化为常量以独立于 settings 加载；两处不一致由测试锁定）
+# 固化为常量以独立于 settings 加载；两处不一致由测试锁定）。
+# 仅商用路径使用——研究蒸馏路径不查它（M7-S3F ③ 用户定）
 COMMERCIAL_DISTILL_TASKS = frozenset({"total"})
+
+# 研究蒸馏路径不读 COMMERCIAL_DISTILL_TASKS（M7-S3F ③，测试注入验证脱钩）
+
+_DISTILL_PROFILES = ("commercial", "research")
 
 
 def check_distill_source(
     source: str,
     teacher_task: str = "",
     experimental: bool = False,
+    profile: str = "commercial",
 ) -> tuple[bool, str]:
     """蒸馏训练集准入检查（LICENSES §8.3 约束 1 的代码强制）。
 
     返回 (allowed, reason)。拒绝一律给出精确理由，不静默跳过。
 
+    profile（W8：非法值 raise ValueError，不静默落商用分支——CLI 已有 choices，
+    Python API 由本检查防护）：
+    - "commercial"（默认，行为与 HEAD 一致）：teacher 任务必须在
+      COMMERCIAL_DISTILL_TASKS（仅 total）；
+    - "research"：teacher 任务走注册表 research_use（ontology.
+      mask_allowed_in_distill_training 同语义；不由 commercial_distill_tasks
+      把关——S3 后续三项③）。
+
     - source 必须在 ALLOWED_TRAIN_SOURCES（total 教师 mask 或纯人工修正）
     - nnInteractive / SegVol / experimental 来源显式拒绝（REJECTED_SOURCES）
-    - teacher mask 的任务必须在 COMMERCIAL_DISTILL_TASKS（仅 total）
     """
+    if profile not in _DISTILL_PROFILES:
+        raise ValueError(
+            f"profile 非法：{profile!r}（期望 {list(_DISTILL_PROFILES)}；"
+            "大小写敏感，'Research' 不放行也不落商用分支）"
+        )
     if source in REJECTED_SOURCES:
         return False, REJECTED_SOURCES[source]
     if source not in ALLOWED_TRAIN_SOURCES:
@@ -108,7 +126,21 @@ def check_distill_source(
         )
     if experimental:
         return False, "experimental 标记产物不进蒸馏训练集（逃生通道隔离）"
-    if source == "total" and teacher_task and teacher_task not in COMMERCIAL_DISTILL_TASKS:
+    if profile == "research" and source == "total":
+        # 研究路径：资格读注册表 research_use（不查 commercial_distill_tasks）
+        from .ontology import mask_allowed_in_distill_training
+
+        return mask_allowed_in_distill_training(
+            {"source": "teacher", "task": teacher_task, "experimental": False}
+        )
+    if source == "total" and not teacher_task:
+        # S3R4 W-4：source=total 缺 task 即拒绝（fail-closed）——补录路径手写
+        # {"source": "total", "backfill": true} 无 task 不再过门禁（来源必须实测）
+        return False, (
+            "source='total' 缺 teacher_task：来源必须实测（补录须写 task；"
+            "空 task 不冒充已知——fail-closed）"
+        )
+    if source == "total" and teacher_task not in COMMERCIAL_DISTILL_TASKS:
         return False, (
             f"teacher 任务 '{teacher_task}' 不在商用蒸馏白名单 "
             f"{sorted(COMMERCIAL_DISTILL_TASKS)}（licensed 任务推定传染，LICENSES §8.1）"
@@ -118,6 +150,7 @@ def check_distill_source(
 
 def mask_allowed_in_distill_training_strict(
     mask_meta: dict[str, Any],
+    profile: str = "commercial",
 ) -> tuple[bool, str]:
     """扩展 ontology.mask_allowed_in_distill_training：M4 商用蒸馏的严格版。
 
@@ -126,12 +159,17 @@ def mask_allowed_in_distill_training_strict(
       legacy 别名 manual-correction-nninteractive / nninteractive）
     - SegVol 逃生通道产物（source=segvol / segvol-escape）
     - 未知来源（不在 ALLOWED_TRAIN_SOURCES 也不在 REJECTED_SOURCES）
+
+    profile 透传 check_distill_source："commercial"（默认，与 HEAD 一致）/
+    "research"（研究路径，teacher 任务走注册表 research_use）；
+    非法值 raise ValueError（W8，透传层防护）。
     """
     if mask_meta.get("experimental"):
         return False, "experimental 标记的 mask 不进蒸馏训练集（逃生通道产物隔离）"
     return check_distill_source(
         str(mask_meta.get("source", "")),
         teacher_task=str(mask_meta.get("task", "")),
+        profile=profile,
     )
 
 
@@ -195,8 +233,9 @@ class DistillCase:
     source: str  # amos | ct_lite（图像来源库，非标签来源）
     image_path: Path
     teacher_out: Path  # TS total 输出目录（每类一个 NIfTI）
-    label_source: str = "total"  # 标签来源（ts_out source.json 实测，非硬编码）
-    teacher_task: str = "total"  # 教师任务（ts_out source.json 实测）
+    # S3R4 M-3：默认空串——来源未知不冒充 total；prepare_dataset 门禁通过后实测覆盖
+    label_source: str = ""
+    teacher_task: str = ""
     n_classes_found: int = 0
     dropped_classes: list[str] = field(default_factory=list)
 
@@ -216,9 +255,10 @@ class DistillCase:
 def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
     """读 ts_out 目录的来源清单（source.json，逐 case 可审计的事实源）。
 
-    - source.json 缺失 -> 默认 {"source": "total", "task": "total"}（M2/M3 既有
-      ts_out 目录都由 run_total task=total 产生，无 source.json；缺省即 total，
-      历史路径如实记录）
+    - source.json 缺失 -> {"provenance_missing": True}（S3R1：不默认
+      {"source": "total", "task": "total"}——"来源未知"不得变成"来源已知"；
+      调用方对缺失来源按缺失处理，prepare_dataset 预检拒绝）。历史目录可显式
+      补录来源并记录 backfill 依据，不删不重做
     - source.json 存在 -> 逐字段读出（source/task/experimental/created_by），
       prepare_dataset 把**实测来源**过许可门禁（不硬编码，防止 ts_out 目录里
       混入 nnInteractive 修正产物或 licensed 任务 mask 时门禁被绕过）
@@ -226,7 +266,7 @@ def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
     """
     meta_path = teacher_out.parent / "source.json"
     if not meta_path.exists():
-        return {"source": "total", "task": "total", "provenance_file": False}
+        return {"provenance_missing": True}
     try:
         doc = json.loads(meta_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
@@ -235,7 +275,7 @@ def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
         ) from e
     if not isinstance(doc, dict):
         raise DistillDataError(f"来源清单格式非法（非 dict）：{meta_path}")
-    doc["provenance_file"] = True
+    doc["provenance_missing"] = False
     return doc
 
 
@@ -244,7 +284,7 @@ def write_teacher_source_json(teacher_out: Path, case_id: str) -> None:
 
     推理脚本在 run_total 成功后调用：新跑出的 ts_out 不再靠"缺文件默认 total"，
     来源清单是实测写下的。失败 case 不写（目录里无 source.json = 该 case 未
-    成功产出，预检按默认 total 读回是历史路径的如实语义）。
+    成功产出，预检按 provenance_missing 拒绝——S3R1 不默认 total）。
 
     内容与 read_teacher_provenance 的实测读回约定对齐：
     {"source": "total", "task": "total", "created_by": ..., "case_id": ...}
@@ -400,10 +440,12 @@ def prepare_dataset(
     holdout_path: Path | None = None,
     dry_run: bool = False,
     job_id: str = "",
+    profile: str = "commercial",
 ) -> dict[str, Any]:
     """蒸馏数据集准备主入口：训练池 -> 泄漏重查 -> 逐 case 合并 -> nnU-Net 目录。
 
-    - 训练标签只来自 TS total 教师 mask（许可门禁逐 case 强制）
+    - 训练标签只来自 TS total 教师 mask（许可门禁逐 case 强制，profile 透传
+      check_distill_source：commercial 默认 / research 走注册表 research_use）
     - AMOS labelsTr / CT-Lite masks/ 绝不读入训练标签
     - 输出 nnUNet_raw/Dataset501_BodyDonorDistill：imagesTr/ labelsTr/
       dataset.json + manifest.json（逐 case 来源清单，ModelVersion 审计用）
@@ -442,10 +484,17 @@ def prepare_dataset(
     for c in pool:
         prov = read_teacher_provenance(c.teacher_out)
         provenances[c.case_id] = prov
+        if prov.get("provenance_missing"):
+            # S3R1：缺 source.json = 来源未知，不默认 total 进训练清单
+            # （历史目录先补录来源 + backfill 依据，再跑 prepare_dataset）
+            raise DistillDataError(
+                f"来源清单缺失 {c.case_id}：{c.teacher_out.parent / 'source.json'}"
+                "（不默认 total——来源未知不冒充已知；先补录来源并记录依据）"
+            )
         # 许可门禁逐 case 强制：来源清单实测值（非硬编码）过白名单
         ok, reason = check_distill_source(
             str(prov.get("source", "")), teacher_task=str(prov.get("task", "")),
-            experimental=bool(prov.get("experimental", False)),
+            experimental=bool(prov.get("experimental", False)), profile=profile,
         )
         if not ok:
             raise DistillDataError(f"许可门禁拒绝 {c.case_id}：{reason}")
@@ -500,7 +549,6 @@ def prepare_dataset(
 
         entry = c.manifest_entry()
         entry["dropped_classes"] = dropped
-        entry["provenance_file"] = provenances[c.case_id].get("provenance_file", False)
         entry["experimental_flag"] = bool(provenances[c.case_id].get("experimental", False))
         manifest_cases.append(entry)
 
@@ -565,9 +613,9 @@ def prepare_dataset(
             ),
         },
         "provenance_convention": (
-            "逐 case ts_out 旁 source.json 为来源事实源（缺失默认 source=total，"
-            "对应 M2/M3 run_total task=total 既有目录）；非白名单来源在 prepare_dataset "
-            "预检阶段即拒绝"
+            "逐 case ts_out 旁 source.json 为来源事实源（缺失即来源未知，不默认"
+            " total；缺失 case 在 prepare_dataset 预检阶段即拒绝，历史目录补录来源"
+            "须记 backfill 依据）；非白名单来源同在预检阶段即拒绝"
         ),
         "n_cases": n_written,
         "cases": manifest_cases,

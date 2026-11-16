@@ -36,6 +36,7 @@ from typing import Any, Literal, Protocol
 import yaml
 
 from .config import Settings
+from .license_registry import TEACHER_REGISTRY
 
 ONTOLOGY_VERSION = "v1"
 ONTOLOGY_DIR = Path(__file__).resolve().parents[2] / "ontology"
@@ -589,19 +590,22 @@ class OntologyService:
 # ---------------------------------------------------------------------------
 
 def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, str]:
-    """蒸馏训练集准入检查：experimental / nnInteractive 来源的 mask 绝不进训练集。
+    """研究蒸馏训练集准入检查（M7-S3F ③：资格读注册表 research_use）。
 
     mask_meta 需含 'experimental'（bool）与 'source'（teacher/student/manual/...）。
     返回 (allowed, reason)。worker/训练路径在入集前必须调用此函数
     （与任务白名单 check_task 同级的硬约束）。
 
+    研究路径资格来源 = TEACHER_REGISTRY.research_distill（S3 收口轮 ④：判定读
+    结构化字段，known_restrictions 只作说明文字不参与字符串匹配）：
+    - allowed / conditional → 可进研究蒸馏（conditional 派生物按
+      output_license_inherits 保留条款）；
+    - blocked / unverified / 注册表无条目 → 阻断待核实。
+
     nnInteractive 来源（M4 阶段 3 补缺口；命名 v1→v2 用户 2026-11-09 决定）：
-    权重 CC BY-NC-SA 4.0 ShareAlike 传染（LICENSES-THIRD-PARTY.md §2.2/§8.1），
     修正产物 source=nninteractive_guided（规范名，v2；nnInteractive 产物绝不用
     source=human）与 legacy 别名 manual-correction-nninteractive（v1，阶段 2a
-    sidecar 用过）、nninteractive 一律拒绝（与 distill_data.check_distill_source /
-    REJECTED_SOURCES 同语义）。legacy 别名永不再由新代码写出，但拒绝清单保留
-    （删拒绝是安全倒退）。
+    sidecar 用过）。legacy 别名永不再由新代码写出，但拒绝保留（删拒绝是安全倒退）。
     """
     if mask_meta.get("experimental"):
         return False, "experimental 标记的 mask 不进蒸馏训练集（逃生通道产物隔离）"
@@ -611,17 +615,62 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
         "manual-correction-nninteractive",
         "nninteractive",
     ):
+        # nnInteractive 修正产物走 QC，不进蒸馏（含研究路径）；权重 CC BY-NC-SA
+        # 4.0 ShareAlike 传染（LICENSES-THIRD-PARTY.md §2.2/§8.1）
         return False, (
             f"nnInteractive 来源（source={source}）不进蒸馏训练集：权重 "
-            "CC BY-NC-SA 4.0 ShareAlike 传染，不进商用蒸馏训练集"
-            "（LICENSES-THIRD-PARTY.md §2.2/§8.1）"
+            "CC BY-NC-SA 4.0 ShareAlike 传染（LICENSES-THIRD-PARTY.md §2.2/§8.1）"
         )
     if source == "teacher":
-        # teacher mask 还要看任务是否在商用蒸馏白名单（调用方传 task）
         task = mask_meta.get("task", "")
-        if task and task != "total":
-            # 商用蒸馏只允许 total（license_registry / settings.teacher）
-            return False, f"teacher 任务 '{task}' 不在商用蒸馏白名单（仅 total）"
+        if task == "interactive_correction":
+            # S3R4 W-6：nnInteractive 修正产物不进蒸馏（M6 项目政策边界，
+            # restriction_basis 明文）——teacher 来源同拒（与 nninteractive_guided
+            # 来源一致；修正产物走 QC，仅直接 API 会命中本分支）
+            return False, (
+                "teacher 任务 'interactive_correction'（nnInteractive 修正产物）"
+                "不进蒸馏训练集：项目政策边界——修正产物不进蒸馏（M6 已记录），"
+                "权重 CC BY-NC-SA 4.0 ShareAlike 传染"
+                "（LICENSES-THIRD-PARTY.md §2.2/§8.1）"
+            )
+        # 研究蒸馏资格读注册表 research_use（非 commercial_distill_tasks）；
+        # B3 fail-closed：teacher_task 为空即阻断（不跳过注册表检查直接放行）
+        task = mask_meta.get("task", "")
+        entries = [e for e in TEACHER_REGISTRY if e["task"] == task] if task else []
+        if not entries:
+            return False, (
+                f"teacher 任务 '{task or '(空)'}' 无注册表条目：研究蒸馏阻断，"
+                "走注册表登记（M7-S3F ③；空 task 不放行——研究路径 fail-closed）"
+            )
+        uses = {e["research_use"] for e in entries}
+        if "unverified" in uses:
+            return False, (
+                f"teacher 任务 '{task}' research_use=unverified：研究蒸馏阻断待核实"
+                "（M7-S3F ③）"
+            )
+        # S3 收口轮 ④：研究蒸馏资格读结构化字段 research_distill，
+        # known_restrictions 只作说明文字（子串匹配已退役）
+        distills = {e["research_distill"] for e in entries}
+        if "blocked" in distills or "unverified" in distills:
+            return False, (
+                f"teacher 任务 '{task}' research_distill="
+                f"{sorted(distills & {'blocked', 'unverified'})}：研究蒸馏"
+                "阻断待核实（M7-S3 收口轮 ④）"
+            )
+        inherits = sorted(
+            {
+                lic
+                for e in entries
+                if e["research_distill"] == "conditional"
+                for lic in e["output_license_inherits"]
+            }
+        )
+        if inherits:
+            return True, (
+                f"license_inherits: {'; '.join(inherits)}（conditional 教师可进"
+                "研究蒸馏，派生物按条款保留并传播署名）"
+            )
+        return True, "ok"
     return True, "ok"
 
 

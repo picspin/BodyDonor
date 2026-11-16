@@ -75,10 +75,17 @@ def scan(
     settings: Settings,
     source_name: str = "",
     recursive: bool = True,
+    modality: str | None = None,
 ) -> ImportOutcome:
     """扫描阶段（自检门）：ingest + 选择器规则，产出导入报告，不落库、不计数。"""
     limits = ExtractLimits.from_settings(settings)
-    report = ingest(path_or_stream, limits=limits, source_name=source_name, recursive=recursive)
+    report = ingest(
+        path_or_stream,
+        limits=limits,
+        source_name=source_name,
+        recursive=recursive,
+        modality=modality,
+    )
     candidates = apply_series_rules(report)
     return ImportOutcome(
         report=report,
@@ -296,15 +303,26 @@ def load_source_instances(series_id: str, settings: Settings) -> dict[str, Any] 
 
 
 def source_info_from_persisted(
-    persisted: dict[str, Any], series_uid: str, study_uid: str, modality: str = "CT"
+    persisted: dict[str, Any] | None, series_uid: str, study_uid: str, modality: str | None
 ) -> Any:
     """把持久化的源实例信息转成 export_seg.SourceSeriesInfo（真实引用路径）。
 
     persisted 结构见 ingest.extract_source_instances。调用方（export 联调层）
-    传 series/study UID；persisted 为 None 时调用方走合成 fallback。
+    传 series/study UID + modality（S3：移除 CT 缺省——模态必须显式给出，
+    不静默按 CT 处理）；persisted 为 None 时调用方走合成 fallback。
     """
     from .export_seg import SourceSeriesInfo
 
+    if persisted is None:
+        raise ValueError(
+            "source_info_from_persisted: persisted 为 None——调用方应走合成 fallback，"
+            "不传 None 进本函数"
+        )
+    if not modality:
+        raise ValueError(
+            "source_info_from_persisted: modality 为 None/空——模态必须显式给出"
+            "（M7-S3 8dc6549 同语义，不静默缺省）"
+        )
     instances = persisted.get("instances", [])
     first = instances[0] if instances else {}
     iop = tuple(first.get("image_orientation_patient") or (1.0, 0.0, 0.0, 0.0, 1.0, 0.0))

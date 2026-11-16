@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .models import MaskVersion, QCReport, ReviewTask
+from .models import MaskVersion, QCReport, ReviewTask, Series
 from .qc import (
     QC_THRESHOLDS_PATH,
     RULE_MULTI_TEACHER,
@@ -74,8 +74,13 @@ def qc_series(
     interaction_convergence / interaction_abandonment 在生产路径真跑。
     无 provenance / 空 interactionMetrics（纯自动 case）→ run_qc 内显式
     skipped "no interaction metrics"（不进 flags、不计入 enabled 分母）。
+
+    S3 模态门闩：读 Series.modality 传给 run_qc（HU 规则只对 CT 真跑）；
+    modality 为 NULL/空（旧数据未回填）→ modality unknown，run_qc 内
+    skipped {"skipped": "modality_unknown"}，QCReport 留记录。
     """
     import numpy as np
+    from sqlalchemy import select
 
     from . import db
     from .storage import LocalFsStorage
@@ -89,6 +94,9 @@ def qc_series(
 
             s = Session(conn)
             mv = _latest_mask_version(s, series_id)
+            modality_row = s.execute(
+                select(Series.modality).where(Series.series_id == series_id[:60])
+            ).scalar_one_or_none()
             s.close()
     finally:
         engine.dispose()
@@ -158,6 +166,7 @@ def qc_series(
         student_mask_arr=student_mask_arr,
         student_classes=student_classes,
         interaction_metrics=interaction_metrics,
+        modality=modality_row,
     )
     # QCReport + qc_scoring DecisionTrace 落库（单一写入纪律；同一事务）
     engine = db._engine(url)
@@ -189,6 +198,7 @@ def qc_series(
                         interaction_metrics=interaction_metrics,
                         student_source=student_source,
                         thresholds=th,
+                        modality=modality_row,  # S3：qc_scoring trace 记模态
                     )
                 )
                 s.commit()
@@ -361,6 +371,8 @@ def generate_review_tasks(
             mv_map = {}
             # M6-f：series -> case_id（trace 用；Series.case_id 是普通列，无懒加载）
             case_by_series: dict[str, str | None] = {}
+            # S3 W10：series -> modality（gate_decision trace 与 qc_scoring 同源）
+            modality_by_series: dict[str, str | None] = {}
             if mv_ids:
                 for mv in (
                     s.execute(select(MaskVersion).where(MaskVersion.mask_version_id.in_(mv_ids)))
@@ -369,6 +381,7 @@ def generate_review_tasks(
                 ):
                     mv_map[mv.mask_version_id] = mv
                     case_by_series[mv.series_id] = mv.series.case_id
+                    modality_by_series[mv.series_id] = mv.series.modality
                     prov = mv.provenance if isinstance(mv.provenance, dict) else {}
                     im = prov.get("interactionMetrics")
                     # M6-c：w1/w2 数据源（per-class 过程指标，纯自动 case 为空）
@@ -475,6 +488,7 @@ def generate_review_tasks(
                             review_task_id=rt_id,
                             sample_group=group_out,
                             thresholds=th,
+                            modality=modality_by_series.get(mv.series_id),
                         )
                     )
                 s.commit()

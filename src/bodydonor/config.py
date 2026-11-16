@@ -45,12 +45,6 @@ class TeacherConfig(BaseModel):
     commercial_distill_tasks: list[str] = Field(default_factory=list)
     blocked_tasks: list[str] = Field(default_factory=list)
 
-    def is_task_allowed(self, task: str) -> bool:
-        """任务白名单判定：blocked 一票否决，allowed 才放行。"""
-        if task in self.blocked_tasks:
-            return False
-        return task in self.allowed_tasks
-
     def is_commercial_distill_allowed(self, task: str) -> bool:
         """商用蒸馏白名单：仅 total（LICENSES-THIRD-PARTY.md §7）。"""
         return task in self.commercial_distill_tasks

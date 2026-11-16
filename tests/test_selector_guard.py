@@ -99,7 +99,7 @@ class TestSliceGuard:
 
         # shape 是 (z,y,x) 数组序 -> (10,64,64) = 10 层 < 30
         nii = make_nifti(tmp_path / "thin.nii.gz", shape=(10, 64, 64))
-        outcome = scan(nii, settings)
+        outcome = scan(nii, settings, modality="CT")
         assert outcome.report.series[0].num_slices == 10
 
         # 正常路径：默认 selected 不含 thin（规则已排除），commit 不落库
@@ -128,7 +128,7 @@ class TestSliceGuard:
         from bodydonor.storage import LocalFsStorage
 
         nii = make_nifti(tmp_path / "thin.nii.gz", shape=(10, 64, 64))
-        outcome = scan(nii, settings)
+        outcome = scan(nii, settings, modality="CT")
         sid = outcome.report.series[0].series_id
 
         settings.database.url = f"sqlite:///{tmp_path}/t2.db"

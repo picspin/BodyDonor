@@ -1,10 +1,11 @@
 """许可白名单负测试（M0 CI）。
 
-推理 worker 的任务分发层拒绝执行白名单外任务：
+推理 worker 的任务分发层拒绝执行白名单外任务（M7-S3F ② 起注册表唯一来源）：
 - brain_aneurysm：禁用任务（CC BY-NC 4.0 且无商业授权渠道）——一票否决
-- heartchambers_highres：licensed 任务，未显式加白——拒绝
+- heartchambers_highres：licensed 任务，注册表无条目——拒绝
 - 任意未知任务名——拒绝
-只有 teacher.allowed_tasks 里的任务放行。
+放行路径：注册表 ready 条目（代码级静态条目，(task, modality) 门控）；
+白名单回退已退役（M7-S3F ②）——注册表无条目即拒绝带原因。
 """
 
 from __future__ import annotations
@@ -53,13 +54,13 @@ def test_licensed_task_not_whitelisted_by_default(registry: LicenseRegistry) -> 
     ):
         ok, msg = registry.check_task(task)
         assert not ok, f"{task} 不应默认放行"
-        assert "not in teacher.allowed_tasks" in msg
+        assert "not in teacher registry" in msg
 
 
 def test_unknown_task_rejected(registry: LicenseRegistry) -> None:
     ok, msg = registry.check_task("totally_unknown_task")
     assert not ok
-    assert "not in teacher.allowed_tasks" in msg
+    assert "not in teacher registry" in msg
 
 
 def test_total_task_allowed(registry: LicenseRegistry) -> None:
@@ -77,12 +78,25 @@ def test_commercial_distill_whitelist_only_total() -> None:
     assert not t.is_commercial_distill_allowed("heartchambers_highres")
 
 
-def test_bare_settings_fail_closed() -> None:
-    """无配置时白名单为空——fail-closed，任何任务都拒绝。"""
+def test_bare_settings_registry_ready_task_allowed() -> None:
+    """空配置：注册表 ready 条目仍放行（契约变化，M7-S3 记录在案）。
+
+    M7-S3F ②：check_task 数据来源改读注册表（代码级静态条目，Apache-2.0 已核查），
+    注册表内 ready 条目放行——配置不再能撤销注册表内任务，仅 blocked_tasks
+    能否决；注册表外未注册任务仍 fail-closed（白名单回退已退役）。
+    """
     t = Settings().teacher
     assert t.allowed_tasks == []
     ok, _ = LicenseRegistry(Settings()).check_task("total")
+    assert ok  # 注册表代码级条目，非配置
+    ok, _ = LicenseRegistry(Settings()).check_task("totally_unregistered_task")
     assert not ok
+    # 白名单回退已退役：配置里加白注册表外任务也不放行
+    ok, msg = LicenseRegistry(
+        Settings(teacher=TeacherConfig(allowed_tasks=["never_registered"]))
+    ).check_task("never_registered")
+    assert not ok
+    assert "not in teacher registry" in msg
 
 
 def test_settings_yaml_matches_verified_license_facts() -> None:

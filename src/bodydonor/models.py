@@ -225,6 +225,11 @@ class DecisionTrace(Base):
       {"decision", "notes", "decided_at"}——空缺本身是 M7 决策回流的信号。
     - calibration: 生效中的校准参数（gating 三比例 + priority 权重 + source
       cold_start）——M7 校准重算的对照基准。
+    - S3 增列（全部可空，迁移 f8a3b9c2d1e4）：该决策用到什么模态
+      （modality）、哪个教师（teacher_id）、什么蒸馏档案（distill_profile）、
+      为什么跳过（skip_reason）、什么配置哈希（config_hash）、什么环境
+      （env）。写入处能直接取到的就填（qc_series 的 modality/skip_reason），
+      取不到的留 NULL，不为此新造 plumbing。
     """
 
     __tablename__ = "decision_traces"
@@ -250,6 +255,13 @@ class DecisionTrace(Base):
     calibration: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     review_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, onupdate=utcnow)
+    # S3 增列（全部可空；迁移 f8a3b9c2d1e4）
+    modality: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    teacher_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    distill_profile: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    skip_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    config_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    env: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class ModelVersion(Base):

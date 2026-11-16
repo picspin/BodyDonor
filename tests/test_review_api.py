@@ -27,7 +27,7 @@ def committed_series(tmp_path, settings, monkeypatch, isolate_db_url):  # noqa: 
 
     path = make_nifti(tmp_path / "img.nii.gz", shape=(40, 32, 32))
     settings.database.url = isolate_db_url
-    outcome = scan(path, settings)
+    outcome = scan(path, settings, modality="CT")
     storage = LocalFsStorage(tmp_path / "storage")
     monkeypatch.setattr(app_module, "storage", storage)
     committed = commit(outcome, settings, storage)
@@ -249,7 +249,7 @@ class TestReviewSave:
         """无 mask 序列 -> 422。"""
         path = make_nifti(tmp_path / "img2.nii.gz", shape=(40, 32, 32))
         settings.database.url = isolate_db_url
-        outcome = scan(path, settings)
+        outcome = scan(path, settings, modality="CT")
         storage = LocalFsStorage(tmp_path / "storage3")
         committed = commit(outcome, settings, storage)
         sid = committed.selected_series_ids[0]

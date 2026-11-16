@@ -32,12 +32,13 @@ def client(tmp_path, monkeypatch):  # noqa: ANN001
 
 class TestIngestScanEndpoint:
     def test_scan_nifti_zip(self, client, tmp_path) -> None:  # noqa: ANN001
-        """POST /ingest/scan：NIfTI zip -> 导入报告 + outcome_id。"""
+        """POST /ingest/scan：NIfTI zip -> 导入报告 + outcome_id（B1：NIfTI 须带 modality）。"""
         nii = make_nifti(tmp_path / "img.nii.gz")
         data = zip_bytes({"case1/img.nii.gz": nii.read_bytes()})
         r = client.post(
             "/ingest/scan",
             files={"file": ("batch.zip", data, "application/zip")},
+            params={"modality": "CT"},
         )
         assert r.status_code == 200
         body = r.json()
@@ -136,6 +137,7 @@ class TestSelectorAndCommit:
             files={
                 "file": ("b.zip", zip_bytes({"c/img.nii.gz": nii.read_bytes()}), "application/zip")
             },
+            params={"modality": "CT"},
         )
         oid = r.json()["outcome_id"]
         r2 = client.post(f"/ingest/{oid}/commit")
@@ -199,6 +201,7 @@ class TestTrialLimitEndpoint:
             files={
                 "file": ("b.zip", zip_bytes({"c/img.nii.gz": nii.read_bytes()}), "application/zip")
             },
+            params={"modality": "CT"},
         )
         oid = r.json()["outcome_id"]
         r2 = client.post(f"/ingest/{oid}/commit")

@@ -76,9 +76,13 @@ class SegmentationResult:
         }
 
 
-def check_worker_task(task: str, settings: Settings) -> None:
-    """worker 分发层白名单判定（license_registry.check_task；不许绕过）。"""
-    ok, msg = LicenseRegistry(settings).check_task(task)
+def check_worker_task(task: str, settings: Settings, modality: str | None = None) -> None:
+    """worker 分发层白名单判定（license_registry.check_task；不许绕过）。
+
+    modality 给出时注册表按 (task, modality) 门控（S3 B1：MR series 不可派发
+    CT-only 任务）。
+    """
+    ok, msg = LicenseRegistry(settings).check_task(task, modality=modality)
     if not ok:
         raise SegmentWorkerError(f"任务白名单拒绝：{msg}")
 
@@ -163,10 +167,12 @@ def run_total(
     device: str = "gpu",
     settings: Settings | None = None,
     job_id: str = "",
+    modality: str | None = None,
 ) -> RunnerResult:
     """以 JSON 契约调 TS runner（M2-align 3.2）：任务 JSON stdin -> 结果 JSON stdout。
 
-    - 白名单判定（check_worker_task）在调用前——任何代码路径不许绕过
+    - 白名单判定（check_worker_task）在调用前——任何代码路径不许绕过；
+      modality 给出时注册表按 (task, modality) 门控（S3 B1）
     - device: gpu | cpu（M2 用真卡；CPU 只做冒烟）
     - stdout 是纯 JSON（runner 日志走 stderr，不混入）；结果 JSON 含
       status/exit_code/mask_path/classes/wall_seconds/peak_vram_mb/error
@@ -174,7 +180,7 @@ def run_total(
       不可用（CPU 回退等）时为 None + error/reason 注明（不猜数字）
     """
     settings = settings or _default_settings()
-    check_worker_task(task, settings)  # 白名单一票否决
+    check_worker_task(task, settings, modality=modality)  # 白名单一票否决
     out_dir.mkdir(parents=True, exist_ok=True)
     task_json = {
         "input_nii": str(image_path),
@@ -335,8 +341,6 @@ def segment_series(
     from .models import MaskVersion, Series
     from .storage import LocalFsStorage
 
-    check_worker_task(task, settings)  # 白名单一票否决（分发层）
-
     url = settings.database.url
     engine = db._engine(url)
     try:
@@ -352,6 +356,9 @@ def segment_series(
         engine.dispose()
     if row is None:
         raise SegmentWorkerError(f"unknown series: {series_id}")
+    # 白名单一票否决（分发层）：Series.modality 先查再传（S3 B1：MR series
+    # 不可派发 CT-only 任务；模态 NULL 时 check_task 退化为仅 task 门控）
+    check_worker_task(task, settings, modality=row.modality)
     if not row.storage_key:
         raise SegmentWorkerError(f"series {series_id} 无像素（commit 未落盘）")
 

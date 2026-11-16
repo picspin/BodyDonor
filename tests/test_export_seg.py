@@ -12,7 +12,9 @@ from bodydonor.export_seg import (
     SEG_MODALITY,
     SEG_SOP_CLASS_UID,
     SegExportError,
+    SegVerifyError,
     SourceSeriesInfo,
+    _build_source_images,
     export_and_verify,
     export_seg,
     verify_seg,
@@ -24,6 +26,7 @@ def source() -> SourceSeriesInfo:
     return SourceSeriesInfo(
         series_uid="1.2.826.0.1.3680043.8.498.seg.src",
         study_uid="1.2.826.0.1.3680043.8.498.123",
+        modality="CT",
         rows=32,
         columns=32,
         pixel_spacing=(1.0, 1.0),
@@ -91,6 +94,7 @@ class TestSegExport:
         source_inst = SourceSeriesInfo(
             series_uid=source.series_uid,
             study_uid=source.study_uid,
+            modality="CT",
             rows=32,
             columns=32,
             source_instances=[{"sop_instance_uid": "1.2.3", "image_position_patient": [0, 0, 0]}],
@@ -122,3 +126,101 @@ class TestSegExport:
         # export_and_verify 对同一 mask/seg 配对自洽 -> 通过
         rep2 = export_and_verify(mask_path, source, tmp_path / "seg8.dcm")
         assert rep2.ok
+
+
+# ---------------------------------------------------------------------------
+# S3 收口轮 ⑥：X-ray 导出修正——DX/CR 保留源信息，SEG 自身模态与源影像模态分开
+# ---------------------------------------------------------------------------
+
+class TestXraySourcePreserved:
+    def test_dx_source_stays_dx(self, tmp_path) -> None:  # noqa: ANN001
+        """DX 源的合成源实例 Modality 保留 DX（不一律转 CR）。"""
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.dx",
+            study_uid="1.2.826.0.1.3680043.8.498.dxstudy",
+            modality="DX",
+            rows=32,
+            columns=32,
+        )
+        images = _build_source_images(src, 32, 32, 1)
+        assert len(images) == 1
+        assert images[0].Modality == "DX"
+        assert images[0].SOPClassUID == "1.2.840.10008.5.1.4.1.1.1.1"  # DX Storage
+
+    def test_cr_source_stays_cr(self, tmp_path) -> None:  # noqa: ANN001
+        """CR 源保留 CR。"""
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.cr",
+            study_uid="1.2.826.0.1.3680043.8.498.crstudy",
+            modality="CR",
+            rows=32,
+            columns=32,
+        )
+        images = _build_source_images(src, 32, 32, 1)
+        assert images[0].Modality == "CR"
+        assert images[0].SOPClassUID == "1.2.840.10008.5.1.4.1.1.1"  # CR Storage
+
+    def test_xray_seg_roundtrip_preserves_source_info(self, tmp_path) -> None:  # noqa: ANN001
+        """DX 源 SEG 导出 roundtrip：SEG 自身 Modality 恒为 SEG，源影像模态另记。"""
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.dx2",
+            study_uid="1.2.826.0.1.3680043.8.498.dx2study",
+            modality="DX",
+            rows=32,
+            columns=32,
+            pixel_spacing=(1.0, 1.0),
+            slice_thickness_mm=1.0,
+        )
+        mask_path = _make_mask(tmp_path / "mask_dx.nii.gz")
+        seg_path = export_seg(mask_path, src, tmp_path / "seg_dx.dcm")
+        rep = verify_seg(seg_path, source_mask_path=mask_path)
+        assert rep.ok, rep.errors
+        import pydicom
+
+        ds = pydicom.dcmread(str(seg_path))
+        # SEG 对象自身模态恒为 SEG；源影像模态（DX）从引用序列分开核对
+        assert ds.Modality == SEG_MODALITY
+        assert ds.ReferencedSeriesSequence[0].ReferencedInstanceSequence[
+            0
+        ].ReferencedSOPClassUID == "1.2.840.10008.5.1.4.1.1.1.1"  # DX Storage
+
+    def test_verify_seg_checks_source_modality(self, tmp_path) -> None:  # noqa: ANN001
+        """S3R4 W-2：verify_seg 从 ReferencedSOPClassUID 反查源影像模态并核对
+        （DX 源 SEG 通过；期望模态与引用不符时报错）。"""
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.dx3",
+            study_uid="1.2.826.0.1.3680043.8.498.dx3study",
+            modality="DX",
+            rows=32,
+            columns=32,
+            pixel_spacing=(1.0, 1.0),
+            slice_thickness_mm=1.0,
+        )
+        mask_path = _make_mask(tmp_path / "mask_dx3.nii.gz")
+        seg_path = export_seg(mask_path, src, tmp_path / "seg_dx3.dcm")
+        # 期望模态与源一致 -> 通过
+        rep = verify_seg(seg_path, source_mask_path=mask_path, expected_source_modality="DX")
+        assert rep.ok, rep.errors
+        # 期望模态与引用不符（DX 源被声称 CT）-> 报错
+        rep2 = verify_seg(seg_path, source_mask_path=mask_path, expected_source_modality="CT")
+        assert not rep2.ok
+        assert any("源影像" in e for e in rep2.errors)
+
+    def test_export_and_verify_checks_source_modality(self, tmp_path) -> None:  # noqa: ANN001
+        """S3R5 W-2 收尾：export_and_verify 透传源模态核对——导出链路默认核对。
+
+        现状边界：MR 合成源实例的 SOP Class 落默认 CT Storage（与 W-1 同族的
+        已知未决项，见定稿报告未决清单）——接线前该不一致静默通过，接线后核对捕获。
+        """
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.mr5",
+            study_uid="1.2.826.0.1.3680043.8.498.mr5study",
+            modality="MR",
+            rows=32,
+            columns=32,
+            pixel_spacing=(1.0, 1.0),
+            slice_thickness_mm=1.0,
+        )
+        mask_path = _make_mask(tmp_path / "mask_mr5.nii.gz")
+        with pytest.raises(SegVerifyError, match="源影像"):
+            export_and_verify(mask_path, src, tmp_path / "seg_mr5.dcm")
