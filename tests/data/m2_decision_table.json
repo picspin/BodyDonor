@@ -1,0 +1,434 @@
+{
+ "flexray/flexray_xray": {
+  "distill": [
+   true,
+   "ok+license_inherits"
+  ],
+  "research_distill": "conditional",
+  "research_use": "restricted",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "moose/moose_qc": {
+  "distill": [
+   true,
+   "ok+license_inherits"
+  ],
+  "research_distill": "conditional",
+  "research_use": "restricted",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "mri_core/feature_encoding": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "nninteractive/interactive_correction": {
+  "distill": [
+   false,
+   "blocked:other"
+  ],
+  "research_distill": "conditional",
+  "research_use": "restricted",
+  "route": [
+   true,
+   "ok+license_inherits"
+  ]
+ },
+ "nnunet_v2/framework": {
+  "distill": [
+   false,
+   "blocked:unverified"
+  ],
+  "research_distill": "unverified",
+  "research_use": "unverified",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "synthseg/brain_mri_qc": {
+  "distill": [
+   true,
+   "ok+license_inherits"
+  ],
+  "research_distill": "conditional",
+  "research_use": "restricted",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/abdominal_muscles": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/body": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/body_mr": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/breasts": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/cerebral_bleed": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/craniofacial_structures": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/head_glands_cavities": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/head_muscles": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/headneck_bones_vessels": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/headneck_muscles": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/hip_implant": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/kidney_cysts": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/liver_lesions": {
+  "distill": [
+   false,
+   "blocked:unverified"
+  ],
+  "research_distill": "unverified",
+  "research_use": "unverified",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/liver_lesions_mr": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/liver_segments": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/liver_segments_mr": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/liver_vessels": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/lung_nodules": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/lung_vessels": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/oculomotor_muscles": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/pleural_pericard_effusion": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/teeth": {
+  "distill": [
+   false,
+   "blocked:unverified"
+  ],
+  "research_distill": "unverified",
+  "research_use": "unverified",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/total": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   true,
+   "ok+license_inherits"
+  ]
+ },
+ "totalsegmentator/total_mr": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/trunk_cavities": {
+  "distill": [
+   false,
+   "blocked:unverified"
+  ],
+  "research_distill": "unverified",
+  "research_use": "unverified",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/ventricle_parts": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/vertebrae_body": {
+  "distill": [
+   false,
+   "blocked:unverified"
+  ],
+  "research_distill": "unverified",
+  "research_use": "unverified",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/vertebrae_mr": {
+  "distill": [
+   true,
+   "ok"
+  ],
+  "research_distill": "allowed",
+  "research_use": "allowed",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/vertebrae_pp": {
+  "distill": [
+   false,
+   "blocked:unverified"
+  ],
+  "research_distill": "unverified",
+  "research_use": "unverified",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ },
+ "totalsegmentator/vertebrae_pp_refined": {
+  "distill": [
+   false,
+   "blocked:unverified"
+  ],
+  "research_distill": "unverified",
+  "research_use": "unverified",
+  "route": [
+   false,
+   "blocked:not-ready"
+  ]
+ }
+}
