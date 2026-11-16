@@ -189,9 +189,73 @@ def test_modality_normalization_case_and_whitespace() -> None:
     ok, msg = LicenseRegistry(_settings()).check_task("total", modality="ct")
     assert ok, msg
     # 归一化后仍不匹配的模态照拒
-    ok, msg = LicenseRegistry(_settings()).check_task("total", modality="PT")
+    ok, msg = LicenseRegistry(_settings()).check_task("total", modality="MR")
     assert not ok
-    assert "modality 'PT' not supported" in msg
+    assert "modality 'MR' not supported" in msg
+
+
+def test_dicom_pt_code_matches_pet_registered_modality() -> None:
+    """R3 ④ 失败测试先行：DICOM Modality 代码 PT（PS3.3 C.7.3.1.1 定义词，真实
+    PET series 的头内代码）须匹配注册表登记的 'PET'——ingest 层原样记录头内值，
+    不翻译；check_task 归一化后 PT == PET，否则 PET series 一律被拒。"""
+    from bodydonor import license_registry as lr
+
+    nni = next(
+        e for e in lr.TEACHER_REGISTRY
+        if e["teacher_id"] == "nninteractive" and e["task"] == "interactive_correction"
+    )
+    saved = lr.TEACHER_REGISTRY
+    lr.TEACHER_REGISTRY = [{**nni, "ready": True}]  # nninteractive 条目（PET 已登记）
+    try:
+        ok, msg = LicenseRegistry(_settings()).check_task(
+            "interactive_correction", modality="PT"
+        )
+        assert ok, msg
+    finally:
+        lr.TEACHER_REGISTRY = saved
+
+
+def test_modality_aliases_in_registry_entries_match_ingest_values() -> None:
+    """R3 ④：flexray 条目登记 'X-RAY'（比对侧 strip().upper() 后相等）——
+    混合大小写 'X-ray' 永不相等（潜在缺口，ready=False 掩盖）。"""
+    by_task = {e["task"]: e for e in TEACHER_REGISTRY}
+    fx = by_task["flexray_xray"]["modalities"]
+    assert fx == ("X-RAY",), f"flexray modalities 应为 ('X-RAY',) 实为 {fx}"
+
+
+def test_every_entry_modalities_nonempty_and_provenance_cited() -> None:
+    """R3 ④ 审计覆盖：全部条目 modalities 非空且登记值在归一化口径内合法，
+    provenance 带 source（书面依据可追溯）——无依据的模态拓宽在此被拦。"""
+    legal = {"CT", "MR", "PET", "X-RAY"}
+    for e in TEACHER_REGISTRY:
+        mods = e["modalities"]
+        assert isinstance(mods, tuple) and mods, f"{e['teacher_id']}/{e['task']} modalities 空"
+        assert set(mods) <= legal, f"{e['teacher_id']}/{e['task']} 登记值 {mods} 不在口径内"
+        assert e["provenance"].get("source"), f"{e['teacher_id']}/{e['task']} 缺 provenance.source"
+
+
+def test_r3_modality_expectations_per_teacher() -> None:
+    """R3 ④ 审计断言：各教师 modalities 与书面依据一致（出处见注册表注释）。
+
+    - totalsegmentator: total 族 CT（红线：不动）；_mr 族 MR（LICENSE-CHECK §四）。
+    - nninteractive: CT/MR/PET（README §Abstract 训练数据集清单）。
+    - nnunet_v2: CT/MR/PET（LICENSE-CHECK §一 总表 'MRI/PET'）。
+    - moose: CT/PET（LICENSE-CHECK §一 总表）。
+    - mri_core: MR（§二）。synthseg: MR（§六）。flexray: X-RAY（§三）。
+    """
+    by_task = {e["task"]: e for e in TEACHER_REGISTRY}
+    assert by_task["total"]["modalities"] == ("CT",)  # S3 验收安全属性，不动
+    assert by_task["total_mr"]["modalities"] == ("MR",)
+    nni = next(
+        e for e in TEACHER_REGISTRY
+        if e["teacher_id"] == "nninteractive" and e["task"] == "interactive_correction"
+    )
+    assert nni["modalities"] == ("CT", "MR", "PET")
+    assert by_task["framework"]["modalities"] == ("CT", "MR", "PET")
+    assert by_task["moose_qc"]["modalities"] == ("CT", "PET")
+    assert by_task["feature_encoding"]["modalities"] == ("MR",)
+    assert by_task["brain_mri_qc"]["modalities"] == ("MR",)
+    assert by_task["flexray_xray"]["modalities"] == ("X-RAY",)
 
 
 def test_total_on_ct_allowed() -> None:

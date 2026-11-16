@@ -37,6 +37,10 @@ _REGISTRY_FIELDS = (
 # 研究蒸馏资格枚举（M7-PLAN v3 §2.2.1 新增三字段行；S3 收口轮 ④）
 RESEARCH_DISTILL_VALUES = ("allowed", "conditional", "blocked", "unverified")
 
+# 模态别名（M7-S3P R3 ④）：注册表登记 'PET'，DICOM 头内 Modality 代码是 'PT'
+# （PS3.3 C.7.3.1.1 定义词；ingest 层原样记录不翻译）——归一化时并成同一模态。
+MODALITY_ALIASES: dict[str, str] = {"PT": "PET"}
+
 # 首批条目（M7-LICENSE-CHECK §二/四/八 + M7-PLAN v3.2 §二；provenance 即核查依据）
 TEACHER_REGISTRY: list[dict] = [
     # TotalSegmentator 公开任务（TS CT 主力 + MRI _mr 族；Apache-2.0，§四）
@@ -117,7 +121,14 @@ TEACHER_REGISTRY: list[dict] = [
         "output_license_inherits": [],
         "feature_schema": {"embed_dim": 768, "patch": 16, "space": "image"},
     },
-    # nnInteractive：交互式提示分割教师（LICENSE-CHECK §八；两处证据链接）
+    # nnInteractive：交互式提示分割教师（LICENSE-CHECK §八；两处证据链接）。
+    # R3 ④：modalities CT/MR/PET 有据——README §Abstract 原文 "Trained on 120+
+    # diverse volumetric 3D datasets (CT, MRI, PET, 3D Microscopy, etc.)"
+    # （master readme.md 2026-11-16 实取）；显微/微CT 不在数据域内不登记。
+    # R3 ④ 特别核查：上游 HF 仓库 MIC-DKFZ/nnInteractive 实测只有
+    # nnInteractive_v1.0/fold_0/checkpoint_final.pth 一个 checkpoint（ siblings
+    # 全列 + 本地 tree manifest 对照），本地部署同款，models.json 上游与本地均
+    # 只列一个模型——无多 checkpoint，不拆分登记。
     {
         "teacher_id": "nninteractive",
         "task": "interactive_correction",
@@ -192,6 +203,8 @@ TEACHER_REGISTRY: list[dict] = [
         "teacher_id": "moose",
         "task": "moose_qc",
         "checkpoint_id": "未下载",
+        # R3 ④：CT/PET 有据——M7-LICENSE-CHECK §一 总表书面支持 'CT/PET'；
+        # DICOM 头内 PET 代码 PT 由 MODALITY_ALIASES 匹配。
         "modalities": ("CT", "PET"),
         "output_type": "mask",
         "research_use": "restricted",
@@ -216,12 +229,14 @@ TEACHER_REGISTRY: list[dict] = [
         "class_map_ref": "moose-classes/v1 (待建)",
         "data_contract_version": "v1",
     },
-    # nnUNet v2：框架条目，不附带权重，mask 任务逐任务登记
+    # nnUNet v2：框架条目，不附带权重，mask 任务逐任务登记。
+    # R3 ④：modalities 拓宽为 CT/MR/PET——M7-LICENSE-CHECK §一 总表书面支持
+    # 'MRI/PET'（逐任务权重许可仍取决于训练数据，框架本身不产生蒸馏资格）。
     {
         "teacher_id": "nnunet_v2",
         "task": "framework",
         "checkpoint_id": None,
-        "modalities": ("CT", "MR"),
+        "modalities": ("CT", "MR", "PET"),
         "output_type": "framework",
         "research_use": "unverified",
         "known_restrictions": [
@@ -240,12 +255,13 @@ TEACHER_REGISTRY: list[dict] = [
         "§七）；具体任务模型须逐任务登记核实后才有资格",
         "output_license_inherits": [],
     },
-    # FleXray：X-ray 模态约束（非许可问题；权重 CC BY-NC 4.0，§三）
+    # FleXray：X-ray 模态约束（非许可问题；权重 CC BY-NC 4.0，§三）。
+    # R3 ④：登记 'X-RAY'——比对侧 strip().upper()，混合大小写 'X-ray' 永不相等。
     {
         "teacher_id": "flexray",
         "task": "flexray_xray",
         "checkpoint_id": "未下载",
-        "modalities": ("X-ray",),
+        "modalities": ("X-RAY",),
         "output_type": "mask",
         "research_use": "restricted",
         "known_restrictions": [
@@ -547,8 +563,9 @@ class LicenseRegistry:
         entries = [e for e in TEACHER_REGISTRY if e["task"] == task]
         if entries:
             if modality is not None:
-                # 归一化（W8）：与 qc.py 同口径（"mr"/" MR" 按 MR 处理）
-                m = modality.strip().upper()
+                # 归一化（W8）：与 qc.py 同口径（"mr"/" MR" 按 MR 处理）；
+                # R3 ④：别名 PT → PET（DICOM 代码匹配注册表登记值）
+                m = MODALITY_ALIASES.get(modality.strip().upper(), modality.strip().upper())
                 ok = [e for e in entries if m in e["modalities"]]
                 if not ok:
                     return (
