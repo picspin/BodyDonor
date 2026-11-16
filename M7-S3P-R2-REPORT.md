@@ -73,7 +73,7 @@ deep-reviewer 对抗性审查 7 条（1 Blocker 未发现，4 Warning + 3 Note�
 | N6 | Note | 测试 | 残留死代码 `rc = bf.main() if False else None` | 修：删除 |
 | N7 | Note | fail-open | ct_lite ts_out 空时 `ct_cases == all_ct` 均空成立，写出 `cases=[]` 的库级 total 清单（复现确认） | 修：条件加 `ct_cases` 非空；`test_main_empty_ct_lite_ts_out_writes_nothing` |
 
-修复后：ruff 全绿；`tests/test_m7_s3p2_backfill.py` 12 项 + 受影响套件 90 项全过；真实数据重跑 dry-run 0 可回填（幂等不重做）。
+修复后：ruff 全绿；`tests/test_m7_s3p2_backfill.py` 12 项 + 受影响套件 90 项全过；真实数据重跑 dry-run 0 可回填（幂等不重做）。全量套件 694/694 passed、0 failed/0 error（EXIT=0，含 local_artifacts 17 项本机实跑；实跑约 40 分钟）。
 
 ## 8. 未决
 
