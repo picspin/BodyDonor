@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from bodydonor.config import Settings, TeacherConfig
-from bodydonor.license_registry import LicenseRegistry, TEACHER_REGISTRY
+from bodydonor.license_registry import TEACHER_REGISTRY, LicenseRegistry
 from bodydonor.ontology import mask_allowed_in_distill_training
 
 SNAPSHOT_PATH = Path(__file__).resolve().parent / "data" / "m2_decision_table.json"
