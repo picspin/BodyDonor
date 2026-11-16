@@ -74,8 +74,10 @@ class SegVerifyReport:
 
 
 def _normalize_modality(modality: str) -> str:
-    """内部别名归一化："X-ray" → CR（非 DICOM CS 合法值，W-1 同一语义）。"""
-    return "CR" if modality == "X-ray" else modality
+    """内部别名归一化："X-ray" → CR（非 DICOM CS 合法值，W-1 同一语义）；
+    其余值 strip().upper()（S3P1：与 license_registry check_task W8 同口径，
+    ingest 头标签只 strip 不 upper，小写变体不落默认 CT Storage）。"""
+    return "CR" if modality == "X-ray" else modality.strip().upper()
 
 
 def export_seg(

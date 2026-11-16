@@ -12,6 +12,7 @@ from bodydonor.export_seg import (
     SEG_MODALITY,
     SEG_SOP_CLASS_UID,
     SegExportError,
+    SegVerifyError,
     SourceSeriesInfo,
     _build_source_images,
     export_and_verify,
@@ -219,6 +220,21 @@ class TestXraySourcePreserved:
         # MR Image Storage（pydicom UID 字典核实，非记忆值）
         assert images[0].SOPClassUID == "1.2.840.10008.5.1.4.1.1.4"
 
+    def test_lowercase_mr_source_normalized(self, tmp_path) -> None:  # noqa: ANN001
+        """S3P1：小写 "mr" 源经 _normalize_modality 归一为大写——合成源实例
+        写 MR Image Storage 不落默认 CT Storage（ingest 头标签只 strip 不
+        upper，与 license_registry check_task W8 同口径）。"""
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.mrl",
+            study_uid="1.2.826.0.1.3680043.8.498.mrlstudy",
+            modality="mr",
+            rows=32,
+            columns=32,
+        )
+        images = _build_source_images(src, 32, 32, 1)
+        assert images[0].Modality == "MR"
+        assert images[0].SOPClassUID == "1.2.840.10008.5.1.4.1.1.4"  # MR Storage
+
     def test_export_and_verify_checks_source_modality(self, tmp_path) -> None:  # noqa: ANN001
         """S3R5 W-2 收尾：export_and_verify 透传源模态核对——导出链路默认核对。
 
@@ -245,3 +261,38 @@ class TestXraySourcePreserved:
         )
         assert not rep2.ok
         assert any("源影像" in e for e in rep2.errors)
+
+    def test_export_and_verify_raises_on_modality_mismatch(self, tmp_path, monkeypatch) -> None:  # noqa: ANN001
+        """S3P1 审查补：export_and_verify 本身因模态不符抛 SegVerifyError——
+        monkeypatch export_seg 写出 CT 源的 SEG 而 source.modality 声称 MR，
+        透传核对捕获后 raise（raise 分支直接覆盖，非仅 verify_seg 直调）。"""
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.mr6",
+            study_uid="1.2.826.0.1.3680043.8.498.mr6study",
+            modality="MR",
+            rows=32,
+            columns=32,
+            pixel_spacing=(1.0, 1.0),
+            slice_thickness_mm=1.0,
+        )
+        ct_source = SourceSeriesInfo(
+            series_uid=src.series_uid,
+            study_uid=src.study_uid,
+            modality="CT",
+            rows=32,
+            columns=32,
+            pixel_spacing=(1.0, 1.0),
+            slice_thickness_mm=1.0,
+        )
+        mask_path = _make_mask(tmp_path / "mask_mr6.nii.gz")
+        real_export_seg = export_seg
+
+        def fake_export_seg(mask_path, source, out_path, **kwargs):
+            # 写出 CT 源的 SEG（引用 CT Storage），调用方声称 MR
+            return real_export_seg(mask_path, ct_source, out_path, **kwargs)
+
+        monkeypatch.setattr(
+            "bodydonor.export_seg.export_seg", fake_export_seg, raising=False
+        )
+        with pytest.raises(SegVerifyError, match="源影像"):
+            export_and_verify(mask_path, src, tmp_path / "seg_mr6.dcm")
