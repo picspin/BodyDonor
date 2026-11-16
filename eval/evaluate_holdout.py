@@ -82,7 +82,8 @@ def ts_teacher_inference(image_path: Path, out_dir: Path) -> tuple[Path, float |
     )
     try:
         runner = run_total(image_path, out_dir, task="total", device="gpu",
-                           settings=settings, job_id=job_id)
+                           settings=settings, job_id=job_id,
+                           modality="CT")  # hold-out 是 CT 数据（S3P1 ①：缺省退化为仅 task 门控）
     finally:
         lock.release()
     return out_dir, runner.peak_vram_mb
