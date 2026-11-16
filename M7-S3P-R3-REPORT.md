@@ -64,7 +64,7 @@ CT 登记只影响路由，风险为零）。
   PT 别名、flexray 字面+别名断言、全条目口径+provenance、逐教师期望对照）。
 - 受影响测试 6 文件：test_distill_license_gate 55 / test_export_seg 15 /
   test_license_whitelist 8 / test_m7_s3f_modality 15 / test_segmentation 11 /
-  test_teacher_registry 25 = 109 passed, 0 failed。
+  test_teacher_registry 25 = 129 passed, 0 failed（逐文件求和 55+15+8+15+11+25，原文 109 为加总错误）。
 - ruff：license_registry.py + test_teacher_registry.py 全绿。
 - 全量套件：698 collected（R2 基线 694 + 本轮新增 4）/ 698 passed（进度点
   实数 698，无 F/E 字符），EXIT=0（`-q` 模式 summary 行未落日志，进度点
