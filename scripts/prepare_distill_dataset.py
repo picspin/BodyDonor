@@ -43,7 +43,7 @@ def main() -> int:
                     help="nnUNet_raw 根目录（默认 ~/data/BodyDonor/nnUNet_raw）")
     ap.add_argument("--profile", default="commercial", choices=["commercial", "research"],
                     help="许可门禁口径（S3F ③）：commercial 只放行 total；"
-                         "research 走注册表 research_use")
+                         "research 走注册表 research_distill")
     args = ap.parse_args()
 
     out_root = Path(args.out_root) if args.out_root else None

@@ -590,14 +590,15 @@ class OntologyService:
 # ---------------------------------------------------------------------------
 
 def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, str]:
-    """研究蒸馏训练集准入检查（M7-S3F ③：资格读注册表 research_use）。
+    """研究蒸馏训练集准入检查（M7-S3F ③：资格读注册表 research_distill）。
 
     mask_meta 需含 'experimental'（bool）与 'source'（teacher/student/manual/...）。
     返回 (allowed, reason)。worker/训练路径在入集前必须调用此函数
     （与任务白名单 check_task 同级的硬约束）。
 
     研究路径资格来源 = TEACHER_REGISTRY.research_distill（S3 收口轮 ④：判定读
-    结构化字段，known_restrictions 只作说明文字不参与字符串匹配）：
+    结构化字段，known_restrictions 只作说明文字不参与字符串匹配；S3R4 M-2 统一：
+    单一资格字段，原 research_use 挡 unverified 语义由本字段同值承担）：
     - allowed / conditional → 可进研究蒸馏（conditional 派生物按
       output_license_inherits 保留条款）；
     - blocked / unverified / 注册表无条目 → 阻断待核实。
@@ -633,7 +634,8 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
                 "权重 CC BY-NC-SA 4.0 ShareAlike 传染"
                 "（LICENSES-THIRD-PARTY.md §2.2/§8.1）"
             )
-        # 研究蒸馏资格读注册表 research_use（非 commercial_distill_tasks）；
+        # 研究蒸馏资格读注册表 research_distill（M-2 统一：唯一资格字段，
+        # 非 commercial_distill_tasks）；
         # B3 fail-closed：teacher_task 为空即阻断（不跳过注册表检查直接放行）
         task = mask_meta.get("task", "")
         entries = [e for e in TEACHER_REGISTRY if e["task"] == task] if task else []
@@ -642,20 +644,14 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
                 f"teacher 任务 '{task or '(空)'}' 无注册表条目：研究蒸馏阻断，"
                 "走注册表登记（M7-S3F ③；空 task 不放行——研究路径 fail-closed）"
             )
-        uses = {e["research_use"] for e in entries}
-        if "unverified" in uses:
-            return False, (
-                f"teacher 任务 '{task}' research_use=unverified：研究蒸馏阻断待核实"
-                "（M7-S3F ③）"
-            )
-        # S3 收口轮 ④：研究蒸馏资格读结构化字段 research_distill，
+        # M-2 统一：判定只读 research_distill（原 research_use 双检退役），
         # known_restrictions 只作说明文字（子串匹配已退役）
         distills = {e["research_distill"] for e in entries}
         if "blocked" in distills or "unverified" in distills:
             return False, (
                 f"teacher 任务 '{task}' research_distill="
                 f"{sorted(distills & {'blocked', 'unverified'})}：研究蒸馏"
-                "阻断待核实（M7-S3 收口轮 ④）"
+                "阻断待核实（M7-S3 收口轮 ④；M-2 统一）"
             )
         inherits = sorted(
             {

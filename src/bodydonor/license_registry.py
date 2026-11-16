@@ -2,10 +2,10 @@
 
 许可事实来源：LICENSES-THIRD-PARTY.md（M0 联网核查结论）。
 
-判定优先级（S3R4 M-2 文档澄清，非重构）：蒸馏资格唯一来源是条目的
-``research_distill`` 字段（ontology.mask_allowed_in_distill_training 判定层读它；
-``research_use`` 只作路由/说明文字，不参与蒸馏判定——两字段在 unverified 上
-当前一致，长期以 research_distill 为准）。
+蒸馏资格唯一来源（S3R4 M-2 统一落地，非重构）：条目单一字段
+``research_distill``（ontology.mask_allowed_in_distill_training 判定层读它；
+原并存 ``research_use`` 字段已删除，读值处迁移到 research_distill，
+36 条目合并前后判定逐条一致——tests/test_research_field_decision_table.py）。
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ _REGISTRY_FIELDS = (
     "checkpoint_id",
     "modalities",
     "output_type",
-    "research_use",
     "known_restrictions",
     "provenance",
     "ready",
@@ -34,7 +33,8 @@ _REGISTRY_FIELDS = (
     "output_license_inherits",
 )
 
-# 研究蒸馏资格枚举（M7-PLAN v3 §2.2.1 新增三字段行；S3 收口轮 ④）
+# 研究蒸馏资格枚举（M7-PLAN v3 §2.2.1 新增三字段行；S3 收口轮 ④；
+# M-2 统一：唯一资格字段，路由与说明也读它）
 RESEARCH_DISTILL_VALUES = ("allowed", "conditional", "blocked", "unverified")
 
 # 模态别名（M7-S3P R3 ④）：注册表登记 'PET'/'X-RAY'，DICOM 头内 Modality 代码
@@ -51,7 +51,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "unpinned (venv totalsegmentator==2.10.0)",
         "modalities": ("CT",),
         "output_type": "mask",
-        "research_use": "allowed",
         "known_restrictions": [],
         "provenance": {
             "source": "https://github.com/wasserth/TotalSegmentator/ (LICENSE + README Subtasks)",
@@ -75,7 +74,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "unpinned (权重未下载)",
         "modalities": ("MR",),
         "output_type": "mask",
-        "research_use": "allowed",
         "known_restrictions": [],
         "provenance": {
             "source": "https://github.com/wasserth/TotalSegmentator/ (README Subtasks 清单)",
@@ -106,7 +104,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "MRI_CORE_vitb.pth (~360MB, 未下载)",
         "modalities": ("MR",),
         "output_type": "feature",
-        "research_use": "allowed",
         "known_restrictions": ["Duke-110K 训练数据不含脑 MRI（脑部不在覆盖内）"],
         "provenance": {
             "source": "https://github.com/mazurowski-lab/mri_foundation (README License 节)",
@@ -136,7 +133,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "nnInteractive_v1.0",
         "modalities": ("CT", "MR", "PET"),
         "output_type": "mask",
-        "research_use": "restricted",
         "known_restrictions": [
             "权重 CC BY-NC-SA 4.0：仅交互式标注辅助，产物不进商用蒸馏训练集"
         ],
@@ -174,7 +170,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "FreeSurfer 分发 (未下载)",
         "modalities": ("MR",),
         "output_type": "mask",
-        "research_use": "restricted",
         "known_restrictions": [
             "research_distill=conditional：权重适用 FreeSurfer Software License "
             "Agreement v1.0，本地科研蒸馏按 conditional 放行（派生物按 "
@@ -208,7 +203,6 @@ TEACHER_REGISTRY: list[dict] = [
         # DICOM 头内 PET 代码 PT 由 MODALITY_ALIASES 匹配。
         "modalities": ("CT", "PET"),
         "output_type": "mask",
-        "research_use": "restricted",
         "known_restrictions": [
             "research_distill=conditional：训练数据含 NC 部分（AutoPET 溯源未决），"
             "本地科研蒸馏按 conditional 放行（派生物按 output_license_inherits "
@@ -241,7 +235,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": None,
         "modalities": ("CT", "MR", "PET"),
         "output_type": "framework",
-        "research_use": "unverified",
         "known_restrictions": [
             "框架条目：不附带权重，不产生蒸馏资格（LICENSE-CHECK §七）；"
             "具体 mask 任务须逐任务登记"
@@ -266,7 +259,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "未下载",
         "modalities": ("X-RAY",),
         "output_type": "mask",
-        "research_use": "restricted",
         "known_restrictions": [
             "模态约束：仅 X-ray；权重 CC BY-NC 4.0，合成数据集合集 CC BY-NC 4.0"
         ],
@@ -293,7 +285,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "unpinned (权重未下载)",
         "modalities": ("CT",),
         "output_type": "mask",
-        "research_use": "allowed",
         "known_restrictions": [],
         "provenance": {
             "source": "https://github.com/wasserth/TotalSegmentator/ (README Subtasks open 清单)",
@@ -342,7 +333,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "unpinned (权重未下载；2.10.0 安装包 class_map 不含该任务)",
         "modalities": ("CT",),
         "output_type": "mask",
-        "research_use": "unverified",
         "known_restrictions": [
             "仅 README open 清单（Apache-2.0 权重，访问 2026-11-06）；"
             "本地 TS 2.10.0 安装包 class_map 不含，结构输出未核实"
@@ -380,7 +370,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "unpinned (权重未下载)",
         "modalities": ("CT",),
         "output_type": "mask",
-        "research_use": "unverified",
         "known_restrictions": [
             "TS 2.10.0 安装包 commercial_models 含该任务（id 305，需 license）："
             "非商用走 academic license 渠道；与 README open 清单出入已注记"
@@ -415,8 +404,6 @@ def validate_entry(entry: dict) -> None:
         raise ValueError(f"注册表条目缺字段：{missing}")
     if entry["output_type"] not in ("mask", "feature", "framework"):
         raise ValueError(f"output_type 非法：{entry['output_type']!r}")
-    if entry["research_use"] not in ("allowed", "restricted", "unverified"):
-        raise ValueError(f"research_use 非法：{entry['research_use']!r}")
     if entry["research_distill"] not in RESEARCH_DISTILL_VALUES:
         raise ValueError(f"research_distill 非法：{entry['research_distill']!r}")
     rb = entry["restriction_basis"]

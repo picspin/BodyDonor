@@ -53,7 +53,6 @@ def test_mask_entry_missing_class_map_ref_rejected() -> None:
                 "checkpoint_id": "c",
                 "modalities": ("CT",),
                 "output_type": "mask",
-                "research_use": "allowed",
                 "known_restrictions": [],
                 "provenance": {"source": "s", "verified": "v"},
                 "ready": True,
@@ -72,7 +71,6 @@ def test_mask_entry_missing_data_contract_version_rejected() -> None:
         "checkpoint_id": "c",
         "modalities": ("CT",),
         "output_type": "mask",
-        "research_use": "allowed",
         "known_restrictions": [],
         "provenance": {"source": "s", "verified": "v"},
         "ready": True,
@@ -95,7 +93,6 @@ def test_feature_entry_missing_feature_schema_rejected() -> None:
                 "checkpoint_id": "c",
                 "modalities": ("MR",),
                 "output_type": "feature",
-                "research_use": "allowed",
                 "known_restrictions": [],
                 "provenance": {"source": "s", "verified": "v"},
                 "ready": True,
@@ -123,7 +120,6 @@ def test_ready_with_placeholder_class_map_ref_rejected_both_wordings() -> None:
         "checkpoint_id": "c",
         "modalities": ("CT",),
         "output_type": "mask",
-        "research_use": "allowed",
         "known_restrictions": [],
         "provenance": {"source": "s", "verified": "v"},
         "ready": True,
@@ -344,9 +340,9 @@ def test_allowed_tasks_registered_tasks_route_via_registry() -> None:
         assert e["teacher_id"] == "totalsegmentator"
         assert e["ready"] is False  # 权重未部署，一律不造假 ready
     # open 清单双证据齐全组 → allowed；仅 README 单证据组 → unverified
-    assert by_task["lung_vessels"]["research_use"] == "allowed"
-    assert by_task["teeth"]["research_use"] == "unverified"
-    assert by_task["vertebrae_body"]["research_use"] == "unverified"
+    assert by_task["lung_vessels"]["research_distill"] == "allowed"
+    assert by_task["teeth"]["research_distill"] == "unverified"
+    assert by_task["vertebrae_body"]["research_distill"] == "unverified"
     assert any("commercial_models" in r for r in by_task["vertebrae_body"]["known_restrictions"])
     # 空配置（allowed_tasks=[]）下已登记任务走注册表：ready=False 拒绝带原因
     ok, msg = LicenseRegistry(_settings(allowed=[])).check_task("lung_vessels", modality="CT")

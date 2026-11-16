@@ -73,7 +73,7 @@
 https://raw.githubusercontent.com/wasserth/TotalSegmentator/master/totalsegmentator/map_to_binary.py ，访问日期 2026-11-06。）
 
 **与注册表的差异注记**（M7-S3F ② 安装包实测，M7-S3F ⑤ W13 同步；`license_registry.py`）：
-上表 README 清单与注册表 `research_use` 状态并非一一对应——
+上表 README 清单与注册表 `research_distill` 状态（M7-S3P R4 M-2 统一：单一资格字段，原 research_use 已删）并非一一对应——
 
 - **注册表 `allowed`（双证据齐全：README open + 本地 TS 2.10.0 安装包 `class_map` 含该任务
   且 `commercial_models` 不含）**：`lung_vessels`、`body`、`cerebral_bleed`、`hip_implant`、

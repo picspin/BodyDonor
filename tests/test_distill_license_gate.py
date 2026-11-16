@@ -143,11 +143,11 @@ def test_strict_gate_rejects_licensed_meta():
 
 
 # ---------------------------------------------------------------------------
-# 研究蒸馏路径（M7-S3F ③：资格读注册表 research_use，非 commercial_distill_tasks）
+# 研究蒸馏路径（M7-S3F ③：资格读注册表 research_distill，非 commercial_distill_tasks）
 # ---------------------------------------------------------------------------
 
 def test_research_profile_allows_non_total_registry_teacher():
-    """research_use: allowed 的非 total 教师（liver_lesions_mr 等同组）可进研究蒸馏。"""
+    """research_distill: allowed 的非 total 教师（liver_lesions_mr 等同组）可进研究蒸馏。"""
     ok, reason = check_distill_source(
         "total", teacher_task="total_mr", profile="research"
     )

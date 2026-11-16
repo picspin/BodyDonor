@@ -105,7 +105,7 @@ def check_distill_source(
     Python API 由本检查防护）：
     - "commercial"（默认，行为与 HEAD 一致）：teacher 任务必须在
       COMMERCIAL_DISTILL_TASKS（仅 total）；
-    - "research"：teacher 任务走注册表 research_use（ontology.
+    - "research"：teacher 任务走注册表 research_distill（ontology.
       mask_allowed_in_distill_training 同语义；不由 commercial_distill_tasks
       把关——S3 后续三项③）。
 
@@ -127,7 +127,7 @@ def check_distill_source(
     if experimental:
         return False, "experimental 标记产物不进蒸馏训练集（逃生通道隔离）"
     if profile == "research" and source == "total":
-        # 研究路径：资格读注册表 research_use（不查 commercial_distill_tasks）
+        # 研究路径：资格读注册表 research_distill（M-2 统一，不查 commercial_distill_tasks）
         from .ontology import mask_allowed_in_distill_training
 
         return mask_allowed_in_distill_training(
@@ -161,7 +161,7 @@ def mask_allowed_in_distill_training_strict(
     - 未知来源（不在 ALLOWED_TRAIN_SOURCES 也不在 REJECTED_SOURCES）
 
     profile 透传 check_distill_source："commercial"（默认，与 HEAD 一致）/
-    "research"（研究路径，teacher 任务走注册表 research_use）；
+    "research"（研究路径，teacher 任务走注册表 research_distill）；
     非法值 raise ValueError（W8，透传层防护）。
     """
     if mask_meta.get("experimental"):
@@ -445,7 +445,7 @@ def prepare_dataset(
     """蒸馏数据集准备主入口：训练池 -> 泄漏重查 -> 逐 case 合并 -> nnU-Net 目录。
 
     - 训练标签只来自 TS total 教师 mask（许可门禁逐 case 强制，profile 透传
-      check_distill_source：commercial 默认 / research 走注册表 research_use）
+      check_distill_source：commercial 默认 / research 走注册表 research_distill）
     - AMOS labelsTr / CT-Lite masks/ 绝不读入训练标签
     - 输出 nnUNet_raw/Dataset501_BodyDonorDistill：imagesTr/ labelsTr/
       dataset.json + manifest.json（逐 case 来源清单，ModelVersion 审计用）
