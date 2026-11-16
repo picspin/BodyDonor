@@ -34,16 +34,18 @@ def _epoch(s: str) -> float:
 
 
 def _seed_full_ts_out(teacher_out: Path, mtime: str) -> None:
-    """117 类全量 ts_out（空占位 + 15 蒸馏类），aorta mtime 设为指定时刻。"""
+    """117 类全量 ts_out（空占位 + 15 蒸馏类），全部 nii mtime 设为指定时刻
+    （判据 = 全目录 mtime 一致，非单文件）。"""
     teacher_out.mkdir(parents=True, exist_ok=True)
     names = [f"cls_{i:03d}" for i in range(102)] + sorted(DISTILL_CLASSES.values())
     assert len(names) == 117
-    for n in names:
-        (teacher_out / f"{n}.nii.gz").write_bytes(b"")
     ts = _epoch(mtime)
     import os
 
-    os.utime(teacher_out / "aorta.nii.gz", (ts, ts))
+    for n in names:
+        f = teacher_out / f"{n}.nii.gz"
+        f.write_bytes(b"")
+        os.utime(f, (ts, ts))
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +132,6 @@ def fake_data(tmp_path, monkeypatch):
 
 def test_main_dry_run_writes_nothing(fake_data, capsys):
     amos_dir, ct_root = fake_data
-    rc = bf.main() if False else None  # main() 读 sys.argv，走 helper
     rc = bf._run(dry_run=True)
     assert rc == 0
     assert not (amos_dir / "amos_0004" / "source.json").exists()
@@ -174,6 +175,32 @@ def test_main_idempotent_skips_existing(fake_data):
     before = (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8")
     assert bf._run(dry_run=False) == 0
     assert (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8") == before
+
+
+def test_main_undecided_dir_without_aorta_does_not_crash(tmp_path, monkeypatch, capsys):
+    """W1：undecided 分支 evidence 不能因 ts_out 缺 aorta 崩溃（不猜，列未决）。"""
+    amos_dir = tmp_path / "amos22_subset"
+    case = amos_dir / "amos_0099" / "ts_out"
+    case.mkdir(parents=True)
+    (case / "spleen.nii.gz").write_bytes(b"")  # 不含 aorta：decide 返回 None
+    monkeypatch.setattr(bf, "AMOS", amos_dir / "train")
+    (tmp_path / "ct_lite" / "ts_out").mkdir(parents=True)  # ct_lite 空但不缺目录
+    monkeypatch.setattr(bf, "CT_LITE", tmp_path / "ct_lite")
+    monkeypatch.setattr(bf, "load_holdout", lambda path=None: [])
+    assert bf._run(dry_run=True) == 0  # 不崩，保持缺失
+    err = capsys.readouterr().err
+    assert "KEEP-MISSING" in err and "amos_0099" in err
+    assert not (case.parent / "source.json").exists()
+
+
+def test_main_empty_ct_lite_ts_out_writes_nothing(tmp_path, monkeypatch):
+    """W7：ct_lite ts_out 空时不写库级清单（对零个 case 不下 total 结论）。"""
+    monkeypatch.setattr(bf, "AMOS", tmp_path / "amos22_subset" / "train")
+    (tmp_path / "ct_lite" / "ts_out").mkdir(parents=True)  # 存在但空
+    monkeypatch.setattr(bf, "CT_LITE", tmp_path / "ct_lite")
+    monkeypatch.setattr(bf, "load_holdout", lambda path=None: [])
+    assert bf._run(dry_run=False) == 0
+    assert not (tmp_path / "ct_lite" / "ts_out" / "source.json").exists()
 
 
 def test_main_ct_lite_fail_closed_when_any_case_undecided(tmp_path, monkeypatch, capsys):

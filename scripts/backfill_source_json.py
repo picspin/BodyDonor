@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -79,6 +80,21 @@ def _in_window(mtime_epoch: float, window: tuple[str, str]) -> bool:
     return lo <= mtime_epoch <= hi
 
 
+def _aorta_mtime(teacher_out: Path) -> float | None:
+    """aorta.nii.gz mtime；缺失返回 None（undecided evidence 不因此崩）。"""
+    f = teacher_out / "aorta.nii.gz"
+    return f.stat().st_mtime if f.exists() else None
+
+
+def _all_in_window(teacher_out: Path, window: tuple[str, str]) -> bool:
+    """全部 nii 的 mtime 都在窗口内才算证据一致（单文件 mtime 判据偏弱，
+    116 个其他文件逐一核对；目录空 -> False）。"""
+    files = sorted(teacher_out.glob("*.nii.gz"))
+    if not files:
+        return False
+    return all(_in_window(f.stat().st_mtime, window) for f in files)
+
+
 def decide_amos_basis(case_dir: Path) -> tuple[str, str] | None:
     """amos_XXXX 目录证据判定，返回 (依据, created_by)；定不下来返回 None。"""
     teacher_out = case_dir / "ts_out"
@@ -86,10 +102,9 @@ def decide_amos_basis(case_dir: Path) -> tuple[str, str] | None:
         return None  # 非 total 全量布局，不猜
     if missing_distill_classes(teacher_out):
         return None
-    mtime = (teacher_out / "aorta.nii.gz").stat().st_mtime
-    if _in_window(mtime, M3_EVAL_WINDOW):
+    if _all_in_window(teacher_out, M3_EVAL_WINDOW):
         return BASIS_M3_EVAL, "evaluate_holdout.py ts_teacher_inference"
-    if _in_window(mtime, M4_TRAIN_WINDOW):
+    if _all_in_window(teacher_out, M4_TRAIN_WINDOW):
         return BASIS_M4_TRAIN, CREATED_BY
     return None
 
@@ -101,8 +116,7 @@ def decide_ct_lite_basis(case_dir: Path) -> tuple[str, str] | None:
         return None
     if missing_distill_classes(teacher_out):
         return None
-    mtime = (teacher_out / "aorta.nii.gz").stat().st_mtime
-    if _in_window(mtime, M3_COLDSTART_WINDOW):
+    if _all_in_window(teacher_out, M3_COLDSTART_WINDOW):
         return BASIS_M3_COLDSTART, "qc_coldstart.py"
     return None
 
@@ -124,7 +138,7 @@ def _run(dry_run: bool) -> int:
                 f"nii 数={len(list((case_dir / 'ts_out').glob('*.nii.gz')))}, "
                 f"缺蒸馏类={missing_distill_classes(case_dir / 'ts_out')[:3]}, "
                 f"完整={teacher_out_complete(case_dir / 'ts_out')}, "
-                f"aorta mtime={(case_dir / 'ts_out' / 'aorta.nii.gz').stat().st_mtime:.0f}"
+                f"aorta mtime={_aorta_mtime(case_dir / 'ts_out')}"
             )
             undecided.append({
                 "case_id": case_id, "checked": evidence,
@@ -154,7 +168,7 @@ def _run(dry_run: bool) -> int:
                 evidence = (
                     f"nii 数={len(list(case_dir.glob('*.nii.gz')))}, "
                     f"完整={teacher_out_complete(case_dir)}, "
-                    f"aorta mtime={(case_dir / 'aorta.nii.gz').stat().st_mtime:.0f}"
+                    f"aorta mtime={_aorta_mtime(case_dir)}"
                 )
                 undecided.append({
                     "case_id": f"ct_lite/{case_id}", "checked": evidence,
@@ -165,7 +179,7 @@ def _run(dry_run: bool) -> int:
             ct_cases.append(case_id)
             ct_basis, ct_created_by = basis, created_by
         all_ct = [p.name for p in sorted((CT_LITE / "ts_out").iterdir()) if p.is_dir()]
-        if ct_cases == all_ct:  # 全部 case 证据通过才写
+        if ct_cases and ct_cases == all_ct:  # 非空且全部 case 证据通过才写
             plans.append({"path": str(ct_target), "case_id": "ct_lite/ts_out",
                           "source_role": f"library ({len(ct_cases)} cases)",
                           "basis": ct_basis, "created_by": ct_created_by,
@@ -196,9 +210,11 @@ def _run(dry_run: bool) -> int:
         }
         if "cases" in p:  # ct_lite 库级清单：附逐 case 列表
             doc["cases"] = p["cases"]
-        Path(p["path"]).write_text(
-            json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8"
-        )
+        # 原子写入：中断不留半截 JSON（坏 JSON 会被 read_teacher_provenance 拒绝）
+        target = Path(p["path"])
+        tmp = target.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, target)
     print(f"[backfill] 实写 {len(plans)} 个 source.json")
     return 0
 
