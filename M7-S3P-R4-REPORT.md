@@ -43,7 +43,7 @@ app.py / cli.py / tui.py / review_session.py / agent_context.py / static/：grep
 ## 三、验收实测
 
 - 决策表测试：合并前 4 通过/1 失败（单一来源断言按设计红，未提交）；合并后 **6/6 通过**（快照一致 + 单一来源 + 兜底类恒空）。
-- 直接受影响文件：test_research_field_decision_table(6) + test_teacher_registry + test_distill_license_gate + test_ontology + test_m7_s3_modality + test_m7_s3f_modality + test_m7_s3p2_backfill + test_license_whitelist = **93 passed**。
+- 直接受影响文件：test_research_field_decision_table(6) + test_teacher_registry + test_distill_license_gate + test_ontology + test_m7_s3_modality + test_m7_s3f_modality + test_m7_s3p2_backfill + test_license_whitelist = **148 passed**（逐文件求和 6+25+55+20+7+15+12+8，原文 93 漏计了 test_distill_license_gate 的 55 项）。
 - 首块文件（15 文件 220 tests，含 api/db/distill/export/gpu/holdout/ingest）：**220 passed** 16.5s。
 - **全量套件 704 collected：704 passed / 0 failed / 0 error**（分批实测，R3 同法）：
   - 非 local_artifacts 全量：**687 passed / 17 deselected / EXIT=0**（63.9s）；
