@@ -220,6 +220,7 @@ def _build_source_images(
         sop_class_uid = {
             "DX": "1.2.840.10008.5.1.4.1.1.1.1",  # Digital X-Ray Image Storage - Presentation
             "CR": "1.2.840.10008.5.1.4.1.1.1",  # Computed Radiography Image Storage
+            "MR": "1.2.840.10008.5.1.4.1.1.4",  # MR Image Storage（S3P1 ②）
         }.get(modality, "1.2.840.10008.5.1.4.1.1.2")  # 其余默认 CT Image Storage
         meta.MediaStorageSOPClassUID = sop_class_uid
         meta.MediaStorageSOPInstanceUID = sop_uid
@@ -348,6 +349,7 @@ def verify_seg(
                 "1.2.840.10008.5.1.4.1.1.1.1": "DX",  # Digital X-Ray Image Storage
                 "1.2.840.10008.5.1.4.1.1.1": "CR",  # Computed Radiography Image Storage
                 "1.2.840.10008.5.1.4.1.1.2": "CT",  # CT Image Storage
+                "1.2.840.10008.5.1.4.1.1.4": "MR",  # MR Image Storage（S3P1 ②）
             }.get(ref_sop_class, ref_sop_class)  # 未知 UID 原样带出（不猜模态）
             if src_modality != expected_source_modality:
                 rep.errors.append(

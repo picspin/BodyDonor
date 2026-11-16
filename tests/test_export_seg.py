@@ -12,7 +12,6 @@ from bodydonor.export_seg import (
     SEG_MODALITY,
     SEG_SOP_CLASS_UID,
     SegExportError,
-    SegVerifyError,
     SourceSeriesInfo,
     _build_source_images,
     export_and_verify,
@@ -206,11 +205,24 @@ class TestXraySourcePreserved:
         assert not rep2.ok
         assert any("源影像" in e for e in rep2.errors)
 
+    def test_mr_source_gets_mr_storage(self, tmp_path) -> None:  # noqa: ANN001
+        """S3P1 ②：MR 源的合成源实例写 MR Image Storage（不落默认 CT Storage）。"""
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.mr0",
+            study_uid="1.2.826.0.1.3680043.8.498.mr0study",
+            modality="MR",
+            rows=32,
+            columns=32,
+        )
+        images = _build_source_images(src, 32, 32, 1)
+        assert images[0].Modality == "MR"
+        # MR Image Storage（pydicom UID 字典核实，非记忆值）
+        assert images[0].SOPClassUID == "1.2.840.10008.5.1.4.1.1.4"
+
     def test_export_and_verify_checks_source_modality(self, tmp_path) -> None:  # noqa: ANN001
         """S3R5 W-2 收尾：export_and_verify 透传源模态核对——导出链路默认核对。
 
-        现状边界：MR 合成源实例的 SOP Class 落默认 CT Storage（与 W-1 同族的
-        已知未决项，见定稿报告未决清单）——接线前该不一致静默通过，接线后核对捕获。
+        S3P1 ②：MR 源写 MR Image Storage 后走导出链路通过；模态不符仍报错。
         """
         src = SourceSeriesInfo(
             series_uid="1.2.826.0.1.3680043.8.498.mr5",
@@ -222,5 +234,14 @@ class TestXraySourcePreserved:
             slice_thickness_mm=1.0,
         )
         mask_path = _make_mask(tmp_path / "mask_mr5.nii.gz")
-        with pytest.raises(SegVerifyError, match="源影像"):
-            export_and_verify(mask_path, src, tmp_path / "seg_mr5.dcm")
+        # MR 源导出链路通过（源实例 SOP Class 与声称模态一致）
+        rep = export_and_verify(mask_path, src, tmp_path / "seg_mr5.dcm")
+        assert rep.ok, rep.errors
+        # 模态不符仍报错：MR 源 SEG 被声称 CT -> 源影像核对捕获
+        rep2 = verify_seg(
+            tmp_path / "seg_mr5.dcm",
+            source_mask_path=mask_path,
+            expected_source_modality="CT",
+        )
+        assert not rep2.ok
+        assert any("源影像" in e for e in rep2.errors)
