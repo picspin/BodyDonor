@@ -45,7 +45,11 @@ app.py / cli.py / tui.py / review_session.py / agent_context.py / static/：grep
 - 决策表测试：合并前 4 通过/1 失败（单一来源断言按设计红，未提交）；合并后 **6/6 通过**（快照一致 + 单一来源 + 兜底类恒空）。
 - 直接受影响文件：test_research_field_decision_table(6) + test_teacher_registry + test_distill_license_gate + test_ontology + test_m7_s3_modality + test_m7_s3f_modality + test_m7_s3p2_backfill + test_license_whitelist = **93 passed**。
 - 首块文件（15 文件 220 tests，含 api/db/distill/export/gpu/holdout/ingest）：**220 passed** 16.5s。
-- 全量套件：见「未决」（local_artifacts 真实数据测试耗时分钟级，后台在跑）。
+- **全量套件 704 collected：704 passed / 0 failed / 0 error**（分批实测，R3 同法）：
+  - 非 local_artifacts 全量：**687 passed / 17 deselected / EXIT=0**（63.9s）；
+  - local_artifacts A 批（evaluate_student_holdout + interaction_metrics）：**6 passed** 90.3s EXIT=0；
+  - B 批（nninteractive_backend cpu 真跑 + qc_interaction_e2e + review_api risk_queue）：**7 passed** 201.2s EXIT=0；
+  - C 批四个慢速 30 例 Dice（m6c 排序 / m6d 门控 / m6e 419 对回归 / m6f trace 30 例回填）：**4 passed** 2229.4s EXIT=0。
 - ruff：全绿（I001 一次 --fix 修复）。
 - 条目数：合并前后 36 不变，(teacher_id, task) 唯一。
 
@@ -57,6 +61,7 @@ app.py / cli.py / tui.py / review_session.py / agent_context.py / static/：grep
 | 246f6d3 | refactor: M-2 统一——合并为单一字段（7 文件 +24/−45） |
 | 73bfc9f | style: 决策表测试 import 排序（ruff I001） |
 | 9a97790 | fix: 审查 W——reason 分类补 nni-correction 分支 + 兜底类恒空断言 |
+| 8a0aa29 | docs: R4 轮次报告 |
 
 ## 五、审查 findings 清单（deep-reviewer，无 Bash 只读）
 
@@ -75,6 +80,5 @@ cat tests/data/m2_decision_table.json | grep -c 'blocked:other'   # 修前 1（n
 
 ## 六、未决
 
-1. **全量套件实测**：local_artifacts 真实数据测试（30 例 hold-out 逐类 Dice 等）单测耗时分钟级，全量需 ~15 分钟，本轮在后台跑（`/tmp/m2_full3.log`），完成后按逐文件补记 collected/通过数。首块 15 文件 220 passed 已实测。
-2. **validate_entry 不拒绝多余键**（审查者提及，非回退）：若有人把 research_use 重新加回条目，validate_entry 不会拒绝（字段校验只查缺失/非法值，不查未声明键）。如需硬守卫可在后续轮加 `unknown_keys` 检查——未做，避免扩大本轮范围。
-3. **test_m6c_priority 等 4 个 M6 文件单跑在 100–300s 超时**：hang 点在 `test_ranking_consistency_30_holdout_top20`（30 例真实 nibabel 读 + 逐类 Dice，R3 记忆实测 951s 量级）——非本轮改动引入（该测试不读 research_use/research_distill），全量套件在后台以足额时限验证。
+1. **validate_entry 不拒绝多余键**（审查者提及，非回退）：若有人把 research_use 重新加回条目，validate_entry 不会拒绝（字段校验只查缺失/非法值，不查未声明键）。如需硬守卫可在后续轮加 `unknown_keys` 检查——未做，避免扩大本轮范围（`test_research_distill_is_single_decision_source` 已断言字段清零作软守卫）。
+2. **test_m6c_priority 等 4 个 M6 文件单跑在 100–300s 超时**：慢点在 `test_ranking_consistency_30_holdout_top20` 等 local_artifacts 测试（30 例真实 nibabel 读 + 逐类 Dice）——非本轮改动引入（该测试不读 research_use/research_distill），本轮已分批以足额时限实测 4 passed（2229.4s）。
