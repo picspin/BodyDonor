@@ -221,11 +221,18 @@ def test_modality_aliases_in_registry_entries_match_ingest_values() -> None:
     by_task = {e["task"]: e for e in TEACHER_REGISTRY}
     fx = by_task["flexray_xray"]["modalities"]
     assert fx == ("X-RAY",), f"flexray modalities 应为 ('X-RAY',) 实为 {fx}"
+    # W2 修复落地：投影 X 光 DICOM 代码 DX/CR 与 PET 代码 PT 经别名匹配登记模态
+    from bodydonor.license_registry import MODALITY_ALIASES
+
+    assert MODALITY_ALIASES["DX"] == "X-RAY"
+    assert MODALITY_ALIASES["CR"] == "X-RAY"
+    assert MODALITY_ALIASES["PT"] == "PET"
 
 
 def test_every_entry_modalities_nonempty_and_provenance_cited() -> None:
-    """R3 ④ 审计覆盖：全部条目 modalities 非空且登记值在归一化口径内合法，
-    provenance 带 source（书面依据可追溯）——无依据的模态拓宽在此被拦。"""
+    """R3 ④ 审计覆盖（字面口径层）：全部条目 modalities 非空且登记值在归一化
+    口径内合法，provenance 带 source（书面依据可追溯）。逐教师的具体期望值
+    对照在 test_r3_modality_expectations_per_teacher——本测试只拦口径外取值。"""
     legal = {"CT", "MR", "PET", "X-RAY"}
     for e in TEACHER_REGISTRY:
         mods = e["modalities"]
@@ -239,10 +246,13 @@ def test_r3_modality_expectations_per_teacher() -> None:
 
     - totalsegmentator: total 族 CT（红线：不动）；_mr 族 MR（LICENSE-CHECK §四）。
     - nninteractive: CT/MR/PET（README §Abstract 训练数据集清单）。
-    - nnunet_v2: CT/MR/PET（LICENSE-CHECK §一 总表 'MRI/PET'）。
+    - nnunet_v2: CT/MR/PET（MR/PET §一 总表 'MRI/PET'；CT §七 结论）。
     - moose: CT/PET（LICENSE-CHECK §一 总表）。
     - mri_core: MR（§二）。synthseg: MR（§六）。flexray: X-RAY（§三）。
     """
+    # N6：task 唯一性先行断言——by_task 字典静默覆盖会让下面的断言对象错位
+    tasks = [e["task"] for e in TEACHER_REGISTRY]
+    assert len(tasks) == len(set(tasks)), f"task 重复：{[t for t in tasks if tasks.count(t) > 1]}"
     by_task = {e["task"]: e for e in TEACHER_REGISTRY}
     assert by_task["total"]["modalities"] == ("CT",)  # S3 验收安全属性，不动
     assert by_task["total_mr"]["modalities"] == ("MR",)

@@ -37,9 +37,10 @@ _REGISTRY_FIELDS = (
 # 研究蒸馏资格枚举（M7-PLAN v3 §2.2.1 新增三字段行；S3 收口轮 ④）
 RESEARCH_DISTILL_VALUES = ("allowed", "conditional", "blocked", "unverified")
 
-# 模态别名（M7-S3P R3 ④）：注册表登记 'PET'，DICOM 头内 Modality 代码是 'PT'
-# （PS3.3 C.7.3.1.1 定义词；ingest 层原样记录不翻译）——归一化时并成同一模态。
-MODALITY_ALIASES: dict[str, str] = {"PT": "PET"}
+# 模态别名（M7-S3P R3 ④）：注册表登记 'PET'/'X-RAY'，DICOM 头内 Modality 代码
+# 分别是 'PT'（PS3.3 C.7.3.1.1 定义词）与投影 X 光 'DX'/'CR'——ingest 层原样
+# 记录不翻译，归一化时并成登记模态。X 光代码口径与 review_session 同。
+MODALITY_ALIASES: dict[str, str] = {"PT": "PET", "DX": "X-RAY", "CR": "X-RAY"}
 
 # 首批条目（M7-LICENSE-CHECK §二/四/八 + M7-PLAN v3.2 §二；provenance 即核查依据）
 TEACHER_REGISTRY: list[dict] = [
@@ -230,8 +231,10 @@ TEACHER_REGISTRY: list[dict] = [
         "data_contract_version": "v1",
     },
     # nnUNet v2：框架条目，不附带权重，mask 任务逐任务登记。
-    # R3 ④：modalities 拓宽为 CT/MR/PET——M7-LICENSE-CHECK §一 总表书面支持
-    # 'MRI/PET'（逐任务权重许可仍取决于训练数据，框架本身不产生蒸馏资格）。
+    # R3 ④：modalities 拓宽为 CT/MR/PET——MR/PET 依据 M7-LICENSE-CHECK §一 总表
+    # 'MRI/PET'；CT 依据 §七 结论（框架自适应任意数据集流水线，Dataset501
+    # channel_names['0']='ct' 实证 CT 流水线在用；框架本身不产生蒸馏资格，
+    # 逐任务权重许可仍取决于训练数据）。
     {
         "teacher_id": "nnunet_v2",
         "task": "framework",
