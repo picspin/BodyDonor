@@ -38,7 +38,7 @@
  "nninteractive/interactive_correction": {
   "distill": [
    false,
-   "blocked:other"
+   "blocked:nni-correction"
   ],
   "research_distill": "conditional",
   "research_use": "restricted",

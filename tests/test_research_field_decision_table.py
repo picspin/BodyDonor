@@ -52,6 +52,8 @@ def _reason_key(ok: bool, reason: str) -> str:
         return "blocked:hard-block"
     if "unverified" in reason:
         return "blocked:unverified"
+    if "修正产物不进蒸馏" in reason:
+        return "blocked:nni-correction"
     return "blocked:other"
 
 
@@ -105,3 +107,11 @@ def test_research_distill_is_single_decision_source() -> None:
     for e in TEACHER_REGISTRY:
         assert "research_use" not in e, f"{e['teacher_id']}/{e['task']} 仍有 research_use"
         assert e["research_distill"] in ("allowed", "conditional", "blocked", "unverified")
+
+
+def test_no_fallback_reason_class_in_snapshot(table: dict) -> None:
+    """R4 审查 W：blocked:other 是 _reason_key 兜底类——快照里出现即说明某
+    拒绝分支缺可识别关键词，措辞变化会被兜底吞掉。兜底类必须恒空。"""
+    for key, item in table.items():
+        assert item["distill"][1] != "blocked:other", f"{key} distill 落兜底类"
+        assert item["route"][1] != "blocked:other", f"{key} route 落兜底类"
