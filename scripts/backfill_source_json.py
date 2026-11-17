@@ -159,6 +159,9 @@ def _upgrade_plan(target: Path, case_id: str, evidence_scope: list[str] | str) -
         return None  # asserted 永不降级；inferred 已升级过（幂等）
     if doc.get("backfill") is not True:
         return None  # 旧实测写入，读侧默认 asserted
+    # ct_lite 库级文件：evidence_scope 枚举文件内 cases（覆盖范围与清单一致）
+    if "cases" in doc:
+        evidence_scope = doc["cases"]
     return {"path": str(target), "case_id": case_id,
             "evidence_scope": evidence_scope}
 

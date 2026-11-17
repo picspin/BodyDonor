@@ -332,3 +332,24 @@ def test_old_measured_write_without_backfill_maps_asserted(fake_data):
         (amos_dir / "amos_0005" / "source.json").read_text(encoding="utf-8")
     )
     assert "attestation" not in doc  # 未被写 inferred
+
+
+def test_upgrade_ct_lite_scope_enumerates_from_existing_cases(fake_data):
+    """已有 ct_lite backfill 文档就地补字段时 evidence_scope 枚举文件内
+    cases（非空列表）——scope 与清单覆盖范围一致。"""
+    _, ct_root = fake_data
+    # 模拟 R1b 时代磁盘现状：库级 backfill 文档无证明字段，cases 已枚举
+    (ct_root / "ts_out" / "source.json").write_text(
+        json.dumps({"source": "total", "task": "total", "created_by": "qc_coldstart.py",
+                    "case_id": "ct_lite/ts_out", "backfill": True,
+                    "backfill_basis": "M3 冷启动", "backfilled_at": "2026-11-16",
+                    "cases": ["s0045", "s0899"]}, ensure_ascii=False, indent=1),
+        encoding="utf-8",
+    )
+    assert bf._run(dry_run=False) == 0
+    doc = json.loads(
+        (ct_root / "ts_out" / "source.json").read_text(encoding="utf-8")
+    )
+    assert doc["attestation"] == "inferred"
+    assert doc["evidence_scope"] == ["s0045", "s0899"]  # 非 []
+    assert doc["generated_by"].startswith("backfill_source_json.py sha256=")
