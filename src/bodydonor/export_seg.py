@@ -98,13 +98,20 @@ def resolve_source_sop_class_uid(source: SourceSeriesInfo, inst: dict[str, Any] 
 
     顺序：(a) 实例自带非空 sop_class_uid → 原样用（逐字 round-trip，
     Modality→SOP Class 是有损投影——MR 至少三档、PET 同样三档，映射表
-    无法区分各档）；(b) 合成源（无实例或无 UID）→ DX/CR/MR 映射表
-    fallback；(c) 其余模态 → raise SegExportError，绝不默认 CT。
+    无法区分各档）；(b) 合成源（inst is None，无实例信息）→ DX/CR/MR/CT
+    映射表 fallback；(c) 其余模态或真实实例缺 UID（旧持久化 JSON 无此键，
+    静默落通用 UID 即结构错误——审查 W1）→ raise SegExportError，绝不默认。
     """
     if inst is not None:
         uid = str(inst.get("sop_class_uid", "") or "")
         if uid:
             return uid
+        modality = _normalize_modality(source.modality)
+        raise SegExportError(
+            f"源实例 {inst.get('sop_instance_uid', '')!r} 无原样 SOP Class UID"
+            "（旧持久化 JSON 缺 sop_class_uid 键）且模态映射有损"
+            f"（{modality}）——重跑 ingest 回填后导出（S3P2 ③，审查 W1）"
+        )
     modality = _normalize_modality(source.modality)
     try:
         return _SYNTHETIC_SOP_CLASS_UIDS[modality]

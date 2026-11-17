@@ -169,8 +169,27 @@ class TestUnmappedRaises:
             persisted, "1.2.826.0.1.3680043.8.498.sopcls", "1.2.826.0.1.3680043.8.498.123", "PT"
         )
         mask_path = _make_mask(tmp_path / "mask.nii.gz")
-        with pytest.raises(SegExportError, match="不默认 CT"):
+        # 真实实例缺 UID → raise（W1 修复后走"无原样 SOP Class"分支）
+        with pytest.raises(SegExportError, match="原样 SOP Class"):
             export_seg(mask_path, source, tmp_path / "seg.dcm")
+
+    @pytest.mark.parametrize("modality", ["MR", "CT"])
+    def test_real_instance_missing_uid_raises(self, modality: str) -> None:
+        """审查 W1：真实实例（旧持久化 JSON 无 sop_class_uid 键）+ 已映射模态
+        ——必须 raise，不静默落模态通用 UID（Enhanced MR 源写 MR Storage 即
+        结构错误，verify_seg 与同一 resolve 比对验不出）。"""
+        source = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.w1",
+            study_uid="1.2.826.0.1.3680043.8.498.w1study",
+            modality=modality,
+            rows=32,
+            columns=32,
+            source_instances=[
+                {"sop_instance_uid": "1.2.3", "image_position_patient": [0.0, 0.0, 0.0]}
+            ],
+        )
+        with pytest.raises(SegExportError, match="原样 SOP Class"):
+            resolve_source_sop_class_uid(source, source.source_instances[0])
 
     def test_verify_sop_class_mismatch_reports(self, tmp_path) -> None:
         """期望 SOP Class 与 SEG 引用不符 → verify 报错（逐字比对生效）。"""
