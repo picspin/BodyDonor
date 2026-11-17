@@ -5,7 +5,7 @@
   blocked 列表现在为空——机制测试用内存条目验证）
 - heartchambers_highres：licensed 任务，注册表无条目——拒绝
 - 任意未知任务名——拒绝
-放行路径：注册表 ready 条目（代码级静态条目，(task, modality) 门控）；
+放行路径：注册表就绪条目（M7-S3P2 ⑥ 就绪三分，(task, modality) 门控）；
 白名单回退已退役（M7-S3F ②）——注册表无条目即拒绝带原因。
 """
 
@@ -79,10 +79,11 @@ def test_commercial_distill_config_retired() -> None:
 
 
 def test_bare_settings_registry_ready_task_allowed() -> None:
-    """空配置：注册表 ready 条目仍放行（契约变化，M7-S3 记录在案）。
+    """空配置：注册表就绪条目仍放行（契约变化，M7-S3 记录在案；M7-S3P2 ⑥
+    ready 布尔退役——就绪读三分 weights_present/class_map_present/share_alike）。
 
     M7-S3F ②：check_task 数据来源改读注册表（代码级静态条目，Apache-2.0 已核查），
-    注册表内 ready 条目放行——配置不再能撤销注册表内任务，仅 blocked_tasks
+    注册表内就绪条目放行——配置不再能撤销注册表内任务，仅 blocked_tasks
     能否决；注册表外未注册任务仍 fail-closed（白名单回退已退役）。
     """
     t = Settings().teacher
