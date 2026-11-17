@@ -598,7 +598,7 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
 
     研究路径准入规则（M7-S3P2 ⑤ 显式化；许可事实 2026-11-18 用户确认）：
     两轴（attribution_required/share_alike）描述许可义务，不能单独编码准入——
-    5 个 unverified 任务与 25 个 allowed 同为 Apache-2.0（两轴值完全相同），
+    准入未核实的条目与 allowed 条目同为 Apache-2.0（两轴值完全相同），
     准入差别只在证据强度，由 license_verified 显式承载：
     - license_verified=False → 阻断待核实；
     - license_verified=True 且研究可用（NC 只禁商业、研究可用；Apache-2.0

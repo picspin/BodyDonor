@@ -277,8 +277,17 @@ def test_validate_entry_rejects_bad_new_fields():
     e["attribution_required"] = False
     with pytest.raises(ValueError, match="attribution_required 非法"):
         validate_entry(e)
+    # R3b 审查 Nit：int 1/0 会过 `in (True,)` 枚举比较——两轴须 isinstance(bool)
+    e = deepcopy(base)
+    e["attribution_required"] = 1
+    with pytest.raises(ValueError, match="attribution_required 非法"):
+        validate_entry(e)
     e = deepcopy(base)
     e["share_alike"] = "no"
+    with pytest.raises(ValueError, match="share_alike 非法"):
+        validate_entry(e)
+    e = deepcopy(base)
+    e["share_alike"] = 0
     with pytest.raises(ValueError, match="share_alike 非法"):
         validate_entry(e)
     e = deepcopy(base)

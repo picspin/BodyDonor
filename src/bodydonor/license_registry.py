@@ -6,8 +6,8 @@
 - ``attribution_required`` / ``share_alike``：许可义务两轴（按 LICENSES-THIRD-PARTY.md）。
 - ``license_verified``：证据强度（双证据 true / 单一来源或出入 false）。
 - 准入判定读 ontology.mask_allowed_in_distill_training（两轴不能单独编码准入：
-  5 个 unverified 与 allowed 同为 Apache-2.0，差别只在证据强度——须 license_verified
-  显式承载；判定层新方案见该函数 docstring。决策表 tests/
+  准入未核实的条目与 allowed 条目同为 Apache-2.0，差别只在证据强度——须
+  license_verified 显式承载；判定层新方案见该函数 docstring。决策表 tests/
   test_research_field_decision_table.py 断言迁移前后判定逐条一致）。
 
 法务事实（2026-11-18 用户确认）：research 只化解 NC 条款，不化解 ShareAlike；
@@ -443,13 +443,15 @@ def validate_entry(entry: dict) -> None:
         raise ValueError(f"注册表条目缺字段：{missing}")
     if entry["output_type"] not in ("mask", "feature", "framework"):
         raise ValueError(f"output_type 非法：{entry['output_type']!r}")
-    if entry["attribution_required"] not in ATTRIBUTION_REQUIRED_VALUES:
+    if not isinstance(entry["attribution_required"], bool) or not entry["attribution_required"]:
         raise ValueError(
             f"attribution_required 非法：{entry['attribution_required']!r}（本仓无公有"
-            "领域来源，恒 True）"
+            "领域来源，恒 True；bool 非 int）"
         )
-    if entry["share_alike"] not in SHARE_ALIKE_VALUES:
-        raise ValueError(f"share_alike 非法：{entry['share_alike']!r}")
+    if not isinstance(entry["share_alike"], bool):
+        raise ValueError(
+            f"share_alike 非法：{entry['share_alike']!r}（bool 非 int，1/0 会过枚举比较）"
+        )
     if not isinstance(entry["license_verified"], bool):
         raise ValueError(
             f"license_verified 非法：{entry['license_verified']!r}（bool：双证据 true / "
