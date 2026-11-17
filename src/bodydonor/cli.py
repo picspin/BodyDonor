@@ -226,12 +226,10 @@ def license_status() -> None:
 
     t2 = Table(title="任务白名单（仅展示；路由判定唯一来源 = 许可注册表）")
     t2.add_column("已核查任务数", style="green")
-    t2.add_column("商用蒸馏白名单")
     t2.add_column("禁用任务", style="red")
     t2.add_column("参考文件")
     t2.add_row(
         str(len(s["allowed_tasks"])),  # type: ignore[arg-type]
-        ", ".join(s["commercial_distill_tasks"]),  # type: ignore[arg-type]
         ", ".join(s["blocked_tasks"]),  # type: ignore[arg-type]
         str(s["reference_doc"]),
     )

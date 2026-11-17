@@ -634,8 +634,7 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
                 "权重 CC BY-NC-SA 4.0 ShareAlike 传染"
                 "（LICENSES-THIRD-PARTY.md §2.2/§8.1）"
             )
-        # 研究蒸馏资格读注册表 research_distill（M-2 统一：唯一资格字段，
-        # 非 commercial_distill_tasks）；
+        # 研究蒸馏资格读注册表 research_distill（M-2 统一：唯一资格字段）；
         # B3 fail-closed：teacher_task 为空即阻断（不跳过注册表检查直接放行）
         task = mask_meta.get("task", "")
         entries = [e for e in TEACHER_REGISTRY if e["task"] == task] if task else []

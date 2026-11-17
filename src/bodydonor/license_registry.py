@@ -491,10 +491,6 @@ LICENSE_FACTS: dict[str, dict[str, str]] = {
         "count": "18",
         "holder": "University Hospital Basel, jakob.wasserthal@usb.ch",
     },
-    "totalsegmentator.brain_aneurysm": {
-        "license": "CC BY-NC 4.0",
-        "usage": "BLOCKED — no commercial license available",
-    },
     "nninteractive.code": {
         "license": "Apache-2.0",
         "usage": "any",
@@ -531,7 +527,6 @@ class LicenseRegistry:
         return {
             "teacher_engine": t.engine,
             "allowed_tasks": t.allowed_tasks,
-            "commercial_distill_tasks": t.commercial_distill_tasks,
             "blocked_tasks": t.blocked_tasks,
             "nninteractive": self.settings.nninteractive.model_dump(),
             "experimental_text_prompt": self.settings.experimental_text_prompt.model_dump(),
