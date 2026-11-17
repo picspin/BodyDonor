@@ -652,9 +652,9 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
         # known_restrictions 只作说明文字）；unverified 语义 = 准入待核实
         if not all(e["license_verified"] for e in entries):
             return False, (
-                f"teacher 任务 '{task}' license_verified="
-                f"{[e['license_verified'] for e in entries]}：研究蒸馏"
-                "阻断待核实（M7-S3P2 ⑤；准入证据未核实）"
+                f"teacher 任务 '{task}' 准入未核实（license_verified="
+                f"{[e['license_verified'] for e in entries]}）：研究蒸馏"
+                "阻断待核实（M7-S3P2 ⑤；unverified 语义=准入证据未核实）"
             )
         # 义务两轴照常登记（share_alike 派生物按 output_license_inherits 保留
         # SA 条款——conditional 语义由继承字段承接）；inherits 非空即写条款
