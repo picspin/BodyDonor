@@ -119,7 +119,8 @@ def test_strict_gate_accepts_manual_correction_meta():
 
 def test_strict_gate_rejects_unregistered_teacher_meta():
     """R3 ④后语义：无注册表条目任务阻断（原"商用白名单推定传染"防线由注册表
-    research_distill 单口径承担——coronary_arteries 无条目即拒绝）。"""
+    注册表单口径承担（S3P2 ⑤后读 license_verified）——coronary_arteries 无条目
+    即拒绝）。"""
     meta = {"source": "total", "task": "coronary_arteries"}
     ok, reason = mask_allowed_in_distill_training_strict(meta)
     assert not ok
@@ -127,11 +128,11 @@ def test_strict_gate_rejects_unregistered_teacher_meta():
 
 
 # ---------------------------------------------------------------------------
-# 研究蒸馏路径（资格读注册表 research_distill）
+# 研究蒸馏路径（资格读注册表两轴+license_verified，S3P2 ⑤）
 # ---------------------------------------------------------------------------
 
 def test_research_path_allows_registry_teacher_total_mr():
-    """research_distill: allowed 的教师（total_mr 等同组）可进研究蒸馏。"""
+    """已核实教师（total_mr 等同组，license_verified=true）可进研究蒸馏。"""
     from bodydonor.ontology import mask_allowed_in_distill_training
 
     ok, reason = mask_allowed_in_distill_training(
@@ -154,14 +155,14 @@ def test_research_path_restricted_teacher_derives_sa():
 
 
 def test_research_path_restricted_non_nninteractive_no_sa_label():
-    """S3 收口轮 ④：synthseg/moose 判定读 research_distill=conditional（不因
+    """S3 收口轮 ④ + S3P2 ⑤：synthseg/moose 判定读继承条款（不因
     商业政策模糊自动禁止本地科研蒸馏），放行且按 output_license_inherits 写
     条款；known_restrictions 里的"蒸馏阻断"文字不再参与判定。flexray 条款
     是 CC-BY-NC 非 CC-BY-NC-SA——非 nnInteractive 教师不得返回 SA 标记
     （M7-PLAN §6.3：只有 nnInteractive 是 SA）。"""
     from bodydonor.ontology import mask_allowed_in_distill_training
 
-    # synthseg / moose：research_distill=conditional → 放行，条款逐条写出
+    # synthseg / moose：已核实 → 放行，继承条款逐条写出
     for task, lic in (("brain_mri_qc", "FreeSurfer"), ("moose_qc", "CC BY 4.0")):
         ok, reason = mask_allowed_in_distill_training(
             {"experimental": False, "source": "teacher", "task": task}
@@ -180,7 +181,7 @@ def test_research_path_restricted_non_nninteractive_no_sa_label():
 
 def test_known_restrictions_substring_no_longer_decides():
     """S3 收口轮 ④：known_restrictions 写"蒸馏阻断"不再改变判定结果
-    （子串匹配退役，判定只读 research_distill）。"""
+    （子串匹配退役，判定只读结构化字段——S3P2 ⑤后为 license_verified）。"""
     from bodydonor import license_registry as lr
     from bodydonor.ontology import mask_allowed_in_distill_training
 
@@ -510,7 +511,7 @@ def test_provenance_reads_declared_nninteractive(tmp_path):
 
 def test_provenance_reads_declared_unregistered_task(tmp_path):
     """source.json 声明无注册表条目任务 -> 实测读出（门禁据此拒绝——R3 ④后
-    资格走注册表 research_distill 单口径，无条目即阻断）。"""
+    资格走注册表单口径（S3P2 ⑤后读 license_verified），无条目即阻断）。"""
     from bodydonor.ontology import mask_allowed_in_distill_training
 
     case_dir = tmp_path / "amos_0025"

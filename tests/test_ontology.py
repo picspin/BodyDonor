@@ -222,9 +222,9 @@ class TestDistillIsolation:
         assert ok is False
         assert "experimental" in reason
 
-    def test_research_distill_blocks_unverified_registry_entry(self) -> None:
-        """研究蒸馏注册表 unverified 任务阻断（实测 unverified 拒绝，非"仅 total"——
-        R3 ④：商用白名单常量已删，资格读注册表 research_distill 单口径）。"""
+    def test_license_unverified_registry_entry_blocked(self) -> None:
+        """研究蒸馏注册表未核实任务阻断（实测拒绝，非"仅 total"——R3 ④删商用
+        白名单；S3P2 ⑤：准入证据强度由 license_verified 承载）。"""
         ok, reason = mask_allowed_in_distill_training(
             {"experimental": False, "source": "teacher", "task": "vertebrae_body"}
         )
