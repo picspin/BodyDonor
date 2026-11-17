@@ -1,6 +1,6 @@
 # M7-S3P2 R4a 轮次报告——⑥ ready 拆就绪三分
 
-2026-11-18。基线 R3b HEAD `eb0183b`，本轮 7 提交 `8505bc5..2bb6854`（含本报告提交）。
+2026-11-18。基线 R3b HEAD `eb0183b`，本轮 8 提交 `8505bc5..dcc9c6d`（含本报告提交）。
 只做本项 ⑥；⑦ 另派不在本轮。
 
 ## 提交列表
@@ -14,6 +14,7 @@
 | `74b6207` | nninteractive_backend docstring 就绪三分口径同步（W-7 已知缺口叙述随字段化迁移） |
 | `5a4253e` | 审查 W1 修复——check_task 挡项原因三元表达式优先级陷阱改列表收集 |
 | `2bb6854` | 审查 findings 文件（M7-S3P2-R4a-REVIEW.md） |
+| `dcc9c6d` | R4a 轮次报告（本文件） |
 
 diffstat（实测）：6 files, +289/-58。
 
@@ -109,7 +110,7 @@ vertebrae_body 条目）、`share_alike=False`。license_verified=False（保持
 - **曾经挡住它的是什么**： NC 框架下
   曾按安装包实况登记 unverified（commercial_models 含 id 305 需 license 与
   README open 清单出入，M7-S3F ② 实测）。
-- **商业暴露如何消解**：法务事实（2026-11-18 用户确认，R3b 报告 §9）：research
+- **商业暴露如何消解**：法务事实（用户 2026-11-17 任务给出，R3b 报告 §9）：research
   只化解 NC 条款不化解 ShareAlike；NC 框架下权重禁止商业目的使用——本仓蒸馏
   训练集与研究路由均非商业用途，安装包 id 305 的商用 license 要求不构成 NC
   框架下的暴露，pending 项直接消解。** NC 框架论证请用户复核**（R3b 未决项 3
