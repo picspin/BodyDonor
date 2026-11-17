@@ -146,8 +146,9 @@ evidence 缺失替换为脚本自身推断断言的核心风险——`source=tot
   prepare_dataset 前置 missing）+ roundtrip dict 断言补
   attestation/evidence 两字段。W1 失败测试 :918 / :931。
 - 全仓 ruff：All checks passed（实测）。
-- 全仓 pytest：全量后台跑完（数字见收尾行——若报告完结时仍在跑，以
-  task 输出文件为准；受影响文件 101 passed 已实测）。
+- 全仓 pytest：**747 passed, 0 failed, 0 errors**（747 collected，全量后台
+  跑完 exit 0；进度行 10×72+27=747 dots 无 F/E/s 字符，实测核数）。
+  747 collected 与受影响文件外全部通过。
 
 ## 审查 findings 清单与处理（deep-reviewer，1 agent）
 
@@ -186,5 +187,4 @@ evidence 缺失替换为脚本自身推断断言的核心风险——`source=tot
    需重跑 write_teacher_source_json 或扩展升级路径（本轮未做，读侧行为已
    正确，磁盘未被改动）。
 3. 方法学漏洞 (b)：WSL2 drvfs mtime 语义未实验验证（见上文全文）。
-4. 全仓 pytest 全量数字：受影响文件 101 passed 已实测；全量后台跑完以
-   task 输出为准（本轮改动不触 GPU 路径，M6/M7 真实推理测试与本轮无关）。
+4. （已闭合）全仓 pytest 全量数字：**747 passed, 0 failed, 0 errors** 实测。
