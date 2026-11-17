@@ -2,6 +2,9 @@
 
 - 注册表字段完整性：mask 教师缺 class_map_ref / data_contract_version 拒绝登记；
   feature 教师缺 feature_schema 拒绝登记。
+- 就绪三分（M7-S3P2 ⑥）：ready 布尔退役，拆 weights_present / class_map_present /
+  share_alike——推导规则边界测试 + check_task 拒绝原因写明挡项（缺权重 /
+  缺 class_map / SA 义务）+ 36 条目逐条三字段有值。
 - check_task 读注册表：total 套到 MR 被路由拒绝并带原因；未就绪任务拒绝；
   blocked 仍一票否决；白名单回退已退役（M7-S3F ②）——注册表无条目即拒绝。
 - 回退语义：planned/actual、跳过写原因、结构未覆盖 vs 输出缺失区分。
@@ -18,8 +21,10 @@ from bodydonor.license_registry import (
     TEACHER_REGISTRY,
     FallbackRecord,
     LicenseRegistry,
+    class_map_present,
     classify_missing_output,
     validate_entry,
+    weights_present,
 )
 from bodydonor.segmentation import SegmentWorkerError, check_worker_task
 
@@ -427,3 +432,102 @@ def test_structure_not_covered_partial_overlap() -> None:
         classify_missing_output(["prostate", "liver"], [], ["liver"])
         == "output_missing"
     )
+
+
+# --- 就绪三分（M7-S3P2 ⑥）：推导规则 + 挡项原因 + 逐条有值 ---
+
+
+def test_weights_present_derivation_boundaries() -> None:
+    """⑥ 失败测试先行：weights_present 推导规则边界——status=verified → True；
+    not_recorded / 缺 weight_integrity → False（规则写死进 docstring，全仓统一）。"""
+    e = dict(TEACHER_REGISTRY[0])
+    e["weight_integrity"] = {"sha256": "a", "size_bytes": 1, "status": "verified"}
+    assert weights_present(e) is True
+    e["weight_integrity"] = {"sha256": None, "size_bytes": None, "status": "not_recorded"}
+    assert weights_present(e) is False
+    e2 = {"task": "t"}
+    assert weights_present(e2) is False  # 缺 weight_integrity → False（不抛异常）
+
+
+def test_class_map_present_derivation_boundaries() -> None:
+    """⑥ 失败测试先行：class_map_present 推导规则边界——无占位标记 → True；
+    「待建」/「待落地」→ False；缺 class_map_ref → False（feature/framework
+    条目无 class_map_ref，推导不抛异常）。"""
+    e = dict(TEACHER_REGISTRY[0])
+    e["class_map_ref"] = "ontology/v1/map.yaml"
+    assert class_map_present(e) is True
+    e["class_map_ref"] = "synthseg-classes/v1 (待建)"
+    assert class_map_present(e) is False
+    e["class_map_ref"] = "ts-mr-classes/v1 (TS MR 50 类，待落地为 ontology 条目)"
+    assert class_map_present(e) is False
+    assert class_map_present({"task": "t"}) is False  # 缺 class_map_ref → False
+
+
+def test_check_task_rejection_reason_names_blocked_item() -> None:
+    """⑥ 失败测试先行：check_task 拒绝原因三分——原因字符串写明挡项
+    （缺权重 / 缺 class_map / SA 义务），不让一个 "not ready" 承包。"""
+    reg = LicenseRegistry(_settings())
+    # 缺权重：total_mr（weight_integrity not_recorded）
+    ok, msg = reg.check_task("body_mr", modality="MR")
+    assert not ok
+    assert "缺权重" in msg, msg
+    # 缺 class_map：TS MR 50 类占位（weights 齐、class_map 待落地）
+    e = dict(TEACHER_REGISTRY[0])
+    e["task"] = "t_cm"
+    e["weight_integrity"] = {"sha256": "a", "size_bytes": 1, "status": "verified"}
+    e["class_map_ref"] = "ts-mr-classes/v1 (待落地为 ontology 条目)"
+    from bodydonor import license_registry as lr
+
+    saved = lr.TEACHER_REGISTRY
+    lr.TEACHER_REGISTRY = [e]
+    try:
+        ok, msg = LicenseRegistry(_settings()).check_task("t_cm", modality="CT")
+        assert not ok
+        assert "缺 class_map" in msg, msg
+        # SA 义务：三字段齐但 share_alike=True（nninteractive 形态）
+        e2 = dict(e)
+        e2["task"] = "t_sa"
+        e2["class_map_ref"] = "prompt-targets/v1"
+        e2["share_alike"] = True
+        lr.TEACHER_REGISTRY = [e2]
+        ok, msg = LicenseRegistry(_settings()).check_task("t_sa", modality="CT")
+        assert not ok
+        assert "SA 义务" in msg, msg
+    finally:
+        lr.TEACHER_REGISTRY = saved
+
+
+def test_all_36_entries_three_ready_fields_valued() -> None:
+    """⑥ 验收：36 条目逐条三字段可推导且有值（decision-table 式逐条断言）；
+    ready 布尔在条目字典清零（字段退役，fixture 防回潮）。"""
+    from bodydonor.license_registry import class_map_present as cp
+    from bodydonor.license_registry import weights_present as wp
+
+    assert len(TEACHER_REGISTRY) == 36
+    for e in TEACHER_REGISTRY:
+        assert isinstance(wp(e), bool), f"{e['teacher_id']}/{e['task']} weights_present 无值"
+        assert isinstance(cp(e), bool), f"{e['teacher_id']}/{e['task']} class_map_present 无值"
+        assert isinstance(e["share_alike"], bool), (
+            f"{e['teacher_id']}/{e['task']} share_alike 无值"
+        )
+        assert "ready" not in e, f"{e['teacher_id']}/{e['task']} 仍有 ready 布尔"
+
+
+def test_src_no_ready_residual() -> None:
+    """⑥：src 全树注册表语义 ready 零残留（字段退役，防线防回潮）；
+    recalibration_ready 是数值重算抽检另一概念，豁免列出。"""
+    from pathlib import Path
+
+    src_root = Path(__file__).resolve().parents[1] / "src"
+    hits = []
+    for p in src_root.rglob("*.py"):
+        text = p.read_text(encoding="utf-8")
+        for i, line in enumerate(text.splitlines(), 1):
+            if "ready" not in line:
+                continue
+            # recalibration_ready（qc.py 数值重算抽检）与历史口径叙述豁免
+            if "recalibration_ready" in line:
+                continue
+            if '"ready"' in line or "'ready'" in line or '["ready"]' in line:
+                hits.append(f"{p}:{i}: {line.strip()}")
+    assert hits == [], f"src 残留注册表语义 ready：{hits}"

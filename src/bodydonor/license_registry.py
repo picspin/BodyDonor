@@ -73,9 +73,11 @@ def weights_present(entry: dict) -> bool:
 
 
 def class_map_present(entry: dict) -> bool:
-    """class_map_ref 不含「待建」/「待落地」占位标记 → True。"""
+    """class_map_ref 非空且不含「待建」/「待落地」占位标记 → True。"""
     cls_ref = str(entry.get("class_map_ref") or "")
-    return not any(m in cls_ref for m in READY_PLACEHOLDER_MARKERS)
+    return bool(cls_ref) and not any(
+        m in cls_ref for m in READY_PLACEHOLDER_MARKERS
+    )
 
 # 首批条目（M7-LICENSE-CHECK §二/四/八 + M7-PLAN v3.2 §二；provenance 即核查依据）
 TEACHER_REGISTRY: list[dict] = [
