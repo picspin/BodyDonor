@@ -155,8 +155,15 @@ def _upgrade_plan(target: Path, case_id: str, evidence_scope: list[str] | str) -
         return None  # 坏 JSON 不猜（读侧拒绝，留待人工处理）
     if not isinstance(doc, dict):
         return None
-    if "attestation" in doc:
-        return None  # asserted 永不降级；inferred 已升级过（幂等）
+    if doc.get("attestation") == "asserted":
+        return None  # asserted 永不降级
+    if doc.get("attestation") == "inferred":
+        req = {"evidence", "evidence_scope", "generated_by"}
+        if req <= doc.keys():
+            return None  # inferred 已升级过（幂等：证明字段齐全）
+        # 半升级状态（attestation 有但字段不全）：继续补齐，不永久跳过
+    elif "attestation" in doc:
+        return None  # 非法 attestation 值不猜（读侧会 raise，留待人工处理）
     if doc.get("backfill") is not True:
         return None  # 旧实测写入，读侧默认 asserted
     # ct_lite 库级文件：evidence_scope 枚举文件内 cases（覆盖范围与清单一致）

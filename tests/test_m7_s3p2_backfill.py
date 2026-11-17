@@ -353,3 +353,40 @@ def test_upgrade_ct_lite_scope_enumerates_from_existing_cases(fake_data):
     assert doc["attestation"] == "inferred"
     assert doc["evidence_scope"] == ["s0045", "s0899"]  # 非 []
     assert doc["generated_by"].startswith("backfill_source_json.py sha256=")
+
+
+def test_upgrade_half_upgraded_file_gets_completed(fake_data):
+    """半升级状态（attestation=inferred 但缺 generated_by/evidence）继续补齐，
+    不永久跳过（审查 W-级：幂等判据不能只看 attestation 存在）。"""
+    amos_dir, _ = fake_data
+    (amos_dir / "amos_0004" / "source.json").write_text(
+        json.dumps({"source": "total", "task": "total", "created_by": "x",
+                    "case_id": "amos_0004", "backfill": True,
+                    "backfill_basis": "M3 评估", "backfilled_at": "2026-11-16",
+                    "attestation": "inferred"}, ensure_ascii=False, indent=1),
+        encoding="utf-8",
+    )
+    assert bf._run(dry_run=False) == 0
+    doc = json.loads(
+        (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8")
+    )
+    assert doc["generated_by"].startswith("backfill_source_json.py sha256=")
+    assert doc["evidence"] == "mtime_window"
+    assert doc["evidence_scope"] == "amos_0004"
+    # 补齐后幂等
+    before = (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8")
+    assert bf._run(dry_run=False) == 0
+    assert (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8") == before
+
+
+def test_upgrade_invalid_attestation_file_skipped(fake_data):
+    """非法 attestation 值的已有文件：升级路径跳过（读侧会 raise，不猜）。"""
+    amos_dir, _ = fake_data
+    (amos_dir / "amos_0004" / "source.json").write_text(
+        json.dumps({"source": "total", "task": "total", "backfill": True,
+                    "attestation": "bogus"}, ensure_ascii=False, indent=1),
+        encoding="utf-8",
+    )
+    before = (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8")
+    assert bf._run(dry_run=False) == 0
+    assert (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8") == before
