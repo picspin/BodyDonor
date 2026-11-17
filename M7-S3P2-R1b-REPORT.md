@@ -34,12 +34,12 @@
 
 ### 4. 清查
 
-`grep -rn "1.2.840.10008.5.1.4.1.1.2" src/ scripts/`：生产代码仅剩 `export_seg.py:385` 反查表（verify_seg 模态反查用，允许）。`tests/factories.py`、`tests/test_burned_ocr.py` 里的 `…1.2` 是 fixture 数据（未动）。导出链路无其他"默认 CT"回退——已查，无。
+`grep -rn "1.2.840.10008.5.1.4.1.1.2" src/ scripts/`：生产代码仅剩两处：`export_seg.py:92` 合成源 fallback 表（仅合成源用，允许）与 `:418` 反查表（verify_seg 模态反查用，允许）。`tests/factories.py`、`tests/test_burned_ocr.py` 里的 `…1.2` 是 fixture 数据（未动）。导出链路无其他"默认 CT"回退——已查，无。
 
 ## 测试（实测数字）
 
-- `tests/test_sop_class_uid.py`（新增，27 项）：全部通过
-- `tests/test_export_seg.py`（16 项）+ `tests/test_source_instances.py`（10 项）+ `tests/test_m7_s3f_modality.py`（15 项）
+- `tests/test_sop_class_uid.py`（新增，22 项）：全部通过
+- `tests/test_export_seg.py`（15 项）+ `tests/test_source_instances.py`（10 项）+ `tests/test_m7_s3f_modality.py`（15 项）
 - **62 passed, 0 failed**（`-p no:warnings` 实测）；ruff 全仓 `All checks passed!`
 
 派遣要求覆盖：
