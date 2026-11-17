@@ -47,7 +47,8 @@ DISTILL_DATASET_ID = 501
 DISTILL_DATASET_NAME = f"Dataset{DISTILL_DATASET_ID:03d}_BodyDonorDistill"
 
 # ---------------------------------------------------------------------------
-# 许可门禁（LICENSES-THIRD-PARTY.md §8.1/§8.3；teacher 资格读注册表 research_distill）
+# 许可门禁（LICENSES-THIRD-PARTY.md §8.1/§8.3；teacher 资格读注册表两轴+
+# license_verified，见 ontology.mask_allowed_in_distill_training docstring）
 # ---------------------------------------------------------------------------
 
 # 训练标签允许的来源白名单：TS total 教师 mask + 纯人工修正
@@ -110,8 +111,8 @@ def check_distill_source(
             "空 task 不冒充已知——fail-closed）"
         )
     if source == "total":
-        # R3 ④：teacher 资格走注册表 research_distill 单口径（商用白名单常量
-        # 已删，防线不倒退——无条目/blocked/unverified 即阻断）
+        # R3 ④ + S3P2 ⑤：teacher 资格走注册表（两轴+license_verified，商用白名单
+        # 常量已删，防线不倒退——无条目/未核实即阻断）
         from .ontology import mask_allowed_in_distill_training
 
         return mask_allowed_in_distill_training(
@@ -442,7 +443,7 @@ def prepare_dataset(
     """蒸馏数据集准备主入口：训练池 -> 泄漏重查 -> 逐 case 合并 -> nnU-Net 目录。
 
     - 训练标签只来自 TS total 教师 mask（许可门禁逐 case 强制：check_distill_source
-      来源白名单 + 注册表 research_distill 资格）
+      来源白名单 + 注册表两轴/license_verified 资格）
     - AMOS labelsTr / CT-Lite masks/ 绝不读入训练标签
     - 输出 nnUNet_raw/Dataset501_BodyDonorDistill：imagesTr/ labelsTr/
       dataset.json + manifest.json（逐 case 来源清单，ModelVersion 审计用）
