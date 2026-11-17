@@ -456,17 +456,22 @@ def rows_cols(items: list[tuple[Path, Any]]) -> tuple[int, int]:
 
 
 def extract_source_instances(items: list[tuple[Path, Any]], rows: int, cols: int) -> dict[str, Any]:
-    """从 DICOM 头提取源实例信息（M2-5(a)）：逐层 SOP UID + 几何三要素。
+    """从 DICOM 头提取源实例信息（M2-5(a)）：逐层 SOP UID + SOP Class + 几何三要素。
 
-    只取头字段（SOP UID / IOP / IPP / PixelSpacing / SliceThickness），不取像素
-    （像素不进 AgentContext / 不持久化两份）。按 DICOM 帧序惯例沿法向**反向**
-    排布（帧 0 = 法向距离最大）——与 export_seg 合成源实例的方向一致。
+    只取头字段（SOP UID / SOP Class UID / IOP / IPP / PixelSpacing /
+    SliceThickness），不取像素（像素不进 AgentContext / 不持久化两份）。按
+    DICOM 帧序惯例沿法向**反向**排布（帧 0 = 法向距离最大）——与 export_seg
+    合成源实例的方向一致。sop_class_uid 为空串表示头缺失（旧持久化 JSON 无
+    此键同理），export_seg 按"无原样 UID"走 fallback/raise 分支（S3P2 ③）。
     """
     import pydicom  # noqa: F401 — 仅为类型提示一致性
 
     entries = []
     for _, ds in items:
         sop_uid = str(getattr(ds, "SOPInstanceUID", "") or "")
+        # S3P2 ③：SOP Class 原样提取——ReferencedSOPClassUID 必须逐字等于源实例
+        # 实际 SOP Class（Modality→SOP Class 是有损投影，MR/PET 各有多档候选）
+        sop_class_uid = str(getattr(ds, "SOPClassUID", "") or "")
         iop = [float(v) for v in (getattr(ds, "ImageOrientationPatient", None) or [])]
         ipp = [float(v) for v in (getattr(ds, "ImagePositionPatient", None) or [])]
         ps = getattr(ds, "PixelSpacing", None) or []
@@ -474,6 +479,7 @@ def extract_source_instances(items: list[tuple[Path, Any]], rows: int, cols: int
         entries.append(
             {
                 "sop_instance_uid": sop_uid,
+                "sop_class_uid": sop_class_uid,
                 "image_orientation_patient": iop,
                 "image_position_patient": ipp,
                 "pixel_spacing": [float(v) for v in ps],

@@ -265,7 +265,10 @@ class TestXraySourcePreserved:
     def test_export_and_verify_raises_on_modality_mismatch(self, tmp_path, monkeypatch) -> None:  # noqa: ANN001
         """S3P1 审查补：export_and_verify 本身因模态不符抛 SegVerifyError——
         monkeypatch export_seg 写出 CT 源的 SEG 而 source.modality 声称 MR，
-        透传核对捕获后 raise（raise 分支直接覆盖，非仅 verify_seg 直调）。"""
+        透传核对捕获后 raise（raise 分支直接覆盖，非仅 verify_seg 直调）。
+
+        S3P2 ③：期望 SOP Class 走同一 helper（合成 MR 源 → MR Storage），
+        与 SEG 引用的 CT Storage 逐字比对先于反查模态核对——报"源 SOP Class"。"""
         src = SourceSeriesInfo(
             series_uid="1.2.826.0.1.3680043.8.498.mr6",
             study_uid="1.2.826.0.1.3680043.8.498.mr6study",
@@ -294,5 +297,6 @@ class TestXraySourcePreserved:
         monkeypatch.setattr(
             "bodydonor.export_seg.export_seg", fake_export_seg, raising=False
         )
-        with pytest.raises(SegVerifyError, match="源影像"):
+        # S3P2 ③：逐字 SOP Class 比对（MR Storage vs CT Storage）先于反查模态
+        with pytest.raises(SegVerifyError, match="源 SOP Class"):
             export_and_verify(mask_path, src, tmp_path / "seg_mr6.dcm")

@@ -331,6 +331,9 @@ def source_info_from_persisted(
     src_insts = [
         {
             "sop_instance_uid": inst.get("sop_instance_uid", ""),
+            # S3P2 ③：SOP Class 透传（旧持久化 JSON 无此键为空串，export_seg
+            # 按"无原样 UID"走 fallback/raise 分支，向后兼容不写迁移脚本）
+            "sop_class_uid": inst.get("sop_class_uid", ""),
             "image_position_patient": inst.get("image_position_patient") or [0.0, 0.0, 0.0],
         }
         for inst in instances
