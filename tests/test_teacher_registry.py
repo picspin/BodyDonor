@@ -4,7 +4,7 @@
   feature 教师缺 feature_schema 拒绝登记。
 - 就绪三分（M7-S3P2 ⑥）：ready 布尔退役，拆 weights_present / class_map_present /
   share_alike——推导规则边界测试 + check_task 拒绝原因写明挡项（缺权重 /
-  缺 class_map / SA 义务）+ 36 条目逐条三字段有值。
+  缺 class_map；SA 是放行义务注记不作挡项，R4a-fix）+ 36 条目逐条三字段有值。
 - check_task 读注册表：total 套到 MR 被路由拒绝并带原因；未就绪任务拒绝；
   blocked 仍一票否决；白名单回退已退役（M7-S3F ②）——注册表无条目即拒绝。
 - 回退语义：planned/actual、跳过写原因、结构未覆盖 vs 输出缺失区分。
@@ -462,7 +462,8 @@ def test_class_map_present_derivation_boundaries() -> None:
 
 def test_check_task_rejection_reason_names_blocked_item() -> None:
     """⑥ 失败测试先行：check_task 拒绝原因三分——原因字符串写明挡项
-    （缺权重 / 缺 class_map / SA 义务），不让一个 "not ready" 承包。"""
+    （缺权重 / 缺 class_map），不让一个 "not ready" 承包。R4a-fix：SA 不再
+    是挡项（忠实拆分零政策变化——SA 是放行义务注记，不挡路由）。"""
     reg = LicenseRegistry(_settings())
     # 缺权重：total_mr（weight_integrity not_recorded）
     ok, msg = reg.check_task("body_mr", modality="MR")
@@ -481,15 +482,18 @@ def test_check_task_rejection_reason_names_blocked_item() -> None:
         ok, msg = LicenseRegistry(_settings()).check_task("t_cm", modality="CT")
         assert not ok
         assert "缺 class_map" in msg, msg
-        # SA 义务：三字段齐但 share_alike=True（nninteractive 形态）
+        # R4a-fix 失败测试先行：SA 条目（三字段齐但 share_alike=True，
+        # nninteractive 形态）放行——SA 是义务不是挡项；放行原因含义务注记
         e2 = dict(e)
         e2["task"] = "t_sa"
         e2["class_map_ref"] = "prompt-targets/v1"
         e2["share_alike"] = True
+        e2["output_license_inherits"] = ["CC-BY-NC-SA 4.0（ShareAlike）"]
         lr.TEACHER_REGISTRY = [e2]
         ok, msg = LicenseRegistry(_settings()).check_task("t_sa", modality="CT")
-        assert not ok
-        assert "SA 义务" in msg, msg
+        assert ok, msg
+        assert "SA" in msg, msg
+        assert "ShareAlike" in msg, msg
     finally:
         lr.TEACHER_REGISTRY = saved
 
@@ -497,7 +501,8 @@ def test_check_task_rejection_reason_names_blocked_item() -> None:
 def test_check_task_rejection_reason_combinations_all_named() -> None:
     """R4a 审查 W1 失败测试先行：组合挡项时原因须逐项报全——三元表达式
     优先级问题（`a if x else "" + b if y else ""` 解析为嵌套 else 分支）
-    曾使缺权重吞掉后续挡项；参数化 7 组合逐一断言。"""
+    曾使缺权重吞掉后续挡项；参数化 7 组合逐一断言。R4a-fix：SA 不挡路由
+    （忠实拆分零政策变化）——sa=True 只进放行义务注记，不进拒绝原因。"""
     from bodydonor import license_registry as lr
 
     def _entry(task: str, wp: bool, cp: bool, sa: bool) -> dict:
@@ -513,15 +518,14 @@ def test_check_task_rejection_reason_combinations_all_named() -> None:
         e["output_license_inherits"] = ["CC-BY-NC-SA 4.0"] if sa else []
         return e
 
-    # (wp, cp, sa) -> 期望挡项（全 True 时只报 SA；放行组合不在本测试）
+    # (wp, cp, sa) -> 期望挡项（SA 不在其中：R4a-fix 后它只作放行义务注记）
     cases = [
-        ((False, False, True), ["缺权重", "缺 class_map", "SA 义务"]),
-        ((False, True, True), ["缺权重", "SA 义务"]),
-        ((True, False, True), ["缺 class_map", "SA 义务"]),
+        ((False, False, True), ["缺权重", "缺 class_map"]),
+        ((False, True, True), ["缺权重"]),
+        ((True, False, True), ["缺 class_map"]),
         ((False, False, False), ["缺权重", "缺 class_map"]),
         ((True, False, False), ["缺 class_map"]),
         ((False, True, False), ["缺权重"]),
-        ((True, True, True), ["SA 义务"]),
     ]
     saved = lr.TEACHER_REGISTRY
     try:
@@ -532,6 +536,11 @@ def test_check_task_rejection_reason_combinations_all_named() -> None:
             assert not ok, f"({wp},{cp},{sa}) 应被拒"
             for item in expected:
                 assert item in msg, f"({wp},{cp},{sa}) 原因缺 {item}：{msg}"
+        # 全 True 组合放行（SA 是义务注记不作挡项，R4a-fix）
+        lr.TEACHER_REGISTRY = [_entry("t_combo", True, True, True)]
+        ok, msg = LicenseRegistry(_settings()).check_task("t_combo", modality="CT")
+        assert ok, msg
+        assert "SA" in msg, msg
     finally:
         lr.TEACHER_REGISTRY = saved
 
