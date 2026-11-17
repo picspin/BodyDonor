@@ -418,3 +418,35 @@ M1 下载登记时在引用文献里完成署名义务。
 - 上游改许可时本结论失效，须重新核实并更新本文件。
 - M4 训练数据流自本节落盘起解锁，仅限商用路径输入；研究用混合输入另立
   训练集并标注仅科研。
+
+---
+
+## 9. 许可两轴与准入显式化（M7-S3P2 ⑤，2026-11-18 用户确认法务事实）
+
+> §7 汇总决策表之后、软件准入判定（`src/bodydonor/license_registry.py`
+> TEACHER_REGISTRY 两轴字段 + `src/bodydonor/ontology.py`
+> mask_allowed_in_distill_training）的许可事实基线。本节不是法律意见。
+
+**法务事实（用户 2026-11-18 给出）**：
+
+1. research（研究用途）只化解 NC 条款，不化解 ShareAlike。
+2. nnInteractive（CC BY-NC-SA 4.0）蒸馏出的学生权重是衍生作品，须以
+   BY-NC-SA 分发。
+3. SynthSeg（FreeSurfer SLA v1.0）蒸馏出的学生权重同理是衍生作品，须以
+   BY-NC-SA 分发；若 repo 出站许可为不带 SA 的纯 NC，这些权重必须隔离为
+   独立制品并单列许可。
+4. 软件内不另建合规门禁，依据只留文档（本文件与注册表 restriction_basis）。
+
+**注册表字段语义（M7-S3P2 ⑤ 迁移）**：
+
+- `attribution_required`（恒 True）：署名义务——research 不化解署名。
+- `share_alike`：SA 义务——仅 nnInteractive 为 True（CC BY-NC-SA 4.0
+  ShareAlike 传染，§2.2）；SynthSeg 的 FreeSurfer SLA 不是 ShareAlike 许可
+  （标出请用户复核），Moose 权重 CC BY 4.0 亦非 SA。
+- `license_verified`：准入证据强度（双证据 true / 单一来源或出入 false）——
+  两轴描述义务不能单独编码准入（7 个 unverified 与 25 个 allowed 同为
+  Apache-2.0，两轴值相同），准入判定只读本字段：
+  未核实 → 阻断待核实；已核实且研究可用 → 放行，SA 派生物按
+  output_license_inherits 保留条款。
+- `output_license_inherits`：派生物保留条款登记（share_alike=True 条目
+  强制非空——validate_entry 拒绝静默丢条款）。
