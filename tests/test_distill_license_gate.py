@@ -199,34 +199,34 @@ def test_known_restrictions_substring_no_longer_decides():
         entries[0]["known_restrictions"] = orig
 
 
-def test_research_distill_blocked_and_unverified_block():
-    """research_distill=blocked/unverified 阻断（临时改内存条目验证，不动注册表）。"""
+def test_license_unverified_blocks():
+    """M7-S3P2 ⑤：license_verified=False 阻断（临时改内存条目验证，不动注册表）。
+    准入规则显式化后 blocked/unverified 三值枚举退役——未核实语义由
+    license_verified=False 承载，拒绝 reason 保留 unverified 语义词。"""
     from bodydonor import license_registry as lr
     from bodydonor.ontology import mask_allowed_in_distill_training
 
     entries = [e for e in lr.TEACHER_REGISTRY if e["task"] == "brain_mri_qc"]
-    orig = entries[0]["research_distill"]
+    orig = entries[0]["license_verified"]
     try:
-        entries[0]["research_distill"] = "blocked"
+        entries[0]["license_verified"] = False
         ok, reason = mask_allowed_in_distill_training(
             {"experimental": False, "source": "teacher", "task": "brain_mri_qc"}
         )
         assert not ok
-        assert "blocked" in reason
-        entries[0]["research_distill"] = "unverified"
-        ok2, reason2 = mask_allowed_in_distill_training(
-            {"experimental": False, "source": "teacher", "task": "brain_mri_qc"}
-        )
-        assert not ok2
-        assert "unverified" in reason2
+        assert "unverified" in reason
+        assert "license_verified" in reason
     finally:
-        entries[0]["research_distill"] = orig
+        entries[0]["license_verified"] = orig
 
 
 def test_registry_36_entries_new_fields_complete():
-    """S3 收口轮 ④：全部条目新三字段齐全且枚举合法（逐项计数断言）。"""
+    """M7-S3P2 ⑤：全部条目新三 bool 字段齐全且取值合法（逐项计数断言）。
+    转换表实测：36 = 25 allowed(Apache-2.0) + nninteractive share_alike=true +
+    4 conditional(license_verified=true) + 7 unverified(license_verified=false)。"""
     from bodydonor.license_registry import (
-        RESEARCH_DISTILL_VALUES,
+        ATTRIBUTION_REQUIRED_VALUES,
+        SHARE_ALIKE_VALUES,
         TEACHER_REGISTRY,
         validate_entry,
     )
@@ -234,8 +234,14 @@ def test_registry_36_entries_new_fields_complete():
     n = len(TEACHER_REGISTRY)
     assert n == 36, f"条目数应为 36：{n}"
     for i, e in enumerate(TEACHER_REGISTRY):
-        assert e["research_distill"] in RESEARCH_DISTILL_VALUES, (
-            f"条目 {i} {e['teacher_id']}/{e['task']} research_distill 非法"
+        assert e["attribution_required"] in ATTRIBUTION_REQUIRED_VALUES, (
+            f"条目 {i} {e['teacher_id']}/{e['task']} attribution_required 非法"
+        )
+        assert e["share_alike"] in SHARE_ALIKE_VALUES, (
+            f"条目 {i} {e['teacher_id']}/{e['task']} share_alike 非法"
+        )
+        assert isinstance(e["license_verified"], bool), (
+            f"条目 {i} {e['teacher_id']}/{e['task']} license_verified 非 bool"
         )
         assert isinstance(e["restriction_basis"], str) and e["restriction_basis"].strip(), (
             f"条目 {i} {e['teacher_id']}/{e['task']} 缺 restriction_basis"
@@ -243,29 +249,40 @@ def test_registry_36_entries_new_fields_complete():
         assert isinstance(e["output_license_inherits"], list), (
             f"条目 {i} {e['teacher_id']}/{e['task']} output_license_inherits 非列表"
         )
-    # 计数：全部条目三字段齐全
-    n_rd = sum(1 for e in TEACHER_REGISTRY if e["research_distill"] in RESEARCH_DISTILL_VALUES)
-    n_rb = sum(1 for e in TEACHER_REGISTRY if e["restriction_basis"].strip())
-    n_ol = sum(1 for e in TEACHER_REGISTRY if isinstance(e["output_license_inherits"], list))
-    assert (n_rd, n_rb, n_ol) == (36, 36, 36)
+    # 计数（转换表）：nninteractive 恒 share_alike=True；未核实恒 7 项
+    n_sa = sum(1 for e in TEACHER_REGISTRY if e["share_alike"])
+    n_unverified = sum(1 for e in TEACHER_REGISTRY if not e["license_verified"])
+    assert n_sa == 1, f"share_alike=True 应仅 nninteractive 1 项：{n_sa}"
+    assert n_unverified == 7, f"license_verified=False 应 7 项：{n_unverified}"
     validate_entry(TEACHER_REGISTRY[0])
 
 
 def test_validate_entry_rejects_bad_new_fields():
-    """validate_entry 跟进新字段：缺失/非法枚举/空 basis/非列表即拒绝。"""
+    """validate_entry 跟进两轴字段：缺失/非法取值/空 basis/非列表即拒绝。"""
     from copy import deepcopy
 
     from bodydonor.license_registry import TEACHER_REGISTRY, validate_entry
 
     base = deepcopy(TEACHER_REGISTRY[0])
-    for field in ("research_distill", "restriction_basis", "output_license_inherits"):
+    for field in (
+        "attribution_required", "share_alike", "license_verified",
+        "restriction_basis", "output_license_inherits",
+    ):
         e = deepcopy(base)
         del e[field]
         with pytest.raises(ValueError, match="缺字段"):
             validate_entry(e)
     e = deepcopy(base)
-    e["research_distill"] = "maybe"
-    with pytest.raises(ValueError, match="research_distill 非法"):
+    e["attribution_required"] = False
+    with pytest.raises(ValueError, match="attribution_required 非法"):
+        validate_entry(e)
+    e = deepcopy(base)
+    e["share_alike"] = "no"
+    with pytest.raises(ValueError, match="share_alike 非法"):
+        validate_entry(e)
+    e = deepcopy(base)
+    e["license_verified"] = "yes"
+    with pytest.raises(ValueError, match="license_verified 非法"):
         validate_entry(e)
     e = deepcopy(base)
     e["restriction_basis"] = "  "
@@ -277,19 +294,19 @@ def test_validate_entry_rejects_bad_new_fields():
         validate_entry(e)
 
 
-def test_validate_entry_conditional_requires_inherits():
-    """S3R4 M-1：research_distill=conditional 时 output_license_inherits 必须
-    非空（空列表即 raise——ontology 判定层 conditional 空 inherits 落 "ok"，
-    条款静默丢弃，入口须拒绝登记）。"""
+def test_validate_entry_share_alike_requires_inherits():
+    """M7-S3P2 ⑤（承接 S3R4 M-1）：share_alike=True 时 output_license_inherits
+    必须非空（空列表即 raise——派生物按继承字段保留 SA 条款，静默丢弃即
+    入口拒绝登记）。"""
     from copy import deepcopy
 
     from bodydonor.license_registry import TEACHER_REGISTRY, validate_entry
 
-    base = deepcopy(TEACHER_REGISTRY[7])  # nninteractive：conditional 条目
-    assert base["research_distill"] == "conditional"
+    base = deepcopy(TEACHER_REGISTRY[7])  # nninteractive：share_alike=True 条目
+    assert base["share_alike"] is True
     e = deepcopy(base)
     e["output_license_inherits"] = []
-    with pytest.raises(ValueError, match="conditional"):
+    with pytest.raises(ValueError, match="share_alike"):
         validate_entry(e)
 
 
