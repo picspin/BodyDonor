@@ -13,6 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from bodydonor.holdout import HoldoutEntry
+from bodydonor.segmentation import resolve_modality
+
 EVAL_SCRIPT = Path(__file__).resolve().parents[1] / "eval" / "evaluate_holdout.py"
 
 
@@ -107,9 +110,9 @@ def test_prostate_spotlight_absent(eh):
     assert eh.prostate_spotlight({"liver": 0.9}, {"liver": 30}, {}, []) is None
 
 
-def test_ts_teacher_inference_passes_modality_ct(eh, monkeypatch, tmp_path):
-    """S3P1 ①：run_total 调用点显式传 modality="CT"——缺省退化为仅 task
-    门控，对 MR 序列可能放行 CT-only 任务（hold-out 是 CT 数据）。
+def test_ts_teacher_inference_passes_modality(eh, monkeypatch, tmp_path):
+    """S3P2 ②：run_total 调用点 modality 由 resolve_modality 按条目解析
+    （HoldoutEntry.source 走数据集对照表，fail-closed 不默认 CT）。
     """
     captured = {}
 
@@ -131,7 +134,9 @@ def test_ts_teacher_inference_passes_modality_ct(eh, monkeypatch, tmp_path):
         "bodydonor.segmentation.run_total", fake_run_total, raising=False
     )
     monkeypatch.setattr("bodydonor.gpu_lock.acquire", fake_acquire, raising=False)
-    out, peak = eh.ts_teacher_inference(tmp_path / "img.nii.gz", tmp_path / "out")
+    entry = HoldoutEntry(case_id="s0045", source="ts_public")
+    out, peak = eh.ts_teacher_inference(tmp_path / "img.nii.gz", tmp_path / "out",
+                                        modality=resolve_modality(entry))
     assert out == tmp_path / "out"
     assert peak is None
     assert captured.get("modality") == "CT"
