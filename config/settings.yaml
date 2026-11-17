@@ -34,7 +34,7 @@ extract_limits:
 
 # 教师任务清单（仅展示/历史记录；路由判定唯一来源 = 许可注册表，
 # license_registry.check_task；详见 LICENSES-THIRD-PARTY.md §6）
-# research: M0–M4 科研期可跑；commercial_distill: 商用蒸馏唯一安全教师
+# research: M0–M4 科研期可跑；蒸馏资格读注册表 research_distill（唯一口径）
 teacher:
   engine: totalsegmentator
   allowed_tasks:
@@ -69,12 +69,6 @@ teacher:
     - vertebrae_pp
     - vertebrae_pp_refined
     - vertebrae_body
-  # 商用蒸馏只允许 total（LICENSES-THIRD-PARTY.md §7：唯一 "Openly available for any usage" 的教师 mask 来源）
-  commercial_distill_tasks:
-    - total
-  # 禁用：brain_aneurysm —— CC BY-NC 4.0 且无商业授权渠道，连付费路径都不存在，不得出现在任何白名单
-  blocked_tasks:
-    - brain_aneurysm
 
 # 交互式修正工具（不走任务白名单，约束见 LICENSES-THIRD-PARTY.md §2.2）
 nninteractive:
