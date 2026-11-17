@@ -8,7 +8,7 @@
 S3P 的回填脚本没有"补全证据"，是把 evidence 缺失替换为脚本自身的推断断言，
 `source=total` 从此看起来像实测事实。
 
-## 提交列表（8 个，实测）
+## 提交列表（8 个代码提交 + 1 报告，实测）
 
 | 提交 | 内容 |
 |------|------|
@@ -19,7 +19,7 @@ S3P 的回填脚本没有"补全证据"，是把 evidence 缺失替换为脚本�
 | `73c2cf3` | 修复 W：ct_lite 库级文件就地补字段时 evidence_scope 枚举文件内 cases（非空列表） |
 | `e2bed4d` | 审查 W1——attestation 非枚举值 raise，不静默放行 |
 | `0a5f050` | 审查 W2——半升级文件（attestation 有但证明字段不全）继续补齐不永久跳过 |
-| （报告） | M7-S3P2-R2-REPORT.md（本文件，不进 git 或最后提交） |
+| `94ffc98` | M7-S3P2-R2-REPORT.md（本文件） |
 
 ## Diffstat（实测）
 
