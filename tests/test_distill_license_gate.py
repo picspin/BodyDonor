@@ -1,7 +1,6 @@
 """M4 蒸馏许可门禁单测（LICENSES-THIRD-PARTY.md §8.3 约束 1）。
 
 - 拒绝 nnInteractive 修正产物（CC BY-NC-SA 4.0 ShareAlike 传染）
-- 拒绝 licensed 任务教师 mask（推定传染）
 - 拒绝 SegVol 逃生通道产物（权重许可待核实）
 - 接受 total 教师 mask + 纯人工修正
 - 训练池以真实训练 case 列表重查泄漏（proposal §8：M3-REPORT 遗留落地）
@@ -13,12 +12,10 @@ import pytest
 
 from bodydonor.distill_data import (
     ALLOWED_TRAIN_SOURCES,
-    COMMERCIAL_DISTILL_TASKS,
     DISTILL_CLASSES,
     DistillDataError,
     build_train_pool,
     check_distill_source,
-    check_teacher_task_commercial,
     mask_allowed_in_distill_training_strict,
     missing_distill_classes,
     read_teacher_provenance,
@@ -55,13 +52,6 @@ def test_reject_unknown_source():
     assert not ok
 
 
-def test_reject_licensed_teacher_task():
-    """licensed 任务教师 mask：不在商用蒸馏白名单，拒绝（LICENSES §8.1）。"""
-    ok, reason = check_distill_source("total", teacher_task="tissue_types")
-    assert not ok
-    assert "tissue_types" in reason
-
-
 def test_reject_experimental_flag():
     """experimental 标记产物：逃生通道隔离，拒绝。"""
     ok, reason = check_distill_source("total", teacher_task="total", experimental=True)
@@ -82,23 +72,15 @@ def test_total_without_task_rejected_fail_closed():
     ok, reason = check_distill_source("total", teacher_task="", experimental=False)
     assert not ok
     assert "task" in reason
-    # 放行语义不变：commercial 仍只放行 total（带 task 时）
+    # 放行语义不变：total（带 task 时）放行
     ok2, _ = check_distill_source("total", teacher_task="total", experimental=False)
     assert ok2
-    # 未知 task 仍拒绝（原语义保留）
-    ok3, _ = check_distill_source("total", teacher_task="coronary_arteries")
-    assert not ok3
 
 
 def test_accept_pure_manual_correction():
     """纯人工修正（无第三方权重参与）：接受（LICENSES §8.2 推理 3）。"""
     ok, reason = check_distill_source("manual-correction")
     assert ok, reason
-
-
-def test_commercial_distill_tasks_only_total():
-    """商用蒸馏白名单 = 仅 total（settings.teacher.commercial_distill_tasks 同源）。"""
-    assert frozenset({"total"}) == COMMERCIAL_DISTILL_TASKS
 
 
 def test_allowed_sources_constant():
@@ -135,7 +117,9 @@ def test_strict_gate_accepts_manual_correction_meta():
     assert ok, reason
 
 
-def test_strict_gate_rejects_licensed_meta():
+def test_strict_gate_rejects_unregistered_teacher_meta():
+    """R3 ④后语义：无注册表条目任务阻断（原"商用白名单推定传染"防线由注册表
+    research_distill 单口径承担——coronary_arteries 无条目即拒绝）。"""
     meta = {"source": "total", "task": "coronary_arteries"}
     ok, reason = mask_allowed_in_distill_training_strict(meta)
     assert not ok
@@ -143,18 +127,20 @@ def test_strict_gate_rejects_licensed_meta():
 
 
 # ---------------------------------------------------------------------------
-# 研究蒸馏路径（M7-S3F ③：资格读注册表 research_distill，非 commercial_distill_tasks）
+# 研究蒸馏路径（资格读注册表 research_distill）
 # ---------------------------------------------------------------------------
 
-def test_research_profile_allows_non_total_registry_teacher():
-    """research_distill: allowed 的非 total 教师（liver_lesions_mr 等同组）可进研究蒸馏。"""
-    ok, reason = check_distill_source(
-        "total", teacher_task="total_mr", profile="research"
+def test_research_path_allows_registry_teacher_total_mr():
+    """research_distill: allowed 的教师（total_mr 等同组）可进研究蒸馏。"""
+    from bodydonor.ontology import mask_allowed_in_distill_training
+
+    ok, reason = mask_allowed_in_distill_training(
+        {"experimental": False, "source": "teacher", "task": "total_mr"}
     )
     assert ok, reason
 
 
-def test_research_profile_restricted_teacher_derives_sa():
+def test_research_path_restricted_teacher_derives_sa():
     """S3R4 W-6 修正后语义：nnInteractive 修正产物不进蒸馏（M6 项目政策边界）——
     teacher 来源的 interactive_correction 任务在 ontology 判定层也拒绝
     （restriction_basis 写"修正产物不进蒸馏"，边界须一致；注册表字段值不改）。"""
@@ -167,7 +153,7 @@ def test_research_profile_restricted_teacher_derives_sa():
     assert "修正产物不进蒸馏" in reason
 
 
-def test_research_profile_restricted_non_nninteractive_no_sa_label():
+def test_research_path_restricted_non_nninteractive_no_sa_label():
     """S3 收口轮 ④：synthseg/moose 判定读 research_distill=conditional（不因
     商业政策模糊自动禁止本地科研蒸馏），放行且按 output_license_inherits 写
     条款；known_restrictions 里的"蒸馏阻断"文字不再参与判定。flexray 条款
@@ -307,84 +293,37 @@ def test_validate_entry_conditional_requires_inherits():
         validate_entry(e)
 
 
-def test_research_profile_empty_task_blocked():
+def test_research_path_empty_task_blocked():
     """B3：研究路径 fail-closed——teacher_task 为空即阻断带原因（不跳过注册表检查）。"""
-    ok, reason = check_distill_source("total", teacher_task="", profile="research")
+    from bodydonor.ontology import mask_allowed_in_distill_training
+
+    ok, reason = mask_allowed_in_distill_training(
+        {"experimental": False, "source": "teacher", "task": ""}
+    )
     assert not ok
     assert "无注册表条目" in reason
 
 
-def test_research_profile_blocks_unverified_teacher():
+def test_research_path_blocks_unverified_teacher():
     """unverified 教师（vertebrae_body）研究蒸馏阻断待核实。"""
+    from bodydonor.ontology import mask_allowed_in_distill_training
 
-
-def test_research_profile_blocks_missing_registry_entry():
-    """注册表无条目任务研究蒸馏阻断（与第 2 轮"无条目即拒绝"一致）。"""
-    ok, reason = check_distill_source(
-        "total", teacher_task="no_such_task", profile="research"
+    ok, reason = mask_allowed_in_distill_training(
+        {"experimental": False, "source": "teacher", "task": "vertebrae_body"}
     )
-    assert not ok
-    assert "无注册表条目" in reason
-
-
-def test_research_profile_ignores_commercial_distill_tasks(monkeypatch):
-    """commercial_distill_tasks 内容改动不影响研究路径（脱钩证明）。"""
-    import bodydonor.distill_data as dd
-
-    monkeypatch.setattr(dd, "COMMERCIAL_DISTILL_TASKS", frozenset({"coronary_arteries"}))
-    # coronary_arteries 无注册表条目：若研究路径查商用白名单会放行，实际必须阻断
-    ok, reason = check_distill_source(
-        "total", teacher_task="coronary_arteries", profile="research"
-    )
-    assert not ok
-    assert "无注册表条目" in reason
-    # 反向：total 在商用白名单之外也不影响研究路径放行
-    monkeypatch.setattr(dd, "COMMERCIAL_DISTILL_TASKS", frozenset())
-    ok2, reason2 = check_distill_source(
-        "total", teacher_task="total", profile="research"
-    )
-    assert ok2, reason2
-
-
-def test_commercial_profile_regression_only_total():
-    """回归对照：commercial profile 行为与 HEAD 一致（teacher 任务只放行 total）。"""
-    ok, _ = check_distill_source("total", teacher_task="total")
-    assert ok
-    ok2, reason2 = check_distill_source("total", teacher_task="coronary_arteries")
-    assert not ok2
-    assert "商用蒸馏白名单" in reason2
-
-
-def test_strict_gate_research_profile_passthrough():
-    """strict 版 profile 透传：research 路径 unverified 任务阻断。"""
-    meta = {"source": "total", "task": "vertebrae_body", "experimental": False}
-    ok, reason = mask_allowed_in_distill_training_strict(meta, profile="research")
     assert not ok
     assert "unverified" in reason
 
 
-def test_invalid_profile_raises():
-    """W9d：非法 profile raise ValueError（不静默落商用分支放行）。"""
-    with pytest.raises(ValueError, match="profile 非法"):
-        check_distill_source("total", teacher_task="total", profile="Research")
-    with pytest.raises(ValueError, match="profile 非法"):
-        check_distill_source("total", teacher_task="total", profile="")
-    meta = {"source": "total", "task": "total", "experimental": False}
-    with pytest.raises(ValueError, match="profile 非法"):
-        mask_allowed_in_distill_training_strict(meta, profile="Research")
+def test_research_path_blocks_missing_registry_entry():
+    """注册表无条目任务研究蒸馏阻断（与第 2 轮"无条目即拒绝"一致）。"""
+    from bodydonor.ontology import mask_allowed_in_distill_training
 
-
-# ---------------------------------------------------------------------------
-# 教师任务白名单（check_teacher_task_commercial，纵深防线）
-# ---------------------------------------------------------------------------
-
-def test_teacher_task_commercial_raises_on_licensed():
-    with pytest.raises(DistillDataError, match="tissue_types"):
-        check_teacher_task_commercial("tissue_types")
-
-
-def test_teacher_task_commercial_accepts_total():
-    check_teacher_task_commercial("total")  # 不 raise
+    ok, reason = mask_allowed_in_distill_training(
+        {"experimental": False, "source": "teacher", "task": "no_such_task"}
+    )
+    assert not ok
+    assert "无注册表条目" in reason
 
 
 # ---------------------------------------------------------------------------
@@ -552,17 +491,19 @@ def test_provenance_reads_declared_nninteractive(tmp_path):
     assert "nnInteractive" in reason
 
 
-def test_provenance_reads_declared_licensed_task(tmp_path):
-    """source.json 声明 licensed 任务 -> 实测读出（门禁据此拒绝）。"""
+def test_provenance_reads_declared_unregistered_task(tmp_path):
+    """source.json 声明无注册表条目任务 -> 实测读出（门禁据此拒绝——R3 ④后
+    资格走注册表 research_distill 单口径，无条目即阻断）。"""
+    from bodydonor.ontology import mask_allowed_in_distill_training
+
     case_dir = tmp_path / "amos_0025"
     (case_dir / "ts_out").mkdir(parents=True)
     (case_dir / "source.json").write_text(
         '{"source": "total", "task": "tissue_types"}', encoding="utf-8"
     )
     prov = read_teacher_provenance(case_dir / "ts_out")
-    ok, reason = check_distill_source(
-        str(prov.get("source")), teacher_task=str(prov.get("task")),
-        experimental=bool(prov.get("experimental", False)),
+    ok, reason = mask_allowed_in_distill_training(
+        {"source": "teacher", "task": str(prov.get("task")), "experimental": False}
     )
     assert not ok
     assert "tissue_types" in reason
@@ -715,9 +656,9 @@ def test_prepare_dataset_manifest_records_n_classes_found(tmp_path, monkeypatch)
     assert by_id["amos_9101"]["dropped_classes"] == [f"ts_extra_{i:03d}" for i in range(102)]
 
 
-def test_prepare_dataset_profile_passthrough(tmp_path, monkeypatch):
-    """W10：prepare_dataset(profile=...) 透传 check_distill_source——research 口径
-    unverified 来源清单即拒绝；非法 profile raise。dry_run 不落盘。"""
+def test_prepare_dataset_rejects_unverified_teacher(tmp_path, monkeypatch):
+    """W10：prepare_dataset 门禁逐 case 强制——unverified 来源清单即拒绝
+    （写第一个文件之前 raise）。dry_run 不落盘。"""
     import pytest as _pytest
 
     from bodydonor import distill_data as dd
@@ -725,7 +666,7 @@ def test_prepare_dataset_profile_passthrough(tmp_path, monkeypatch):
     full_classes = sorted(DISTILL_CLASSES.values())
     _, ts_full = _make_case_fixture(tmp_path, "amos_9111", full_classes)
     img_full = tmp_path / "amos_9111" / "imagesTr" / "amos_9111.nii.gz"
-    # 来源清单声明 unverified 任务：research 口径必须拒绝（透传证明）
+    # 来源清单声明 unverified 任务：门禁必须拒绝（实测来源，非硬编码）
     (ts_full.parent / "source.json").write_text(
         '{"source": "total", "task": "vertebrae_body"}', encoding="utf-8"
     )
@@ -743,21 +684,15 @@ def test_prepare_dataset_profile_passthrough(tmp_path, monkeypatch):
     monkeypatch.setattr(dd, "build_train_pool", lambda holdout_path=None: cases)
 
     out_root = tmp_path / "nnUNet_raw"
-    # research 口径：unverified 任务在写第一个文件之前拒绝
+    # unverified 任务在写第一个文件之前拒绝
     with _pytest.raises(dd.DistillDataError, match="unverified"):
-        dd.prepare_dataset(out_root=out_root, dry_run=True, profile="research")
+        dd.prepare_dataset(out_root=out_root, dry_run=True)
     assert not (out_root / dd.DISTILL_DATASET_NAME).exists()
-    # commercial 口径：同一来源清单被商用白名单拒绝（口径差异可见）
-    with _pytest.raises(dd.DistillDataError, match="商用蒸馏白名单"):
-        dd.prepare_dataset(out_root=out_root, dry_run=True, profile="commercial")
-    # 非法 profile：raise ValueError（W8 入口防护）
-    with _pytest.raises(ValueError, match="profile 非法"):
-        dd.prepare_dataset(out_root=out_root, dry_run=True, profile="Research")
     # 干跑成功路径（total 任务）：manifest 仍不落盘（dry_run）
     (ts_full.parent / "source.json").write_text(
         '{"source": "total", "task": "total"}', encoding="utf-8"
     )
-    result = dd.prepare_dataset(out_root=out_root, dry_run=True, profile="commercial")
+    result = dd.prepare_dataset(out_root=out_root, dry_run=True)
     assert result["n_cases"] == 1
     assert not (out_root / dd.DISTILL_DATASET_NAME / "manifest.json").exists()
 

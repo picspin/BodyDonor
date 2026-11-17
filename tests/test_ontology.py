@@ -224,8 +224,7 @@ class TestDistillIsolation:
 
     def test_research_distill_blocks_unverified_registry_entry(self) -> None:
         """研究蒸馏注册表 unverified 任务阻断（实测 unverified 拒绝，非"仅 total"——
-        名字随实测语义改：commercial 白名单回归见 test_distill_license_gate.py
-        test_commercial_distill_tasks_only_total）。"""
+        R3 ④：商用白名单常量已删，资格读注册表 research_distill 单口径）。"""
         ok, reason = mask_allowed_in_distill_training(
             {"experimental": False, "source": "teacher", "task": "vertebrae_body"}
         )

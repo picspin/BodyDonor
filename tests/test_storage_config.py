@@ -42,7 +42,7 @@ def test_load_settings_from_project_config() -> None:
     # W1/W14：路由判定唯一来源是许可注册表（license_registry.check_task），
     # 配置项只作展示——blocked_tasks 一票否决在注册表层，不在配置
     assert "total" in s.teacher.allowed_tasks
-    assert "brain_aneurysm" in s.teacher.blocked_tasks
+    assert s.teacher.blocked_tasks == []  # R3 ④：brain_aneurysm 商用理由已删
 
 
 # ---------------------------------------------------------------------------

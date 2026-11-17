@@ -109,6 +109,14 @@ def check_distill_source(
             "source='total' 缺 teacher_task：来源必须实测（补录须写 task；"
             "空 task 不冒充已知——fail-closed）"
         )
+    if source == "total":
+        # R3 ④：teacher 资格走注册表 research_distill 单口径（商用白名单常量
+        # 已删，防线不倒退——无条目/blocked/unverified 即阻断）
+        from .ontology import mask_allowed_in_distill_training
+
+        return mask_allowed_in_distill_training(
+            {"source": "teacher", "task": teacher_task, "experimental": False}
+        )
     return True, "ok"
 
 

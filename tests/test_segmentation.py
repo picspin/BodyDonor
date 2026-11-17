@@ -37,10 +37,16 @@ class TestWhitelist:
         """total 在白名单，放行。"""
         check_worker_task("total", settings)  # 不 raise
 
-    def test_brain_aneurysm_blocked(self, settings: Settings) -> None:
-        """brain_aneurysm 一票否决（CC BY-NC，无商业授权渠道）。"""
+    def test_blocked_task_vetoed_in_memory(self) -> None:
+        """blocked_tasks 机制：一票否决（内存条目——R3 ④删 brain_aneurysm 商用
+        理由后项目 config 的 blocked 列表为空，机制用内存条目验证）。"""
+        from bodydonor.config import TeacherConfig
+
+        blocked_settings = Settings(
+            teacher=TeacherConfig(allowed_tasks=[], blocked_tasks=["registry_blocked_task"])
+        )
         with pytest.raises(SegmentWorkerError, match="BLOCKED"):
-            check_worker_task("brain_aneurysm", settings)
+            check_worker_task("registry_blocked_task", blocked_settings)
 
     def test_not_in_whitelist_rejected(self, settings: Settings) -> None:
         """注册表无条目任务拒绝（M7-S3F ②：白名单回退退役，注册表唯一来源）。"""
@@ -53,9 +59,9 @@ class TestWhitelist:
 
         ok, _ = LicenseRegistry(settings).check_task("total")
         assert ok is True
-        ok, msg = LicenseRegistry(settings).check_task("brain_aneurysm")
+        ok, msg = LicenseRegistry(settings).check_task("coronary_arteries")
         assert ok is False
-        assert "BLOCKED" in msg
+        assert "not in teacher registry" in msg
 
 
 class TestMergeOutput:
@@ -139,16 +145,13 @@ class TestSegmentApi:
         monkeypatch.setattr(
             app_module.settings, "data_dir", tmp_path / "data"
         )
-        # mock segment_series（TS CLI 不进 CI）：白名单语义保留——blocked 任务
+        # mock segment_series（TS CLI 不进 CI）：白名单语义保留——白名单外任务
         # 由 mock 抛 SegmentWorkerError（与真实分发层 check_worker_task 一致）
         def _fake_segment(sid, s, task="total", device="gpu"):  # noqa: ANN001
             if task not in ("total", "total_mr", "body"):
-                # 模拟 license_registry.check_task 的注册表拒绝（BLOCKED/not in）
+                # 模拟 license_registry.check_task 的注册表拒绝（not in registry）
                 raise SegmentWorkerError(
-                    f"任务白名单拒绝：task '{task}' is BLOCKED (license: see "
-                    "LICENSES-THIRD-PARTY.md)"
-                    if task == "brain_aneurysm"
-                    else f"任务白名单拒绝：task '{task}' not in teacher registry"
+                    f"任务白名单拒绝：task '{task}' not in teacher registry"
                 )
             return _FakeResult(sid, task)
 
@@ -164,15 +167,15 @@ class TestSegmentApi:
         assert body["series_id"] == "nifti-abc"
         assert body["task"] == "total"
 
-    def test_segments_blocked_task_422(self) -> None:
-        """blocked 任务 → 422（白名单在分发层，不许绕过）。"""
+    def test_segments_unregistered_task_422(self) -> None:
+        """白名单外任务 → 422（白名单在分发层，不许绕过）。"""
         with TestClient(__import__("bodydonor.app", fromlist=["app"]).app) as c:
             r = c.post(
                 "/segments",
-                params={"series_id": "nifti-abc", "task": "brain_aneurysm"},
+                params={"series_id": "nifti-abc", "task": "coronary_arteries"},
             )
         assert r.status_code == 422
-        assert "BLOCKED" in r.text
+        assert "not in teacher registry" in r.text
 
 
 class _FakeResult:

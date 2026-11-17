@@ -1,7 +1,8 @@
-"""M2-align 3.2：JSON runner 契约测试（任务/结果 JSON + runner 侧白名单纵深 + 隔离）。
+"""M2-align 3.2：JSON runner 契约测试（任务/结果 JSON + 隔离）。
 
 TS 真卡推理不进 CI（proposal §11）：本文件只测契约层（stdin/stdout JSON、
-blocked 拒绝、损坏输入），不跑推理。
+损坏输入），不跑推理。R3 ④删 runner 侧白名单纵深镜像后，白名单判定只在
+主进程 check_worker_task（blocked 一票否决，唯一防线）。
 """
 
 from __future__ import annotations
@@ -39,23 +40,6 @@ def run_runner(task_json: dict) -> subprocess.CompletedProcess:
 
 
 class TestRunnerContract:
-    @pytest.mark.skipif(ts_python() is None, reason="TS venv 不存在")
-    def test_blocked_task_rejected_at_runner(self) -> None:
-        """runner 侧白名单纵深：brain_aneurysm 一票否决（主进程已查过，双保险）。"""
-        proc = run_runner(
-            {
-                "input_nii": "/no/such.nii",
-                "task": "brain_aneurysm",
-                "device": "gpu",
-                "output_dir": "/tmp/x",
-                "job_id": "t-blocked",
-            }
-        )
-        assert proc.returncode != 0
-        out = json.loads(proc.stdout)
-        assert out["status"] == "error"
-        assert "BLOCKED" in out["error"]
-
     @pytest.mark.skipif(ts_python() is None, reason="TS venv 不存在")
     def test_missing_input_clean_error(self) -> None:
         """输入不存在 -> status=error + 干净错误（不 traceback 进 stdout）。"""

@@ -30,7 +30,7 @@ def _reg() -> LicenseRegistry:
         Settings(
             teacher=TeacherConfig(
                 allowed_tasks=["total", "total_mr"],
-                blocked_tasks=["brain_aneurysm"],
+                blocked_tasks=["registry_blocked_task"],
             )
         )
     )

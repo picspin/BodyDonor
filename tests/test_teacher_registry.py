@@ -28,7 +28,7 @@ def _settings(allowed: list[str] | None = None, blocked: list[str] | None = None
     return Settings(
         teacher=TeacherConfig(
             allowed_tasks=allowed if allowed is not None else ["total", "total_mr"],
-            blocked_tasks=blocked or ["brain_aneurysm"],
+            blocked_tasks=blocked or ["registry_blocked_task"],
         )
     )
 
@@ -292,7 +292,9 @@ def test_lung_vessels_not_ready_message_clean() -> None:
 
 
 def test_blocked_task_still_vetoed() -> None:
-    ok, msg = LicenseRegistry(_settings()).check_task("brain_aneurysm")
+    """blocked_tasks 机制：一票否决（内存条目——R3 ④删 brain_aneurysm 商用
+    理由后机制保留，fixture 用无注册条目的占位任务名验证机制）。"""
+    ok, msg = LicenseRegistry(_settings()).check_task("registry_blocked_task")
     assert not ok
     assert "BLOCKED" in msg
 
@@ -314,7 +316,9 @@ def test_whitelist_fallback_retired() -> None:
     assert not ok
     assert "not in teacher registry" in msg
     # blocked/ready 语义不受白名单影响：blocked 一票否决保持
-    ok, msg = LicenseRegistry(_settings(allowed=["brain_aneurysm"])).check_task("brain_aneurysm")
+    ok, msg = LicenseRegistry(_settings(allowed=["registry_blocked_task"])).check_task(
+        "registry_blocked_task"
+    )
     assert not ok
     assert "BLOCKED" in msg
 

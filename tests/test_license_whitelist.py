@@ -1,7 +1,8 @@
 """许可白名单负测试（M0 CI）。
 
 推理 worker 的任务分发层拒绝执行白名单外任务（M7-S3F ② 起注册表唯一来源）：
-- brain_aneurysm：禁用任务（CC BY-NC 4.0 且无商业授权渠道）——一票否决
+- blocked_tasks 机制：一票否决（R3 ④删 brain_aneurysm 商用理由后机制保留，
+  blocked 列表现在为空——机制测试用内存条目验证）
 - heartchambers_highres：licensed 任务，注册表无条目——拒绝
 - 任意未知任务名——拒绝
 放行路径：注册表 ready 条目（代码级静态条目，(task, modality) 门控）；
@@ -22,24 +23,25 @@ def registry() -> LicenseRegistry:
     return LicenseRegistry(load_settings())
 
 
-def test_blocked_task_brain_aneurysm_rejected(registry: LicenseRegistry) -> None:
-    """CC BY-NC 4.0 且无商业授权渠道的任务必须被一票否决，即使有人误加白。"""
-    ok, msg = registry.check_task("brain_aneurysm")
-    assert not ok
-    assert "BLOCKED" in msg
-
-
-def test_blocked_overrides_whitelist() -> None:
-    """即使 blocked 任务被错误写进 allowed_tasks，blocked 仍一票否决。"""
+def test_blocked_task_vetoed_in_memory_entry() -> None:
+    """blocked_tasks 机制：一票否决（内存条目验证——R3 ④删 brain_aneurysm
+    商用理由后项目 config 的 blocked 列表为空，机制本身保留）。"""
     bad = Settings(
         teacher=TeacherConfig(
-            allowed_tasks=["brain_aneurysm"],
-            blocked_tasks=["brain_aneurysm"],
+            allowed_tasks=["some_task"],
+            blocked_tasks=["some_task"],
         )
     )
-    ok, msg = LicenseRegistry(bad).check_task("brain_aneurysm")
+    ok, msg = LicenseRegistry(bad).check_task("some_task")
     assert not ok
     assert "BLOCKED" in msg
+
+
+def test_project_config_blocked_list_empty() -> None:
+    """R3 ④：项目 config/settings.yaml 的 blocked 列表为空（brain_aneurysm
+    商用理由已删，无其他任务被阻断）。"""
+    t = load_settings().teacher
+    assert t.blocked_tasks == []
 
 
 def test_licensed_task_not_whitelisted_by_default(registry: LicenseRegistry) -> None:
@@ -69,13 +71,11 @@ def test_total_task_allowed(registry: LicenseRegistry) -> None:
     assert ok, msg
 
 
-def test_commercial_distill_whitelist_only_total() -> None:
-    """商用蒸馏白名单只允许 total（LICENSES-THIRD-PARTY.md §7）。"""
+def test_commercial_distill_config_retired() -> None:
+    """R3 ④：commercial_distill_tasks 字段已删（TeacherConfig 无此字段）。"""
     t = load_settings().teacher
-    assert t.commercial_distill_tasks == ["total"]
-    assert t.is_commercial_distill_allowed("total")
-    assert not t.is_commercial_distill_allowed("lung_vessels")
-    assert not t.is_commercial_distill_allowed("heartchambers_highres")
+    assert not hasattr(t, "commercial_distill_tasks")
+    assert not hasattr(t, "is_commercial_distill_allowed")
 
 
 def test_bare_settings_registry_ready_task_allowed() -> None:
@@ -110,5 +110,5 @@ def test_settings_yaml_matches_verified_license_facts() -> None:
     # 核查确认需 license 的任务默认不加白
     for task in ("heartchambers_highres", "appendicular_bones", "tissue_types", "face"):
         assert task not in t.allowed_tasks, f"{task} 是 licensed 任务，默认不加白"
-    # 核查确认禁用
-    assert "brain_aneurysm" in t.blocked_tasks
+    # R3 ④：brain_aneurysm 商用理由已删，无任务被 blocked（列表为空）
+    assert t.blocked_tasks == []
