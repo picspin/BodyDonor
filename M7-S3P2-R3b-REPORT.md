@@ -1,6 +1,6 @@
 # M7-S3P2 R3b 轮次报告——⑤ 两条轴替代原三档
 
-2026-11-18。基线 R3a HEAD `a135fbd`，本收口 12 提交 `fb960aa..cc948b2`。
+2026-11-18。基线 R3a HEAD `a135fbd`，本收口 13 提交 `fb960aa..a49eea5`（含本报告提交）。
 只做本项 ⑤；④ 的删除未动。
 
 ## 最重要：两轴不能单独编码准入，须加 license_verified（请用户确认）
@@ -49,6 +49,7 @@
 | 897f2fa | 测试名与 docstring 历史口径叙述同步 |
 | c802870 | 审查修复：两轴 int 校验收紧 + docstring 计数漂移更正 |
 | cc948b2 | 审查 findings 文件 |
+| a49eea5 | R3b 轮次报告（本文件） |
 
 diffstat（实测）：9 files, +331/-120。
 
@@ -62,7 +63,7 @@ diffstat（实测）：9 files, +331/-120。
   （:44-46）；旧 `RESEARCH_DISTILL_VALUES` 删除。
 - 条目按协调方转换表机械改字段：25 Apache-2.0（total/total_mr 组 6、mri_core、
   组二 18）= 署名无 SA；nninteractive = share_alike=True + inherits 含
-  CC-BY-NC-SA 条款；synthseg（SLA 非 ShareAlike，用户 2026-11-18 确认）、
+  CC-BY-NC-SA 条款；synthseg（SLA 非 ShareAlike，协调方派遣暂定、待用户复核）、
   moose（训练数据 NC caveat 不进 SA 轴）、flexray（CC BY-NC 4.0 非 SA）=
   署名无 SA；7 条 license_verified=False（5 单证据 + vertebrae_body 出入 +
   framework 无权重）。每条目 restriction_basis 补两轴取值依据一句。
@@ -86,7 +87,7 @@ diffstat（实测）：9 files, +331/-120。
 
 ### 4. 法务事实（LICENSES-THIRD-PARTY.md §9 + 注册表 docstring）
 
-- 用户 2026-11-18 确认四条：research 只化解 NC 不化解 ShareAlike；
+- 用户 2026-11-17 任务给出四条法务事实：research 只化解 NC 不化解 ShareAlike；
   nnInteractive 与 SynthSeg 蒸馏学生权重须以 BY-NC-SA 分发；repo 出站纯 NC
   则隔离独立制品；软件内不另建合规门禁，依据只留文档。
 
@@ -123,7 +124,7 @@ src 零残留。剩余触点全部列明：
 ## 判定不准请用户定的条目清单
 
 1. **synthseg/brain_mri_qc**：FreeSurfer SLA v1.0 不是 ShareAlike 许可，按
-   用户 2026-11-18 确认填 share_alike=False；蒸馏学生权重仍须以 BY-NC-SA
+   协调方派遣暂定填 share_alike=False（待用户复核）；蒸馏学生权重仍须以 BY-NC-SA
    分发（§9 法务事实 3）。请复核。
 2. **moose/moose_qc**：权重 CC BY 4.0 非 SA，share_alike=False；训练数据含
    NC 部分（AutoPET 溯源未决）是独立 caveat，不进 SA 轴。请复核。
