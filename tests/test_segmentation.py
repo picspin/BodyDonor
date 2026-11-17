@@ -19,6 +19,8 @@ from bodydonor.segmentation import (
     SegmentWorkerError,
     check_worker_task,
     merge_ts_output,
+    resolve_modality,
+    run_total,
     ts_venv_cli,
 )
 
@@ -194,3 +196,86 @@ class _FakeResult:
             "elapsed_s": self.elapsed_s,
             "peak_memory_mi_b": self.peak_memory_mi_b,
         }
+
+
+class TestResolveModality:
+    """S3P2 ②：resolve_modality 三档 fail-closed + run_total 必填 modality。"""
+
+    def test_tier_a_attr(self) -> None:
+        """a 档：.modality 属性优先，strip+upper+别名归一（PT→PET）。"""
+
+        class Row:
+            modality = " pt "
+            source = "amos"
+
+        assert resolve_modality(Row()) == "PET"
+
+    def test_tier_a_attr_no_alias(self) -> None:
+        """a 档：普通 CT 属性直接归一。"""
+
+        class Row:
+            modality = "ct"
+
+        assert resolve_modality(Row()) == "CT"
+
+    def test_tier_b_dicom_file(self, tmp_path: Path) -> None:
+        """b 档：入参是 DICOM 文件时读 Modality 标签（W4 口径）。"""
+        pydicom = pytest.importorskip("pydicom")
+        ds = pydicom.dataset.FileDataset(
+            "x", {}, file_meta=pydicom.dataset.FileMetaDataset(), preamble=b"\0" * 128
+        )
+        ds.Modality = "MR"
+        p = tmp_path / "slice.dcm"
+        ds.save_as(p, enforce_file_format=False)
+        assert resolve_modality(p) == "MR"
+
+    def test_tier_b_dicom_dir(self, tmp_path: Path) -> None:
+        """b 档：入参是 DICOM 目录时取第一个文件的 Modality。"""
+        pydicom = pytest.importorskip("pydicom")
+        ds = pydicom.dataset.FileDataset(
+            "x", {}, file_meta=pydicom.dataset.FileMetaDataset(), preamble=b"\0" * 128
+        )
+        ds.Modality = "CT"
+        d = tmp_path / "series"
+        d.mkdir()
+        ds.save_as(d / "1.dcm", enforce_file_format=False)
+        assert resolve_modality(d) == "CT"
+
+    def test_tier_c_dataset_table(self) -> None:
+        """c 档：.source 走数据集对照表（HoldoutEntry 形态）。"""
+
+        class Entry:
+            case_id = "amos_0001"
+            source = "amos"
+
+        assert resolve_modality(Entry()) == "CT"
+
+    def test_tier_c_bare_dataset_name(self) -> None:
+        """c 档：裸数据集名字符串（ct_lite 脚本路径）。"""
+        assert resolve_modality("ct_lite") == "CT"
+
+    def test_tier_d_raise(self) -> None:
+        """d 档：三档皆无 -> ValueError（不猜、不默认 CT）。"""
+
+        class Empty:
+            modality = None
+            source = "unknown_set"
+
+        with pytest.raises(ValueError, match="modality 无来源"):
+            resolve_modality(Empty())
+
+    def test_tier_d_dicom_missing_tag_raises(self, tmp_path: Path) -> None:
+        """b 档 DICOM 文件无 Modality 标签且无 c 档 -> raise（不默认）。"""
+        pydicom = pytest.importorskip("pydicom")
+        ds = pydicom.dataset.FileDataset(
+            "x", {}, file_meta=pydicom.dataset.FileMetaDataset(), preamble=b"\0" * 128
+        )
+        p = tmp_path / "no_modality.dcm"
+        ds.save_as(p, enforce_file_format=False)
+        with pytest.raises(ValueError, match="modality 无来源"):
+            resolve_modality(p)
+
+    def test_run_total_modality_required(self, tmp_path: Path) -> None:
+        """run_total 不传 modality 即 TypeError（签名层 fail-closed）。"""
+        with pytest.raises(TypeError, match="modality"):
+            run_total(tmp_path / "img.nii.gz", tmp_path / "out")

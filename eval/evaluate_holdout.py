@@ -41,6 +41,7 @@ from bodydonor.holdout import (  # noqa: E402
     evaluate_gate,
     load_holdout,
 )
+from bodydonor.segmentation import resolve_modality  # noqa: E402
 
 DATA_ROOT = Path.home() / "data/BodyDonor/downloads"
 CT_LITE = DATA_ROOT / "ct_lite"
@@ -64,14 +65,16 @@ def _standard_values() -> dict[str, int]:
     return json.loads(cache.read_text(encoding="utf-8"))
 
 
-def ts_teacher_inference(image_path: Path, out_dir: Path, *, modality: str) -> tuple[Path, float | None]:
+def ts_teacher_inference(
+    image_path: Path, out_dir: Path, *, modality: str
+) -> tuple[Path, float | None]:
     """对原图跑 TS total（GPU 锁全程持锁，JSON 契约 runner，M2-align 3.2/3.3）。
 
     返回 (out_dir, runner torch 分配器 peak_vram_mb)——M2 主值口径；peak 不可用
     （CPU 回退 / 无 CUDA）时为 None（不猜数字）。
     """
     from bodydonor.gpu_lock import acquire
-    from bodydonor.segmentation import resolve_modality, run_total
+    from bodydonor.segmentation import run_total
 
     settings = load_settings()
     out_dir.mkdir(parents=True, exist_ok=True)
