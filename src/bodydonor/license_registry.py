@@ -13,6 +13,18 @@
 法务事实（2026-11-18 用户确认）：research 只化解 NC 条款，不化解 ShareAlike；
 nnInteractive（CC BY-NC-SA 4.0）与 SynthSeg 蒸馏出的学生权重是衍生作品，须以
 BY-NC-SA 分发；软件内不另建合规门禁，依据只留文档。
+
+就绪三分（M7-S3P2 ⑥，S3R2 ③"三分结构"的字段化）：单一布尔 ``ready`` 退役，
+拆成三个可推导字段——
+- ``weights_present``：从 ``weight_integrity`` 推导。规则（全仓统一）：
+  weight_integrity.status == "verified"（sha256 已核实）→ True；
+  "not_recorded" / 其他 → False。
+- ``class_map_present``：从 ``class_map_ref`` 推导。规则（全仓统一）：
+  class_map_ref 不含「待建」/「待落地」占位标记 → True；含 → False。
+- ``share_alike``：既有字段（M7-S3P2 ⑤），直接复用不重建。
+
+check_task 改读三字段，拒绝原因写明是哪一项挡住（缺权重 / 缺 class_map /
+SA 义务）。recalibration_ready（qc.py）是数值重算抽检，另一概念，不相干。
 """
 
 from __future__ import annotations
@@ -33,7 +45,6 @@ _REGISTRY_FIELDS = (
     "output_type",
     "known_restrictions",
     "provenance",
-    "ready",
     "weight_integrity",
     "attribution_required",
     "share_alike",
@@ -52,6 +63,20 @@ SHARE_ALIKE_VALUES = (True, False)
 # 记录不翻译，归一化时并成登记模态。X 光代码口径与 review_session 同。
 MODALITY_ALIASES: dict[str, str] = {"PT": "PET", "DX": "X-RAY", "CR": "X-RAY"}
 
+# 就绪三分推导（M7-S3P2 ⑥）：规则唯一来源，全仓统一（docstring 同文）。
+READY_PLACEHOLDER_MARKERS = ("待建", "待落地")
+
+
+def weights_present(entry: dict) -> bool:
+    """weight_integrity.status == 'verified'（sha256 已核实）→ True。"""
+    return entry.get("weight_integrity", {}).get("status") == "verified"
+
+
+def class_map_present(entry: dict) -> bool:
+    """class_map_ref 不含「待建」/「待落地」占位标记 → True。"""
+    cls_ref = str(entry.get("class_map_ref") or "")
+    return not any(m in cls_ref for m in READY_PLACEHOLDER_MARKERS)
+
 # 首批条目（M7-LICENSE-CHECK §二/四/八 + M7-PLAN v3.2 §二；provenance 即核查依据）
 TEACHER_REGISTRY: list[dict] = [
     # TotalSegmentator 公开任务（TS CT 主力 + MRI _mr 族；Apache-2.0，§四）
@@ -68,7 +93,6 @@ TEACHER_REGISTRY: list[dict] = [
             "verified": "M0/M4 结论 + M7-LICENSE-CHECK §四（total 与 total_mr 同列 "
             "'Openly available for any usage (Apache-2.0)' 清单）",
         },
-        "ready": True,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
         "attribution_required": True,
         "share_alike": False,
@@ -93,7 +117,6 @@ TEACHER_REGISTRY: list[dict] = [
             "version": "2.10.0",
             "verified": "M7-LICENSE-CHECK §四（公开 _mr 任务同在 Apache-2.0 清单内）",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
         "attribution_required": True,
         "share_alike": False,
@@ -126,7 +149,6 @@ TEACHER_REGISTRY: list[dict] = [
             "verified": "M7-LICENSE-CHECK §二：code and models 均 Apache-2.0（README 声明，"
             "仓库无 LICENSE 文件已注记；不写 CC BY 4.0——那是论文 arXiv 许可）",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
         "attribution_required": True,
         "share_alike": False,
@@ -161,7 +183,6 @@ TEACHER_REGISTRY: list[dict] = [
             "文件夹 LICENSE 首行（nni_runner 暴露为 session.license）为准，"
             "注册表 provenance 引用该运行时值",
         },
-        "ready": True,
         "weight_integrity": {
             "sha256": "b3ac4421f85457bbd1aa0d87f5e67bcb7bc8e2ce6b824b6ac45077cc5d630ea9",
             "size_bytes": 411387150,
@@ -202,7 +223,6 @@ TEACHER_REGISTRY: list[dict] = [
             "version": "synthseg",
             "verified": "M7-LICENSE-CHECK §六",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
         "attribution_required": True,
         "share_alike": False,
@@ -236,7 +256,6 @@ TEACHER_REGISTRY: list[dict] = [
             "version": "moose",
             "verified": "M7-LICENSE-CHECK §五：代码 Apache-2.0，权重 CC BY 4.0（项目自述）",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
         "attribution_required": True,
         "share_alike": False,
@@ -269,7 +288,6 @@ TEACHER_REGISTRY: list[dict] = [
             "version": "v2",
             "verified": "M0 结论 + M7-LICENSE-CHECK §一",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
         "attribution_required": True,
         "share_alike": False,
@@ -295,7 +313,6 @@ TEACHER_REGISTRY: list[dict] = [
             "version": "flexray",
             "verified": "M7-LICENSE-CHECK §三：代码 MIT，权重 CC BY-NC 4.0",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
         "attribution_required": True,
         "share_alike": False,
@@ -324,7 +341,6 @@ TEACHER_REGISTRY: list[dict] = [
             "Apache-2.0 权重）+ TS 2.10.0 安装包 map_to_binary.class_map 含该任务且 "
             "commercial_models 不含",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
         "attribution_required": True,
         "share_alike": False,
@@ -358,7 +374,7 @@ TEACHER_REGISTRY: list[dict] = [
 ] + [
     # 本组仅在 README open 清单（LICENSES-THIRD-PARTY.md §1.2），本地 TS 2.10.0
     # 安装包 class_map 不含（vertebrae_pp_refined 在 2.10.0 无此类）——许可证据
-    # 单一来源，结构未核实。许可摘要：登记 unverified，ready=False（未核实），
+    # 单一来源，结构未核实。许可摘要：登记 unverified（未核实），
     # 注册表 provenance 记明差异。
     {
         "teacher_id": "totalsegmentator",
@@ -376,7 +392,6 @@ TEACHER_REGISTRY: list[dict] = [
             "verified": "M7-S3F ②：LICENSES-THIRD-PARTY.md §1.2 open 清单；安装包未核实 "
             "（class_map 不含）——结构未核实",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
         "attribution_required": True,
         "share_alike": False,
@@ -417,7 +432,6 @@ TEACHER_REGISTRY: list[dict] = [
             "（需 license）；README open 清单（访问 2026-11-06）称 open——按安装包实况 "
             "登记 unverified",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
         "attribution_required": True,
         "share_alike": False,
@@ -482,13 +496,10 @@ def validate_entry(entry: dict) -> None:
             f"mask 教师 {entry['teacher_id']}/{entry['task']} 缺 class_map_ref 或 "
             "data_contract_version（无法判断结构覆盖与跨教师比较）"
         )
-    # W16：占位守卫匹配「待建」与「待落地」两种措辞——永远不能在类映射落地前 ready
-    cls_ref = str(entry.get("class_map_ref") or "")
-    if entry.get("ready") and ("待建" in cls_ref or "待落地" in cls_ref):
-        raise ValueError(
-            f"{entry['teacher_id']}/{entry['task']} ready=True 但 class_map_ref "
-            f"是占位（{entry['class_map_ref']}）——先落地类映射再 ready"
-        )
+    # W16 占位守卫（M7-S3P2 ⑥ 字段化迁移）：ready 布尔退役后，占位 class_map_ref
+    # 的旧「ready=True × 占位」矛盾不再可表达——守卫语义移到路由侧
+    # class_map_present 推导（占位 → 派生 False → check_task 拒绝派发）；
+    # 登记带占位 ref 仍合法（13 个未就绪条目即此形态）。
     if entry["output_type"] == "feature" and not entry.get("feature_schema"):
         raise ValueError(f"feature 教师 {entry['teacher_id']} 缺 feature_schema")
 
@@ -588,10 +599,13 @@ class LicenseRegistry:
     def check_task(self, task: str, modality: str | None = None) -> tuple[bool, str]:
         """教师路由判定（worker 分发层与 CI 负测试共用）。
 
-        注册表唯一来源（M7-S3F ②：白名单回退退役）：
+        注册表唯一来源（M7-S3F ②：白名单回退退役；M7-S3P2 ⑥：ready 布尔
+        退役，就绪三分 weights_present / class_map_present / share_alike）：
         - settings.teacher.blocked_tasks 仍一票否决（blocked 是许可硬约束）。
-        - 注册表有条目且 ready 且模态匹配 → 放行。
-        - 注册表有条目但模态不符 / 未就绪 → 拒绝并带原因（回退语义 §2.2.3）。
+        - 注册表有条目且三字段齐（weights_present 且 class_map_present 且
+          share_alike=False）且模态匹配 → 放行。
+        - 注册表有条目但模态不符 / 未就绪 → 拒绝并带原因，原因写明是哪一项
+          挡住（缺权重 / 缺 class_map / SA 义务；回退语义 §2.2.3）。
         - 注册表无条目 → 拒绝并带原因（新任务走注册表登记，不走白名单旁路）。
         """
         if task in self.settings.teacher.blocked_tasks:
@@ -610,14 +624,27 @@ class LicenseRegistry:
                         f"(registered modalities: "
                         f"{sorted({mm for e in entries for mm in e['modalities']})})",
                     )
-            ready = [e for e in ok if e["ready"]] if modality is not None else [
-                e for e in entries if e["ready"]
+            else:
+                ok = entries
+            ready = [
+                e for e in ok
+                if weights_present(e) and class_map_present(e) and not e["share_alike"]
             ]
             if not ready:
+                # 拒绝原因写明挡项（M7-S3P2 ⑥）：三分逐项
+                blocked = sorted(
+                    {
+                        "缺权重" if not weights_present(e) else ""
+                        + "缺 class_map" if not class_map_present(e) else ""
+                        + "SA 义务" if e["share_alike"] else ""
+                        for e in ok
+                    }
+                )
                 return (
                     False,
                     f"task '{task}' registered but not ready "
-                    f"(checkpoint 未部署；见注册表 ready=False)",
+                    f"(checkpoint 未部署；挡项: {'/'.join(b for b in blocked if b)}；"
+                    "见注册表就绪三分 weights_present/class_map_present/share_alike)",
                 )
             return True, "allowed"
         return (
