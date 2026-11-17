@@ -418,7 +418,11 @@ def segment_series(
         raise SegmentWorkerError(f"unknown series: {series_id}")
     # 白名单一票否决（分发层）：Series.modality 优先，NULL 时 DICOM 标签回退、
     # 再无则 raise（S3P2 ② fail-closed，闭合 S3P 未决 #4：NULL 模态不再退化为仅 task 门控）
-    modality = resolve_modality(row)
+    try:
+        modality = resolve_modality(row)
+    except ValueError as e:
+        # app.py/cli.py 只捕获 SegmentWorkerError：ValueError 转型（否则 500/traceback）
+        raise SegmentWorkerError(str(e)) from None
     check_worker_task(task, settings, modality=modality)
     if not row.storage_key:
         raise SegmentWorkerError(f"series {series_id} 无像素（commit 未落盘）")

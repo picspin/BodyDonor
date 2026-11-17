@@ -21,6 +21,7 @@ from bodydonor.segmentation import (
     merge_ts_output,
     resolve_modality,
     run_total,
+    segment_series,
     ts_venv_cli,
 )
 
@@ -279,3 +280,34 @@ class TestResolveModality:
         """run_total 不传 modality 即 TypeError（签名层 fail-closed）。"""
         with pytest.raises(TypeError, match="modality"):
             run_total(tmp_path / "img.nii.gz", tmp_path / "out")
+
+    def test_segment_series_null_modality_raises_worker_error(self, tmp_path: Path) -> None:
+        """W1（R1a 审查）：NULL 模态 Series → SegmentWorkerError（非 ValueError）。
+
+        app.py / cli.py 只捕获 SegmentWorkerError；ValueError 会变成 500/traceback。
+        """
+        from sqlalchemy.orm import Session
+
+        from bodydonor import db
+        from bodydonor.db import init_db
+        from bodydonor.models import Case, Series
+
+        url = f"sqlite:///{tmp_path / 'w1.db'}"
+        init_db(url)
+        s = Settings()
+        s.database.url = url
+        engine = db._engine(url)
+        try:
+            with engine.connect() as c:
+                sess = Session(c)
+                sess.add(Case(case_id="case-w1"))
+                sess.add(
+                    Series(series_id="series-w1", case_id="case-w1", modality=None)
+                )
+                sess.commit()
+                sess.close()
+        finally:
+            engine.dispose()
+
+        with pytest.raises(SegmentWorkerError, match="modality"):
+            segment_series("series-w1", s, task="total")
