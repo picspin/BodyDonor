@@ -873,3 +873,22 @@ def test_provenance_null_attestation_raises(tmp_path):
     )
     with pytest.raises(DistillDataError, match="attestation"):
         read_teacher_provenance(case_dir / "ts_out")
+
+
+# ---------------------------------------------------------------------------
+# prepare_distill_dataset CLI 默认行为（R3 ④：--profile 删后默认即单口径）
+# ---------------------------------------------------------------------------
+
+def test_cli_profile_flag_retired():
+    """R3 ④：CLI --profile 标志已删（参数面无此参数，默认行为即单口径）。
+
+    参数面以脚本 main 内联构建的 argparse 为准（直接读源码文本断言
+    --profile 不在 add_argument 列表）——复制 parser 会与脚本漂移。"""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "scripts" /
+           "prepare_distill_dataset.py").read_text(encoding="utf-8")
+    assert "--profile" not in src
+    assert 'default="commercial"' not in src
+    # 默认行为即单口径：main 只调 prepare_dataset（不带 profile 参数）
+    assert "prepare_dataset(out_root=out_root, dry_run=args.dry_run)" in src
