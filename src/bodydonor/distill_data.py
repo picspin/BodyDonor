@@ -461,7 +461,7 @@ def prepare_dataset(
     keep_classes = set(DISTILL_CLASSES.values())
     pool = build_train_pool(holdout_path)
 
-    raw_root = out_root or (Path.home() / "data" / "BodyDonor" / "nnUNet_raw")
+    raw_root = Path(out_root) if out_root else (Path.home() / "data" / "BodyDonor" / "nnUNet_raw")
     ds_dir = raw_root / DISTILL_DATASET_NAME
     images_tr = ds_dir / "imagesTr"
     labels_tr = ds_dir / "labelsTr"
