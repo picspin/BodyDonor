@@ -93,7 +93,18 @@ TEACHER_REGISTRY: list[dict] = [
             "verified": "M0/M4 结论 + M7-LICENSE-CHECK §四（total 与 total_mr 同列 "
             "'Openly available for any usage (Apache-2.0)' 清单）",
         },
-        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
+        # M7-S3P2 ⑥：权重实测记录（S3 W4 nnInteractive 先例同法）——本机
+        # Dataset298_total_6mm checkpoint_final.pth sha256/size 实测
+        # （2026-11-18，S3R2 ③ total 研究推理实测已走通 n_classes=117）
+        "weight_integrity": {
+            "sha256": "3489323a4b759506ab46b489eb78b72142f2143aea6e6d828604d754bd7a9270",
+            "size_bytes": 164951587,
+            "status": "verified",
+            "checkpoint_path": "~/.totalsegmentator/nnunet/results/"
+            "Dataset298_TotalSegmentator_total_6mm_1559subj/"
+            "nnUNetTrainer_4000epochs_NoMirroring__nnUNetPlans__3d_fullres/"
+            "fold_0/checkpoint_final.pth",
+        },
         "attribution_required": True,
         "share_alike": False,
         "license_verified": True,

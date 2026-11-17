@@ -117,9 +117,10 @@ def test_missing_required_field_rejected() -> None:
         validate_entry(e)
 
 
-def test_ready_with_placeholder_class_map_ref_rejected_both_wordings() -> None:
-    """W16：ready=True × 占位 class_map_ref 拒绝——「待建」与「待落地」都触发守卫
-    （永远不能在类映射落地前 ready，M7-S3F2-REPORT §3.3 陈述成立）。"""
+def test_placeholder_class_map_ref_blocked_at_routing_both_wordings() -> None:
+    """W16（M7-S3P2 ⑥ 字段化迁移）：占位 class_map_ref 派生 class_map_present=
+    False，路由侧拒绝派发——「待建」与「待落地」两种措辞都触发（占位类映射
+    永远不能当作在位；登记带占位 ref 仍合法——13 个未就绪条目即此形态）。"""
     base = {
         "teacher_id": "x",
         "task": "t",
@@ -128,8 +129,9 @@ def test_ready_with_placeholder_class_map_ref_rejected_both_wordings() -> None:
         "output_type": "mask",
         "known_restrictions": [],
         "provenance": {"source": "s", "verified": "v"},
-        "ready": True,
-        "weight_integrity": {},
+        "weight_integrity": {
+            "sha256": "a", "size_bytes": 1, "status": "verified"
+        },
         "attribution_required": True,
         "share_alike": False,
         "license_verified": True,
@@ -138,12 +140,28 @@ def test_ready_with_placeholder_class_map_ref_rejected_both_wordings() -> None:
         "class_map_ref": "ts-classes/v1 (待建)",
         "data_contract_version": "v1",
     }
-    with pytest.raises(ValueError, match="占位"):
-        validate_entry(base)
+    validate_entry(base)  # 登记合法（不 raise）
     e2 = dict(base)
     e2["class_map_ref"] = "ts-classes/v1 (待落地：2.10.0 class_map 不含，需按 README 定义建)"
-    with pytest.raises(ValueError, match="占位"):
-        validate_entry(e2)
+    validate_entry(e2)
+    from bodydonor import license_registry as lr
+
+    saved = lr.TEACHER_REGISTRY
+    lr.TEACHER_REGISTRY = [base]
+    try:
+        ok, msg = LicenseRegistry(_settings()).check_task("t", modality="CT")
+        assert not ok
+        assert "缺 class_map" in msg, msg
+    finally:
+        lr.TEACHER_REGISTRY = saved
+    saved = lr.TEACHER_REGISTRY
+    lr.TEACHER_REGISTRY = [e2]
+    try:
+        ok, msg = LicenseRegistry(_settings()).check_task("t", modality="CT")
+        assert not ok
+        assert "缺 class_map" in msg, msg
+    finally:
+        lr.TEACHER_REGISTRY = saved
 
 
 # --- check_task 读注册表 ---
@@ -164,14 +182,16 @@ def test_worker_task_mr_rejected_via_check_worker_task() -> None:
 
 
 def test_ready_follows_modality_filter() -> None:
-    """S3 W1 失败测试先行：ready 判定跟随模态过滤——同 task 双模态条目
-    （CT ready=False、MR ready=True）下 CT 拒绝、MR 放行。"""
+    """S3 W1（M7-S3P2 ⑥ 字段化迁移）：就绪判定跟随模态过滤——同 task 双模态
+    条目（CT 缺权重、MR 三字段齐）下 CT 拒绝、MR 放行。"""
     entry_ct = dict(TEACHER_REGISTRY[0])
     entry_ct["modalities"] = ("CT",)
-    entry_ct["ready"] = False
+    entry_ct["weight_integrity"] = {"sha256": None, "size_bytes": None, "status": "not_recorded"}
     entry_mr = dict(TEACHER_REGISTRY[0])
     entry_mr["modalities"] = ("MR",)
-    entry_mr["ready"] = True
+    entry_mr["weight_integrity"] = {
+        "sha256": "a", "size_bytes": 1, "status": "verified"
+    }
     reg = LicenseRegistry(_settings())
     from bodydonor import license_registry as lr
 
@@ -179,7 +199,7 @@ def test_ready_follows_modality_filter() -> None:
     lr.TEACHER_REGISTRY = [entry_ct, entry_mr]
     try:
         ok, _ = reg.check_task("total", modality="CT")
-        assert not ok  # CT 条目 ready=False → 拒绝（不落到 MR 条目）
+        assert not ok  # CT 条目缺权重 → 拒绝（不落到 MR 条目）
         ok, msg = reg.check_task("total", modality="MR")
         assert ok, msg
     finally:
@@ -209,7 +229,9 @@ def test_dicom_pt_code_matches_pet_registered_modality() -> None:
         if e["teacher_id"] == "nninteractive" and e["task"] == "interactive_correction"
     )
     saved = lr.TEACHER_REGISTRY
-    lr.TEACHER_REGISTRY = [{**nni, "ready": True}]  # nninteractive 条目（PET 已登记）
+    # nninteractive 条目（PET 已登记）；share_alike=False 使就绪三分不因 SA 挡
+    # （⑥：本测试只验模态匹配，SA 挡项另有测试）
+    lr.TEACHER_REGISTRY = [{**nni, "share_alike": False}]
     try:
         ok, msg = LicenseRegistry(_settings()).check_task(
             "interactive_correction", modality="PT"
@@ -332,8 +354,9 @@ def test_whitelist_fallback_retired() -> None:
 
 
 def test_allowed_tasks_registered_tasks_route_via_registry() -> None:
-    """M7-S3F ② 失败测试先行：allowed_tasks 的分割任务已登记进注册表——
-    路由走注册表（ready=False 拒绝、unverified 标记、空配置可拒绝/可放行）。"""
+    """M7-S3F ② 失败测试先行（M7-S3P2 ⑥ 字段化迁移）：allowed_tasks 的分割
+    任务已登记进注册表——路由走注册表（未就绪拒绝、unverified 标记、空配置
+    可拒绝/可放行）。"""
     from bodydonor.license_registry import TEACHER_REGISTRY as R
 
     by_task = {e["task"]: e for e in R}
@@ -350,18 +373,18 @@ def test_allowed_tasks_registered_tasks_route_via_registry() -> None:
         e = by_task.get(t)
         assert e is not None, f"{t} 应已登记进注册表"
         assert e["teacher_id"] == "totalsegmentator"
-        assert e["ready"] is False  # 权重未部署，一律不造假 ready
+        assert e["weight_integrity"]["status"] == "not_recorded"  # 权重未部署，不造假
     # open 清单双证据齐全组 → license_verified=true；仅 README 单证据组 → false
     # （M7-S3P2 ⑤：准入证据强度由 license_verified 承载，三值枚举退役）
     assert by_task["lung_vessels"]["license_verified"] is True
     assert by_task["teeth"]["license_verified"] is False
     assert by_task["vertebrae_body"]["license_verified"] is False
     assert any("commercial_models" in r for r in by_task["vertebrae_body"]["known_restrictions"])
-    # 空配置（allowed_tasks=[]）下已登记任务走注册表：ready=False 拒绝带原因
+    # 空配置（allowed_tasks=[]）下已登记任务走注册表：未就绪拒绝带原因
     ok, msg = LicenseRegistry(_settings(allowed=[])).check_task("lung_vessels", modality="CT")
     assert not ok
     assert "not ready" in msg
-    # ready 条目（total）不依赖白名单
+    # 就绪条目（total，权重实测 verified）不依赖白名单
     ok, _ = LicenseRegistry(_settings(allowed=[])).check_task("total", modality="CT")
     assert ok
 

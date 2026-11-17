@@ -43,8 +43,8 @@
   "research_distill": "conditional",
   "research_use": "restricted",
   "route": [
-   true,
-   "ok+license_inherits"
+   false,
+   "blocked:not-ready"
   ]
  },
  "nnunet_v2/framework": {
