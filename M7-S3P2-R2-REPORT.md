@@ -35,48 +35,50 @@ S3P 的回填脚本没有"补全证据"，是把 evidence 缺失替换为脚本�
 
 ### 1. 三元状态（provenance_status 取代布尔）
 
-- `src/bodydonor/distill_data.py:255-292`（`read_teacher_provenance`）：返回
+- `src/bodydonor/distill_data.py:259-295`（`read_teacher_provenance`）：返回
   dict 增加 `provenance_status`（`"asserted" | "inferred" | "missing"`）；
-  布尔键 `provenance_missing` 保留但由同一状态同源推导
-  （`:289` `doc["provenance_missing"] = doc["provenance_status"] == "missing"`），
-  不维护两套事实。
-- 映射规则定死在 `provenance_status_of`（`src/bodydonor/distill_data.py:294-303`）：
-  - `attestation` 字段存在 → 取该值；
+  布尔键 `provenance_missing` 保留但由同一状态同源推导，不维护两套事实。
+- 映射规则定死在 `provenance_status_of`（`src/bodydonor/distill_data.py:298-316`，
+  W1 修复后枚举校验）：
+  - `attestation` 字段存在 → 取该值，非 {"asserted","inferred"} 枚举 →
+    DistillDataError（W1）；
   - 无 attestation：`backfill=true` → `"inferred"`；否则 → `"asserted"`
     （旧实测写入默认实测）。
 - 缺文件 → `{"provenance_status": "missing", "provenance_missing": True}`
-  （`src/bodydonor/distill_data.py:278-279`）。
+  （`src/bodydonor/distill_data.py:279`）。
 
 ### 2. write_teacher_source_json 实测写 attestation
 
-- `src/bodydonor/distill_data.py:305-338`：新写文件一并带
+- `src/bodydonor/distill_data.py:310-335`：新写文件一并带
   `attestation="asserted"` + `evidence="run_output"`；升级路径——覆盖
   inferred 文件时同样写 asserted（asserted 只能被更新的 asserted 覆盖）。
 
 ### 3. DistillCase.attestation + manifest 条目
 
-- `src/bodydonor/distill_data.py:240-247`（dataclass 字段 + 注释）、
-  `:256-267`（`manifest_entry` 增加 `"attestation"` 键）——manifest 每条
+- `src/bodydonor/distill_data.py:241`（dataclass 字段 + 注释）、
+  `:252`（`manifest_entry` 增加 `"attestation"` 键）——manifest 每条
   case 记录必带，inferred 与 asserted 在 manifest 中肉眼可区分。
 
 ### 4. prepare_dataset 预检迁移
 
-- `src/bodydonor/distill_data.py:502-522`：missing 仍 raise（消息不变）；
-  `c.attestation = str(prov.get("provenance_status", ""))` 传播到 manifest。
+- `src/bodydonor/distill_data.py:522-541`：missing 仍 raise（消息不变）；
+  `c.attestation = str(prov.get("provenance_status", ""))`（:532）传播到
+  manifest。
 
 ### 5. ct_lite evidence_scope 读侧闭合（S3P 未决 #1）
 
-- `src/bodydonor/distill_data.py:281-286`：`teacher_out.name` 不在库级清单
+- `src/bodydonor/distill_data.py:288-292`：`teacher_out.name` 不在库级清单
   `cases` 内的新增 case 按 missing 处理、不继承库级 provenance。
 
 ### 6. 回填脚本证明字段
 
-- `scripts/backfill_source_json.py:98-105`（`_generated_by`：运行时自算
-  `__file__` sha256）、`:108-109`（ATTESTATION/EVIDENCE 常量）、
-  `:139-166`（`_upgrade_plan`：已有文件就地补字段，asserted 永不降级，
-  inferred 已升级过幂等跳过，坏 JSON 不猜）、`:212-215`（ct_lite 升级分支）、
-  `:241-253`（upgrade 写路径：只增证明字段保留原有）、`:255-277`（新写文档
-  一并带证明字段；evidence_scope AMOS 本 case id / ct_lite 枚举 cases）。
+- `scripts/backfill_source_json.py:87-91`（`_generated_by`：运行时自算
+  `__file__` sha256）、`:93-94`（ATTESTATION/EVIDENCE 常量）、
+  `:144-175`（`_upgrade_plan`：已有文件就地补字段，asserted 永不降级，
+  inferred 幂等跳过/半升级补齐，坏 JSON 不猜）、`:212-218`（ct_lite 升级
+  分支）、`:265-272`（upgrade 写路径：只增证明字段保留原有）、`:286-300`
+  （新写文档一并带证明字段；evidence_scope AMOS 本 case id / ct_lite 枚举
+  cases）。
 
 ### 7. 磁盘 21 份文件已升级（实测）
 
@@ -139,10 +141,10 @@ evidence 缺失替换为脚本自身推断断言的核心风险——`source=tot
 - 新增测试：test_distill_license_gate.py 2 个（W1 失败测试先行：
   test_provenance_invalid_attestation_raises、
   test_provenance_null_attestation_raises）。
-- 迁移测试：test_distill_license_gate.py 布尔断言改写 4 处（:476-484
-  missing、:495-513 inferred、:815-827 roundtrip asserted、:775-777
+- 迁移测试：test_distill_license_gate.py 布尔断言改写 4 处（:476-482
+  missing、:496-508 inferred、:805-822 roundtrip asserted、:775-777
   prepare_dataset 前置 missing）+ roundtrip dict 断言补
-  attestation/evidence 两字段。
+  attestation/evidence 两字段。W1 失败测试 :918 / :931。
 - 全仓 ruff：All checks passed（实测）。
 - 全仓 pytest：全量后台跑完（数字见收尾行——若报告完结时仍在跑，以
   task 输出文件为准；受影响文件 101 passed 已实测）。
