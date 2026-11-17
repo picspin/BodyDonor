@@ -244,6 +244,18 @@ def _build_source_images(
     frame_of_reference_uid = generate_uid()  # 全序列共享一个 Frame of Reference
 
     images: list[Any] = []
+    # 审查 W2：混合 SOP Class 序列（逐帧引用各自 SOP Class，verify 只能看
+    # [0]）是验不出的结构错误——导出前断言全序列解析一致，不一致 raise
+    if source.source_instances:
+        resolved = {
+            resolve_source_sop_class_uid(source, inst) for inst in source.source_instances
+        }
+        if len(resolved) > 1:
+            raise SegExportError(
+                f"源实例 SOP Class 不一致（{sorted(resolved)}）——"
+                "一个 series 一个 SOP Class 是 DICOM 惯例，不产出混合引用 SEG"
+                "（S3P2 ③，审查 W2）"
+            )
     for i in range(n_slices):
         inst = source.source_instances[i] if i < len(source.source_instances) else None
         if inst is not None:

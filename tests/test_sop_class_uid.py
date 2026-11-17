@@ -134,6 +134,34 @@ class TestVerbatimRoundTrip:
         persisted = _persisted_from_dir(src_dir)
         assert persisted["instances"][0]["sop_class_uid"] == ENHANCED_MR
 
+    def test_mixed_sop_class_sequence_raises(self, tmp_path) -> None:
+        """审查 W2：混合 SOP Class 序列（CT+MR）导出前断言失败 → SegExportError。
+
+        SEG 逐帧引用各自实例的 SOP Class，verify_seg 只能看 [0]——混合 SEG
+        是验不出的结构错误，导出前拦下。"""
+        src = SourceSeriesInfo(
+            series_uid="1.2.826.0.1.3680043.8.498.mix",
+            study_uid="1.2.826.0.1.3680043.8.498.mixstudy",
+            modality="CT",
+            rows=32,
+            columns=32,
+            source_instances=[
+                {
+                    "sop_instance_uid": "1.2.3",
+                    "sop_class_uid": "1.2.840.10008.5.1.4.1.1.2",
+                    "image_position_patient": [0.0, 0.0, 0.0],
+                },
+                {
+                    "sop_instance_uid": "1.2.4",
+                    "sop_class_uid": "1.2.840.10008.5.1.4.1.1.4",
+                    "image_position_patient": [0.0, 0.0, 1.0],
+                },
+            ],
+        )
+        mask_path = _make_mask(tmp_path / "mask.nii.gz", shape=(2, 32, 32))
+        with pytest.raises(SegExportError, match="SOP Class 不一致"):
+            export_seg(mask_path, src, tmp_path / "seg.dcm")
+
 
 class TestUnmappedRaises:
     """未映射模态（合成源，无实例 UID）一律 raise，不默认 CT。"""
