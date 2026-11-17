@@ -23,8 +23,10 @@ BY-NC-SA 分发；软件内不另建合规门禁，依据只留文档。
   class_map_ref 不含「待建」/「待落地」占位标记 → True；含 → False。
 - ``share_alike``：既有字段（M7-S3P2 ⑤），直接复用不重建。
 
-check_task 改读三字段，拒绝原因写明是哪一项挡住（缺权重 / 缺 class_map /
-SA 义务）。recalibration_ready（qc.py）是数值重算抽检，另一概念，不相干。
+check_task 就绪判定读 weights_present / class_map_present，拒绝原因写明是
+哪一项挡住（缺权重 / 缺 class_map）；share_alike=True 的条目是许可义务
+（放行 + 原因注记 SA 义务），不作挡项（R4a-fix 忠实拆分零政策变化）。
+recalibration_ready（qc.py）是数值重算抽检，另一概念，不相干。
 """
 
 from __future__ import annotations
@@ -615,10 +617,11 @@ class LicenseRegistry:
         注册表唯一来源（M7-S3F ②：白名单回退退役；M7-S3P2 ⑥：ready 布尔
         退役，就绪三分 weights_present / class_map_present / share_alike）：
         - settings.teacher.blocked_tasks 仍一票否决（blocked 是许可硬约束）。
-        - 注册表有条目且三字段齐（weights_present 且 class_map_present 且
-          share_alike=False）且模态匹配 → 放行。
+        - 注册表有条目且就绪（weights_present 且 class_map_present）且模态
+          匹配 → 放行；share_alike=True 的条目（SA 是许可义务不是可用性挡项，
+          R4a-fix 忠实拆分零政策变化）放行并在原因里注记 SA 义务。
         - 注册表有条目但模态不符 / 未就绪 → 拒绝并带原因，原因写明是哪一项
-          挡住（缺权重 / 缺 class_map / SA 义务；回退语义 §2.2.3）。
+          挡住（缺权重 / 缺 class_map；SA 只出现在放行义务注记里）。
         - 注册表无条目 → 拒绝并带原因（新任务走注册表登记，不走白名单旁路）。
         """
         if task in self.settings.teacher.blocked_tasks:
@@ -639,13 +642,12 @@ class LicenseRegistry:
                     )
             else:
                 ok = entries
-            ready = [
-                e for e in ok
-                if weights_present(e) and class_map_present(e) and not e["share_alike"]
-            ]
+            ready = [e for e in ok if weights_present(e) and class_map_present(e)]
             if not ready:
-                # 拒绝原因写明挡项（M7-S3P2 ⑥）：三分逐项收集后去重
-                # （审查 W1 修复：三元表达式串联有优先级陷阱，改逐条列表收集）
+                # 拒绝原因写明挡项（M7-S3P2 ⑥）：逐项收集后去重
+                # （审查 W1 修复：三元表达式串联有优先级陷阱，改逐条列表收集；
+                # R4a-fix：只列真实挡项——"checkpoint 未部署"仅当全部条目
+                # 缺权重时出现，SA 不进拒绝原因）
                 blocked = sorted(
                     {
                         item
@@ -653,16 +655,26 @@ class LicenseRegistry:
                         for item in (
                             *(["缺权重"] if not weights_present(e) else []),
                             *(["缺 class_map"] if not class_map_present(e) else []),
-                            *(["SA 义务"] if e["share_alike"] else []),
                         )
                     }
                 )
+                prefix = "checkpoint 未部署；" if any(
+                    not weights_present(e) for e in ok
+                ) else ""
                 return (
                     False,
                     f"task '{task}' registered but not ready "
-                    f"(checkpoint 未部署；挡项: {'/'.join(blocked)}；"
-                    "见注册表就绪三分 weights_present/class_map_present/share_alike)",
+                    f"({prefix}挡项: {'/'.join(blocked)}；"
+                    "见注册表就绪三分 weights_present/class_map_present)",
                 )
+            sa = [e for e in ready if e["share_alike"]]
+            if sa:
+                # SA 义务注记（R4a-fix）：share_alike 是许可义务（派生物按
+                # output_license_inherits 保留条款），不是可用性挡项
+                inherits = "；".join(
+                    c for e in sa for c in e.get("output_license_inherits", [])
+                )
+                return True, f"allowed（SA 义务：{inherits or '派生物按保留条款保留'}）"
             return True, "allowed"
         return (
             False,
