@@ -8,7 +8,7 @@
 S3P 的回填脚本没有"补全证据"，是把 evidence 缺失替换为脚本自身的推断断言，
 `source=total` 从此看起来像实测事实。
 
-## 提交列表（5 个，实测）
+## 提交列表（8 个，实测）
 
 | 提交 | 内容 |
 |------|------|
@@ -17,15 +17,18 @@ S3P 的回填脚本没有"补全证据"，是把 evidence 缺失替换为脚本�
 | `4c4d8f0` | 三元状态 + 证明字段测试（迁移布尔断言 + 新测试 6 个） |
 | `91b7dab` | roundtrip 断言补 attestation/evidence 两字段 |
 | `73c2cf3` | 修复 W：ct_lite 库级文件就地补字段时 evidence_scope 枚举文件内 cases（非空列表） |
+| `e2bed4d` | 审查 W1——attestation 非枚举值 raise，不静默放行 |
+| `0a5f050` | 审查 W2——半升级文件（attestation 有但证明字段不全）继续补齐不永久跳过 |
+| （报告） | M7-S3P2-R2-REPORT.md（本文件，不进 git 或最后提交） |
 
 ## Diffstat（实测）
 
 ```
- scripts/backfill_source_json.py    |  90 ++++++++++++++++++++---
- src/bodydonor/distill_data.py      |  62 +++++++++++++---
- tests/test_distill_license_gate.py |   9 ++-
- tests/test_m7_s3p2_backfill.py     | 144 +++++++++++++++++++++++++++++++++++--
- 4 files changed, 279 insertions(+), 26 deletions(-)
+ scripts/backfill_source_json.py    |  97 ++++++++++++++++++--
+ src/bodydonor/distill_data.py      |  70 ++++++++++++++---
+ tests/test_distill_license_gate.py |  34 +++++++-
+ tests/test_m7_s3p2_backfill.py     | 181 ++++++++++++++++++++++++++++++++++++--
+ 4 files changed, 356 insertions(+), 26 deletions(-)
 ```
 
 ## ① 逐项证据
@@ -122,33 +125,64 @@ evidence 缺失替换为脚本自身推断断言的核心风险——`source=tot
 
 ## 测试数字（实测）
 
-- `tests/test_m7_s3p2_backfill.py` + `tests/test_distill_license_gate.py`：
-  **74 passed**（受影响文件，实测尾行）。
-- 新增测试：test_m7_s3p2_backfill.py 7 个（test_new_write_has_attestation_fields、
+- 受影响文件（test_m7_s3p2_backfill.py + test_distill_license_gate.py +
+  test_holdout.py）：**101 passed**（W1+W2 修复后，实测尾行）。
+- 新增测试：test_m7_s3p2_backfill.py 9 个（test_new_write_has_attestation_fields、
   test_upgrade_in_place_adds_fields_keeps_existing、
   test_upgrade_never_downgrades_asserted、
   test_upgrade_idempotent_second_run_zero_changes、
   test_ct_lite_library_scope_enumerates_cases、
   test_old_measured_write_without_backfill_maps_asserted、
-  test_upgrade_ct_lite_scope_enumerates_from_existing_cases）。
+  test_upgrade_ct_lite_scope_enumerates_from_existing_cases、
+  test_upgrade_half_upgraded_file_gets_completed、
+  test_upgrade_invalid_attestation_file_skipped）。
+- 新增测试：test_distill_license_gate.py 2 个（W1 失败测试先行：
+  test_provenance_invalid_attestation_raises、
+  test_provenance_null_attestation_raises）。
 - 迁移测试：test_distill_license_gate.py 布尔断言改写 4 处（:476-484
   missing、:495-513 inferred、:815-827 roundtrip asserted、:775-777
   prepare_dataset 前置 missing）+ roundtrip dict 断言补
   attestation/evidence 两字段。
 - 全仓 ruff：All checks passed（实测）。
-- 全仓 pytest：后台运行中（收尾补数字）。
+- 全仓 pytest：全量后台跑完（数字见收尾行——若报告完结时仍在跑，以
+  task 输出文件为准；受影响文件 101 passed 已实测）。
 
-## 审查 findings 清单与处理
+## 审查 findings 清单与处理（deep-reviewer，1 agent）
 
-（deep-reviewer 待跑，收尾补）
+**W1（已修，`e2bed4d`）**：attestation 非枚举值（"bogus"/null 落 "None"
+字符串）被 `provenance_status_of` 原样返回，预检放行、manifest 写入非法值
+——fail-open。处理：失败测试 2 个先行（均复现穿透），`provenance_status_of`
+对 attestation 限定 {"asserted","inferred"}，枚举外 raise DistillDataError
+（与坏 JSON 处理一致），101 passed。
+
+**W2（nit 升级，已修，`0a5f050`）**：`_upgrade_plan` 以 `"attestation" in doc`
+作幂等判据，半升级文件（attestation=inferred 但缺 generated_by/evidence，
+只可能来自旧版本代码或手改）被永久跳过、证明字段补不全。处理：幂等判据改
+为证明字段齐全性（`req <= doc.keys()`），半升级文件继续补齐；非法 attestation
+值的已有文件跳过（读侧会 raise）。回归测试 2 个，101 passed。
+
+**不修的观察（写明理由）**：
+- upgrade 写路径 `json.loads` 不捕获异常（backfill_source_json.py:261）：
+  计划阶段已解析过同一文件，仅计划与写入之间文件被并发替换才触发——概率
+  极低且异常中断循环已写入文件本身原子，不加防御（无场景）。
+- ct_lite 库级文件升级时 `evidence_scope=[]`：仅当既有库级文件缺 `cases`
+  键触发，当前写入代码总附带 `cases`，实际不可达——已由 W1 路径的 cases
+  枚举修复覆盖。
+- prepare_dataset `c.attestation` 空串 fallback：read_teacher_provenance
+  总设置 provenance_status，空串仅可能来自测试桩，生产不可达——保留作防御。
+- `"cases"` 非列表（如 null）抛 TypeError 而非 DistillDataError：手改才可
+  触发，坏 JSON/非 dict 已有同类拒绝路径，风险极低不改。
+- AMOS 布局读侧不受 ct_lite scope 影响、红线（不删不重做、asserted 不降级、
+  已有 source.json 不重做）：审查确认属实。
 
 ## 未决清单
 
 1. （承 ③ 未决）SOPClassUID 原样回填已修，但 source.json 无此键需重跑
    ingest——本轮未做（不在 ① 范围）。
-2. 磁盘另有 20 份 amos_0035+ 实测写入的 source.json（`backfill` 键为
-   null/缺失）——读侧映射 asserted（默认实测），但**无 attestation 字段**；
-   若要显式标注需重跑 write_teacher_source_json 或扩展升级路径（本轮未做，
-   读侧行为已正确）。
+2. 磁盘另有 20 份 amos_0035+ 实测写入的 source.json（无 backfill 键）——
+   读侧映射 asserted（默认实测），但**无 attestation 字段**；若要显式标注
+   需重跑 write_teacher_source_json 或扩展升级路径（本轮未做，读侧行为已
+   正确，磁盘未被改动）。
 3. 方法学漏洞 (b)：WSL2 drvfs mtime 语义未实验验证（见上文全文）。
-4. 全仓 pytest 后台数字待补（收尾）。
+4. 全仓 pytest 全量数字：受影响文件 101 passed 已实测；全量后台跑完以
+   task 输出为准（本轮改动不触 GPU 路径，M6/M7 真实推理测试与本轮无关）。
