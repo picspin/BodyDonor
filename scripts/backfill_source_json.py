@@ -20,12 +20,21 @@ write_teacher_source_json（a0da6d9，2026-11-09）落补丁产出，属历史�
     证据、全部通过才写（任一定不下来整库保持缺失）
  3. 证据不符（非 total 布局 / mtime 窗口外 / 类数不全）-> 保持缺失并逐个列出
 
-红线：不删不重做已有数据；只写 source.json（teacher_out.parent / source.json，
-与 read_teacher_provenance 读取位置一致）；不改门禁代码语义。写入内容与
-write_teacher_source_json 同构，外加 backfill 字段（测试约定
-test_provenance_backfill_records_basis）：
+红线：不删不重做已有数据；只写/补 source.json（teacher_out.parent /
+source.json，与 read_teacher_provenance 读取位置一致）；不改门禁代码语义。
+写入内容与 write_teacher_source_json 同构，外加 backfill 字段：
   {"source": "total", "task": "total", "created_by": ..., "case_id": ...,
-   "backfill": true, "backfill_basis": "...", "backfilled_at": "2026-11-16"}
+   "backfill": true, "backfill_basis": "...", "backfilled_at": "...",
+   "attestation": "inferred", "evidence": "mtime_window", "evidence_scope": ...,
+   "generated_by": "backfill_source_json.py sha256=..."}
+
+S3P2-R2 ①：证明字段（attestation 层级）——回填是脚本推断不是实测，写
+attestation="inferred" + evidence="mtime_window"，与实测写入（write_teacher_
+source_json 的 attestation="asserted"）肉眼可区分。永不降级：磁盘已有
+asserted 文件不被回填覆盖（asserted 只能被更新的 asserted 覆盖）。已有文件
+（无论有无证明字段）就地补证明字段，不删不重做——AMOS 每目录一份的
+evidence_scope 写本 case id；ct_lite 库级文件枚举 evidence_scope=覆盖的
+cases 列表。generated_by = 本脚本名 + 运行时自算 __file__ 的 sha256。
 
 用法：
     PYTHONPATH=<worktree>/src python scripts/backfill_source_json.py [--dry-run]
@@ -34,6 +43,7 @@ test_provenance_backfill_records_basis）：
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -72,6 +82,16 @@ BASIS_M3_COLDSTART = (
 
 CREATED_BY = "run_distill_teacher_inference.py"
 BACKFILLED_AT = "2026-11-16"
+
+
+def _generated_by() -> str:
+    """本脚本名 + 运行时自算 __file__ 的 sha256（谁写的可追溯到具体版本）。"""
+    sha = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    return f"backfill_source_json.py sha256={sha}"
+
+
+ATTESTATION = "inferred"
+EVIDENCE = "mtime_window"
 
 
 def _in_window(mtime_epoch: float, window: tuple[str, str]) -> bool:
@@ -121,16 +141,42 @@ def decide_ct_lite_basis(case_dir: Path) -> tuple[str, str] | None:
     return None
 
 
+def _upgrade_plan(target: Path, case_id: str, evidence_scope: list[str] | str) -> dict | None:
+    """已有 source.json 的就地补证明字段计划（S3P2-R2 ①，不删不重做）。
+
+    - attestation 已存在：inferred 已升级过（幂等跳过）；asserted 不动（永不降级）
+    - 无 attestation 且 backfill=true：推断文件 -> 补 attestation/evidence/
+      evidence_scope/generated_by（保留原有 source/task/backfill_basis 等字段）
+    - 无 attestation 且无 backfill：旧实测写入（读侧默认 asserted），无需补
+    """
+    try:
+        doc = json.loads(target.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None  # 坏 JSON 不猜（读侧拒绝，留待人工处理）
+    if not isinstance(doc, dict):
+        return None
+    if "attestation" in doc:
+        return None  # asserted 永不降级；inferred 已升级过（幂等）
+    if doc.get("backfill") is not True:
+        return None  # 旧实测写入，读侧默认 asserted
+    return {"path": str(target), "case_id": case_id,
+            "evidence_scope": evidence_scope}
+
+
 def _run(dry_run: bool) -> int:
     """回填主流程（main 委托；单测直接调本函数绕过 sys.argv）。"""
     holdout_ids = {e.case_id for e in load_holdout()}
     plans: list[dict[str, str]] = []  # {path, case_id, source_role, basis}
+    upgrades: list[dict] = []  # {path, case_id, evidence_scope}（已有文件就地补证明字段）
     undecided: list[dict[str, str]] = []  # {case_id, checked, reason}
 
     for case_dir in sorted(AMOS.parent.glob("amos_*")):
         case_id = case_dir.name
         target = case_dir / "source.json"
         if target.exists():
+            up = _upgrade_plan(target, case_id, case_id)
+            if up is not None:
+                upgrades.append(up)
             continue  # 已有清单，不重做
         decided = decide_amos_basis(case_dir)
         if decided is None:
@@ -155,7 +201,11 @@ def _run(dry_run: bool) -> int:
     # /source.json = ts_out/source.json，一库一份（非每 case 一份）。逐 case 判
     # 证据，全部通过才写库级一份（任一定不下来整库保持缺失，fail-closed）。
     ct_target = CT_LITE / "ts_out" / "source.json"
-    if not ct_target.exists():
+    if ct_target.exists():
+        up = _upgrade_plan(ct_target, "ct_lite/ts_out", [])
+        if up is not None:
+            upgrades.append(up)
+    else:
         ct_cases: list[str] = []
         ct_basis = ""
         ct_created_by = ""
@@ -188,15 +238,31 @@ def _run(dry_run: bool) -> int:
             print(f"[backfill] ct_lite 有 {len(all_ct) - len(ct_cases)} 个 case "
                   "证据不符，整库保持缺失（fail-closed）", file=sys.stderr)
 
-    print(f"[backfill] 可回填 {len(plans)}，定不下来 {len(undecided)}")
+    print(f"[backfill] 可回填 {len(plans)}，可升级 {len(upgrades)}，定不下来 {len(undecided)}")
     for p in plans:
         print(f"  WRITE {p['path']}  role={p['source_role']}  created_by={p['created_by']}")
+    for u in upgrades:
+        print(f"  UPGRADE {u['path']}"
+              "（就地补证明字段 attestation/evidence/evidence_scope/generated_by）")
     for u in undecided:
         print(f"  KEEP-MISSING {u['case_id']}: {u['reason']}（checked: {u['checked']}）",
               file=sys.stderr)
     if dry_run:
         print("[backfill] dry-run，未写任何文件")
         return 0
+
+    for u in upgrades:
+        # 就地补证明字段：读原 doc，只增 attestation/evidence/evidence_scope/
+        # generated_by，原有 source/task/backfill_basis 等字段全部保留
+        target = Path(u["path"])
+        doc = json.loads(target.read_text(encoding="utf-8"))
+        doc["attestation"] = ATTESTATION
+        doc["evidence"] = EVIDENCE
+        doc["evidence_scope"] = u["evidence_scope"]
+        doc["generated_by"] = _generated_by()
+        tmp = target.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, target)
 
     for p in plans:
         doc = {
@@ -207,6 +273,11 @@ def _run(dry_run: bool) -> int:
             "backfill": True,
             "backfill_basis": p["basis"],
             "backfilled_at": BACKFILLED_AT,
+            # S3P2-R2 ①：回填是脚本推断不是实测，写 inferred + 证据范围
+            "attestation": ATTESTATION,
+            "evidence": EVIDENCE,
+            "evidence_scope": p["cases"] if "cases" in p else p["case_id"],
+            "generated_by": _generated_by(),
         }
         if "cases" in p:  # ct_lite 库级清单：附逐 case 列表
             doc["cases"] = p["cases"]
@@ -215,7 +286,7 @@ def _run(dry_run: bool) -> int:
         tmp = target.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
         os.replace(tmp, target)
-    print(f"[backfill] 实写 {len(plans)} 个 source.json")
+    print(f"[backfill] 实写 {len(plans)} + 升级 {len(upgrades)} 个 source.json")
     return 0
 
 
