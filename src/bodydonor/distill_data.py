@@ -236,6 +236,9 @@ class DistillCase:
     # S3R4 M-3：默认空串——来源未知不冒充 total；prepare_dataset 门禁通过后实测覆盖
     label_source: str = ""
     teacher_task: str = ""
+    # S3P2-R2：证明层级（asserted=实测 | inferred=回填推断）——manifest 条目
+    # 必带，inferred 与 asserted 在 manifest/决策输出中肉眼可区分
+    attestation: str = ""
     n_classes_found: int = 0
     dropped_classes: list[str] = field(default_factory=list)
 
@@ -246,6 +249,7 @@ class DistillCase:
             "image_path": str(self.image_path),
             "label_source": self.label_source,
             "teacher_task": self.teacher_task,
+            "attestation": self.attestation,
             "teacher_out_dir": str(self.teacher_out),
             "n_classes_found": self.n_classes_found,
             "dropped_classes": list(self.dropped_classes),
@@ -255,10 +259,16 @@ class DistillCase:
 def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
     """读 ts_out 目录的来源清单（source.json，逐 case 可审计的事实源）。
 
-    - source.json 缺失 -> {"provenance_missing": True}（S3R1：不默认
-      {"source": "total", "task": "total"}——"来源未知"不得变成"来源已知"；
-      调用方对缺失来源按缺失处理，prepare_dataset 预检拒绝）。历史目录可显式
-      补录来源并记录 backfill 依据，不删不重做
+    三元状态 provenance_status（S3P2-R2：attestation 层级，布尔
+    provenance_missing 由同一状态同源推导，不维护两套事实）：
+    - "missing"：source.json 缺失或该 case 不在 ct_lite 库级清单 evidence_scope
+      内（S3R1：不默认 {"source": "total", "task": "total"}——"来源未知"不得
+      变成"来源已知"；调用方按缺失处理，prepare_dataset 预检拒绝）。历史目录
+      可显式补录来源并记录 backfill 依据，不删不重做
+    - "inferred"：文件带 backfill=true 且无 attestation 字段（回填推断——
+      mtime 窗口判据只能证"同一次拷贝"，不能证"同源产生"，证据等级低于实测）
+    - "asserted"：文件带 attestation 字段（取该值），或旧实测写入（无
+      attestation 无 backfill——write_teacher_source_json 实测写下的默认实测）
     - source.json 存在 -> 逐字段读出（source/task/experimental/created_by），
       prepare_dataset 把**实测来源**过许可门禁（不硬编码，防止 ts_out 目录里
       混入 nnInteractive 修正产物或 licensed 任务 mask 时门禁被绕过）
@@ -266,7 +276,7 @@ def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
     """
     meta_path = teacher_out.parent / "source.json"
     if not meta_path.exists():
-        return {"provenance_missing": True}
+        return {"provenance_status": "missing", "provenance_missing": True}
     try:
         doc = json.loads(meta_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
@@ -275,8 +285,26 @@ def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
         ) from e
     if not isinstance(doc, dict):
         raise DistillDataError(f"来源清单格式非法（非 dict）：{meta_path}")
-    doc["provenance_missing"] = False
+    # S3P2-R2 ct_lite 库级清单（evidence_scope 枚举）：teacher_out.name 不在
+    # cases 内的新增 case 按 missing 处理、不继承库级 provenance（scope 只
+    # 覆盖回填时枚举的 case，新增目录回填后才有来源）
+    if "cases" in doc and teacher_out.name not in doc["cases"]:
+        return {"provenance_status": "missing", "provenance_missing": True}
+    doc["provenance_status"] = provenance_status_of(doc)
+    doc["provenance_missing"] = doc["provenance_status"] == "missing"
     return doc
+
+
+def provenance_status_of(doc: dict[str, Any]) -> str:
+    """source.json 字段 -> 三元状态（映射规则定死，read_teacher_provenance 共用）。
+
+    - attestation 字段存在 -> 取该值（不校验枚举外值——写侧保证）
+    - 无 attestation：backfill=true -> "inferred"（回填推断）；否则 -> "asserted"
+      （旧实测写入，write_teacher_source_json 产出的默认实测）
+    """
+    if "attestation" in doc:
+        return str(doc["attestation"])
+    return "inferred" if doc.get("backfill") is True else "asserted"
 
 
 def write_teacher_source_json(teacher_out: Path, case_id: str) -> None:
@@ -284,16 +312,23 @@ def write_teacher_source_json(teacher_out: Path, case_id: str) -> None:
 
     推理脚本在 run_total 成功后调用：新跑出的 ts_out 不再靠"缺文件默认 total"，
     来源清单是实测写下的。失败 case 不写（目录里无 source.json = 该 case 未
-    成功产出，预检按 provenance_missing 拒绝——S3R1 不默认 total）。
+    成功产出，预检按 provenance_status 拒绝——S3R1 不默认 total）。
+
+    attestation 层级（S3P2-R2）：实测写下 attestation="asserted" +
+    evidence="run_output"；升级路径——覆盖 inferred（回填）文件时同样写
+    asserted（asserted 只能被更新的 asserted 覆盖，回填脚本永不降级）。
 
     内容与 read_teacher_provenance 的实测读回约定对齐：
-    {"source": "total", "task": "total", "created_by": ..., "case_id": ...}
+    {"source": "total", "task": "total", "created_by": ..., "case_id": ...,
+     "attestation": "asserted", "evidence": "run_output"}
     """
     doc = {
         "source": "total",
         "task": "total",
         "created_by": "run_distill_teacher_inference.py",
         "case_id": case_id,
+        "attestation": "asserted",
+        "evidence": "run_output",
     }
     path = teacher_out.parent / "source.json"
     path.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -484,13 +519,17 @@ def prepare_dataset(
     for c in pool:
         prov = read_teacher_provenance(c.teacher_out)
         provenances[c.case_id] = prov
-        if prov.get("provenance_missing"):
-            # S3R1：缺 source.json = 来源未知，不默认 total 进训练清单
-            # （历史目录先补录来源 + backfill 依据，再跑 prepare_dataset）
+        if prov.get("provenance_status") == "missing":
+            # S3R1：缺 source.json（或 ct_lite scope 外新增 case）= 来源未知，
+            # 不默认 total 进训练清单（历史目录先补录来源 + backfill 依据，
+            # 再跑 prepare_dataset）
             raise DistillDataError(
                 f"来源清单缺失 {c.case_id}：{c.teacher_out.parent / 'source.json'}"
                 "（不默认 total——来源未知不冒充已知；先补录来源并记录依据）"
             )
+        # S3P2-R2：inferred（回填推断）可用于研究，manifest 条目必须带
+        # attestation 使其肉眼可区分；asserted（实测）直接放行
+        c.attestation = str(prov.get("provenance_status", ""))
         # 许可门禁逐 case 强制：来源清单实测值（非硬编码）过白名单
         ok, reason = check_distill_source(
             str(prov.get("source", "")), teacher_task=str(prov.get("task", "")),
@@ -658,6 +697,7 @@ __all__ = [
     "missing_distill_classes",
     "nnunet_label_values",
     "prepare_dataset",
+    "provenance_status_of",
     "read_teacher_provenance",
     "teacher_out_complete",
     "write_teacher_source_json",
