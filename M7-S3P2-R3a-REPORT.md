@@ -25,7 +25,7 @@ git log --all -- "*LICENSE-CHECK*"   # 空输出
   (a) 保持现状（内部附件不入仓）(b) 计划文档另存（plans 仓自管）还是
   (c) 需要 tracked 入本仓。本报告按 (a)+(b) 执行。
 
-## 1. 提交列表（8 个，基线 d0ae8a5..HEAD）
+## 1. 提交列表（8 个，基线 d0ae8a5..HEAD，含本报告提交）
 
 | 提交 | 说明 |
 |---|---|
@@ -36,6 +36,7 @@ git log --all -- "*LICENSE-CHECK*"   # 空输出
 | cab477e | docs: ④商业审计内容抽成 gitignored 内部附件——LICENSE-CHECK.md 未 tracked 的归属处理 |
 | 64d9562 | test: ④补 CLI --profile 退役断言——脚本源码文本断言 |
 | 7651e45 | fix: ④prepare_dataset raw_root str 传参转 Path——CLI --out-root 直传 str 时 TypeError |
+| 01ff7ef | docs: R3a 轮次报告（本文件） |
 
 ## 2. diffstat（实测 `git diff d0ae8a5..HEAD --stat`）
 
