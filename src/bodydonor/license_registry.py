@@ -644,19 +644,23 @@ class LicenseRegistry:
                 if weights_present(e) and class_map_present(e) and not e["share_alike"]
             ]
             if not ready:
-                # 拒绝原因写明挡项（M7-S3P2 ⑥）：三分逐项
+                # 拒绝原因写明挡项（M7-S3P2 ⑥）：三分逐项收集后去重
+                # （审查 W1 修复：三元表达式串联有优先级陷阱，改逐条列表收集）
                 blocked = sorted(
                     {
-                        "缺权重" if not weights_present(e) else ""
-                        + "缺 class_map" if not class_map_present(e) else ""
-                        + "SA 义务" if e["share_alike"] else ""
+                        item
                         for e in ok
+                        for item in (
+                            *(["缺权重"] if not weights_present(e) else []),
+                            *(["缺 class_map"] if not class_map_present(e) else []),
+                            *(["SA 义务"] if e["share_alike"] else []),
+                        )
                     }
                 )
                 return (
                     False,
                     f"task '{task}' registered but not ready "
-                    f"(checkpoint 未部署；挡项: {'/'.join(b for b in blocked if b)}；"
+                    f"(checkpoint 未部署；挡项: {'/'.join(blocked)}；"
                     "见注册表就绪三分 weights_present/class_map_present/share_alike)",
                 )
             return True, "allowed"

@@ -494,6 +494,48 @@ def test_check_task_rejection_reason_names_blocked_item() -> None:
         lr.TEACHER_REGISTRY = saved
 
 
+def test_check_task_rejection_reason_combinations_all_named() -> None:
+    """R4a 审查 W1 失败测试先行：组合挡项时原因须逐项报全——三元表达式
+    优先级问题（`a if x else "" + b if y else ""` 解析为嵌套 else 分支）
+    曾使缺权重吞掉后续挡项；参数化 7 组合逐一断言。"""
+    from bodydonor import license_registry as lr
+
+    def _entry(task: str, wp: bool, cp: bool, sa: bool) -> dict:
+        e = dict(TEACHER_REGISTRY[0])
+        e["task"] = task
+        e["weight_integrity"] = (
+            {"sha256": "a", "size_bytes": 1, "status": "verified"}
+            if wp
+            else {"sha256": None, "size_bytes": None, "status": "not_recorded"}
+        )
+        e["class_map_ref"] = "prompt-targets/v1" if cp else "ts-classes/v1 (待建)"
+        e["share_alike"] = sa
+        e["output_license_inherits"] = ["CC-BY-NC-SA 4.0"] if sa else []
+        return e
+
+    # (wp, cp, sa) -> 期望挡项（全 True 时只报 SA；放行组合不在本测试）
+    cases = [
+        ((False, False, True), ["缺权重", "缺 class_map", "SA 义务"]),
+        ((False, True, True), ["缺权重", "SA 义务"]),
+        ((True, False, True), ["缺 class_map", "SA 义务"]),
+        ((False, False, False), ["缺权重", "缺 class_map"]),
+        ((True, False, False), ["缺 class_map"]),
+        ((False, True, False), ["缺权重"]),
+        ((True, True, True), ["SA 义务"]),
+    ]
+    saved = lr.TEACHER_REGISTRY
+    try:
+        for (wp, cp, sa), expected in cases:
+            e = _entry("t_combo", wp, cp, sa)
+            lr.TEACHER_REGISTRY = [e]
+            ok, msg = LicenseRegistry(_settings()).check_task("t_combo", modality="CT")
+            assert not ok, f"({wp},{cp},{sa}) 应被拒"
+            for item in expected:
+                assert item in msg, f"({wp},{cp},{sa}) 原因缺 {item}：{msg}"
+    finally:
+        lr.TEACHER_REGISTRY = saved
+
+
 def test_all_36_entries_three_ready_fields_valued() -> None:
     """⑥ 验收：36 条目逐条三字段可推导且有值（decision-table 式逐条断言）；
     ready 布尔在条目字典清零（字段退役，fixture 防回潮）。"""
