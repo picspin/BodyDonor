@@ -820,6 +820,8 @@ def test_write_teacher_source_json_roundtrip(tmp_path):
         "task": "total",
         "created_by": "run_distill_teacher_inference.py",
         "case_id": "amos_9301",
+        "attestation": "asserted",
+        "evidence": "run_output",
     }
     prov = read_teacher_provenance(ts_out)
     assert prov["provenance_status"] == "asserted"
