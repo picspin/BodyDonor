@@ -121,3 +121,31 @@ def test_no_fallback_reason_class_in_snapshot(table: dict) -> None:
     for key, item in table.items():
         assert item["distill"][1] != "blocked:other", f"{key} distill 落兜底类"
         assert item["route"][1] != "blocked:other", f"{key} route 落兜底类"
+
+
+def test_share_alike_semantics_nninteractive_vs_synthseg() -> None:
+    """M7-S3P2 ⑤：SA 轴语义两案例——nnInteractive（CC BY-NC-SA 4.0）是本仓
+    唯一 ShareAlike 来源，派生物须以 BY-NC-SA 分发；SynthSeg（FreeSurfer SLA）
+    是署名+修改标识条款，SLA 非 ShareAlike 许可（用户 2026-11-18 确认），
+    share_alike=False——报告标出请用户复核。"""
+    by_task = {(e["teacher_id"], e["task"]): e for e in TEACHER_REGISTRY}
+    nni = by_task[("nninteractive", "interactive_correction")]
+    assert nni["share_alike"] is True
+    assert any("CC-BY-NC-SA" in lic for lic in nni["output_license_inherits"])
+    synthseg = by_task[("synthseg", "brain_mri_qc")]
+    assert synthseg["share_alike"] is False
+    assert any("FreeSurfer Software License" in lic and "1(c)/(d)" in lic
+               for lic in synthseg["output_license_inherits"])
+    # 其余 34 条目全无 SA（flexray CC BY-NC 4.0 也不是 ShareAlike）
+    others = [e for e in TEACHER_REGISTRY if e is not nni]
+    assert all(e["share_alike"] is False for e in others)
+
+
+def test_src_no_research_distill_residual() -> None:
+    """M7-S3P2 ⑤：src 全树 research_distill 零残留（字段名退役，防线防回潮）。"""
+    src_root = Path(__file__).resolve().parents[1] / "src"
+    hits = [
+        str(p) for p in src_root.rglob("*.py")
+        if "research_distill" in p.read_text(encoding="utf-8")
+    ]
+    assert hits == [], f"src 残留 research_distill：{hits}"
