@@ -142,7 +142,7 @@ def test_main_dry_run_writes_nothing(fake_data, capsys):
 
 def test_main_writes_amos_per_case_and_ct_lite_library_level(fake_data, capsys):
     """写入位置契约：AMOS {case}/source.json 每目录一份；ct_lite ts_out/
-    source.json 一库一份——read_teacher_provenance 读回 provenance_missing=False。"""
+    source.json 一库一份——read_teacher_provenance 读回 provenance_status=inferred。"""
     amos_dir, ct_root = fake_data
     rc = bf._run(dry_run=False)
     assert rc == 0
@@ -161,11 +161,11 @@ def test_main_writes_amos_per_case_and_ct_lite_library_level(fake_data, capsys):
     assert ct_doc["cases"] == ["s0045", "s0899"]
     # read_teacher_provenance 读回（写入位置与读取位置一致的实质验收）
     assert read_teacher_provenance(amos_dir / "amos_0004" / "ts_out")[
-        "provenance_missing"
-    ] is False
+        "provenance_status"
+    ] == "inferred"
     assert read_teacher_provenance(ct_root / "ts_out" / "s0899")[
-        "provenance_missing"
-    ] is False
+        "provenance_status"
+    ] == "inferred"
 
 
 def test_main_idempotent_skips_existing(fake_data):
@@ -219,3 +219,116 @@ def test_main_ct_lite_fail_closed_when_any_case_undecided(tmp_path, monkeypatch,
     assert (amos_dir / "amos_0004" / "source.json").exists()
     err = capsys.readouterr().err
     assert "ct_lite" in err and "保持缺失" in err
+
+
+# ---------------------------------------------------------------------------
+# S3P2-R2 ①：证明字段（attestation/evidence/evidence_scope/generated_by）
+# ---------------------------------------------------------------------------
+
+def test_new_write_has_attestation_fields(fake_data):
+    """新回填文档带证明字段：attestation=inferred + evidence=mtime_window +
+    evidence_scope（AMOS 本 case）+ generated_by 含脚本 sha256。"""
+    amos_dir, _ = fake_data
+    assert bf._run(dry_run=False) == 0
+    doc = json.loads(
+        (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8")
+    )
+    assert doc["attestation"] == "inferred"
+    assert doc["evidence"] == "mtime_window"
+    assert doc["evidence_scope"] == "amos_0004"
+    assert doc["generated_by"].startswith("backfill_source_json.py sha256=")
+    sha = doc["generated_by"].split("=", 1)[1]
+    assert len(sha) == 64  # 实际脚本 sha256，非占位
+
+
+def test_upgrade_in_place_adds_fields_keeps_existing(fake_data):
+    """已有 backfill 文档就地补证明字段：原有字段保留，只增证明字段。"""
+    amos_dir, ct_root = fake_data
+    assert bf._run(dry_run=False) == 0
+    pre = json.loads(
+        (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8")
+    )
+    # 删证明字段模拟旧文件（R1b 时代磁盘现状）
+    for k in ("attestation", "evidence", "evidence_scope", "generated_by"):
+        pre.pop(k, None)
+    (amos_dir / "amos_0004" / "source.json").write_text(
+        json.dumps(pre, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    assert bf._run(dry_run=False) == 0
+    post = json.loads(
+        (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8")
+    )
+    # 原有字段保留（不删不重做）
+    for k in ("source", "task", "created_by", "case_id", "backfill",
+              "backfill_basis", "backfilled_at"):
+        assert post[k] == pre[k]
+    # 证明字段补齐
+    assert post["attestation"] == "inferred"
+    assert post["evidence"] == "mtime_window"
+    assert post["evidence_scope"] == "amos_0004"
+    assert post["generated_by"].startswith("backfill_source_json.py sha256=")
+
+
+def test_upgrade_never_downgrades_asserted(fake_data):
+    """不降级 asserted：已有 attestation=asserted 的文件不被回填覆盖。"""
+    amos_dir, _ = fake_data
+    assert bf._run(dry_run=False) == 0
+    doc = json.loads(
+        (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8")
+    )
+    doc["attestation"] = "asserted"
+    (amos_dir / "amos_0004" / "source.json").write_text(
+        json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    before = (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8")
+    assert bf._run(dry_run=False) == 0
+    assert (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8") == before
+
+
+def test_upgrade_idempotent_second_run_zero_changes(fake_data):
+    """inferred 已升级过：第二次跑不重写（幂等，attestation 已存在跳过）。"""
+    amos_dir, _ = fake_data
+    assert bf._run(dry_run=False) == 0
+    before = (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8")
+    assert bf._run(dry_run=False) == 0
+    assert (amos_dir / "amos_0004" / "source.json").read_text(encoding="utf-8") == before
+
+
+def test_ct_lite_library_scope_enumerates_cases(fake_data):
+    """ct_lite 库级清单 evidence_scope 枚举覆盖的 cases；读侧 scope 内
+    inferred、scope 外新增目录 missing（不继承库级 provenance）。"""
+    amos_dir, ct_root = fake_data
+    assert bf._run(dry_run=False) == 0
+    doc = json.loads(
+        (ct_root / "ts_out" / "source.json").read_text(encoding="utf-8")
+    )
+    assert doc["evidence_scope"] == ["s0045", "s0899"]
+    # scope 内 case -> inferred
+    assert read_teacher_provenance(ct_root / "ts_out" / "s0045")[
+        "provenance_status"
+    ] == "inferred"
+    # scope 外新增目录 -> missing（不继承）
+    (ct_root / "ts_out" / "s_new").mkdir()
+    assert read_teacher_provenance(ct_root / "ts_out" / "s_new")[
+        "provenance_status"
+    ] == "missing"
+
+
+def test_old_measured_write_without_backfill_maps_asserted(fake_data):
+    """旧实测写入（无 attestation 无 backfill）读侧映射 asserted；回填不覆盖。"""
+    amos_dir, _ = fake_data
+    (amos_dir / "amos_0005" / "ts_out").mkdir(parents=True)
+    (amos_dir / "amos_0005" / "source.json").write_text(
+        '{"source": "total", "task": "total", '
+        '"created_by": "run_distill_teacher_inference.py", "case_id": "amos_0005"}',
+        encoding="utf-8",
+    )
+    assert read_teacher_provenance(amos_dir / "amos_0005" / "ts_out")[
+        "provenance_status"
+    ] == "asserted"
+    # 回填不覆盖旧实测文件（无 backfill=true 不升级）
+    assert bf._run(dry_run=False) == 0
+    doc = json.loads(
+        (amos_dir / "amos_0005" / "source.json").read_text(encoding="utf-8")
+    )
+    assert "attestation" not in doc  # 未被写 inferred

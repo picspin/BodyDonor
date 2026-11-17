@@ -474,8 +474,9 @@ def test_build_train_pool_excludes_holdout(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_provenance_defaults_total_without_source_json(tmp_path):
-    """ts_out 旁无 source.json -> provenance_missing（不默认 total，来源未知不冒充已知）。"""
+    """ts_out 旁无 source.json -> provenance_status=missing（不默认 total，来源未知不冒充已知）。"""
     prov = read_teacher_provenance(tmp_path / "ts_out")
+    assert prov["provenance_status"] == "missing"
     assert prov["provenance_missing"] is True
     assert "source" not in prov
     assert "task" not in prov
@@ -503,6 +504,7 @@ def test_provenance_backfill_records_basis(tmp_path):
         encoding="utf-8",
     )
     prov = read_teacher_provenance(case_dir / "ts_out")
+    assert prov["provenance_status"] == "inferred"
     assert prov["provenance_missing"] is False
     assert prov["source"] == "total"
     assert prov["backfill"] is True
@@ -772,7 +774,7 @@ def test_prepare_dataset_rejects_missing_source_json(tmp_path, monkeypatch):
     _, ts_no_prov = _make_case_fixture(tmp_path, "amos_9401", full_classes)
     # 删掉 fixture 写下的 source.json（模拟失败 case / 未补录历史目录）
     (ts_no_prov.parent / "source.json").unlink()
-    assert read_teacher_provenance(ts_no_prov).get("provenance_missing") is True
+    assert read_teacher_provenance(ts_no_prov).get("provenance_status") == "missing"
 
     amos_train = tmp_path / "amos22_subset" / "train"
     (amos_train / "imagesTr").mkdir(parents=True)
@@ -820,6 +822,7 @@ def test_write_teacher_source_json_roundtrip(tmp_path):
         "case_id": "amos_9301",
     }
     prov = read_teacher_provenance(ts_out)
+    assert prov["provenance_status"] == "asserted"
     assert prov["provenance_missing"] is False
     assert prov["source"] == "total"
     assert prov["task"] == "total"
