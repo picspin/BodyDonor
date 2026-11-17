@@ -50,7 +50,7 @@
 
 三个调用方脚本内已无字面量 `"CT"`（grep 实测 EXIT=1 零命中）。
 
-### 4. 测试覆盖（12 个新测试，tests/test_segmentation.py TestResolveModality）
+### 4. 测试覆盖（11 个新测试，tests/test_segmentation.py TestResolveModality）
 
 | 测试 | 行 | 钉住 |
 |---|---|---|
