@@ -101,12 +101,18 @@ def test_entry_count_and_unique_keys_unchanged() -> None:
     assert len(keys) == 36
 
 
-def test_research_distill_is_single_decision_source() -> None:
-    """M-2 合并后单一来源：research_use 字段名在注册表清零，判定读
-    research_distill（本断言随合并提交落地；合并前 research_use 并存，红）。"""
+def test_two_axis_fields_single_decision_source() -> None:
+    """M7-S3P2 ⑤：research_use 与 research_distill 字段名在注册表清零，判定读
+    两轴 + license_verified（本断言随迁移提交落地；迁移前 research_distill
+    并存，红）。两轴逐条有值且取值合法。"""
     for e in TEACHER_REGISTRY:
         assert "research_use" not in e, f"{e['teacher_id']}/{e['task']} 仍有 research_use"
-        assert e["research_distill"] in ("allowed", "conditional", "blocked", "unverified")
+        assert "research_distill" not in e, (
+            f"{e['teacher_id']}/{e['task']} 仍有 research_distill（M7-S3P2 ⑤ 退役）"
+        )
+        assert e["attribution_required"] is True
+        assert isinstance(e["share_alike"], bool)
+        assert isinstance(e["license_verified"], bool)
 
 
 def test_no_fallback_reason_class_in_snapshot(table: dict) -> None:
