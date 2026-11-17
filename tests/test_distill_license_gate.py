@@ -913,3 +913,28 @@ def test_prepare_dataset_rejects_partial_ts_out(tmp_path, monkeypatch):
     assert not any((out_dir / "labelsTr").glob("*")) if (out_dir / "labelsTr").exists() else True
     assert not (out_dir / "dataset.json").exists()
     assert not (out_dir / "manifest.json").exists()
+
+
+def test_provenance_invalid_attestation_raises(tmp_path):
+    """S3P2-R2 审查 W1：attestation 非枚举值（如 bogus/null）-> DistillDataError
+    （不猜、不静默放行——与坏 JSON 处理一致，门禁不被手改绕过）。"""
+    case_dir = tmp_path / "amos_0034"
+    (case_dir / "ts_out").mkdir(parents=True)
+    (case_dir / "source.json").write_text(
+        '{"source": "total", "task": "total", "attestation": "bogus"}',
+        encoding="utf-8",
+    )
+    with pytest.raises(DistillDataError, match="attestation"):
+        read_teacher_provenance(case_dir / "ts_out")
+
+
+def test_provenance_null_attestation_raises(tmp_path):
+    """attestation null -> DistillDataError（不落字符串 "None"）。"""
+    case_dir = tmp_path / "amos_0036"
+    (case_dir / "ts_out").mkdir(parents=True)
+    (case_dir / "source.json").write_text(
+        '{"source": "total", "task": "total", "attestation": null}',
+        encoding="utf-8",
+    )
+    with pytest.raises(DistillDataError, match="attestation"):
+        read_teacher_provenance(case_dir / "ts_out")

@@ -298,12 +298,20 @@ def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
 def provenance_status_of(doc: dict[str, Any]) -> str:
     """source.json 字段 -> 三元状态（映射规则定死，read_teacher_provenance 共用）。
 
-    - attestation 字段存在 -> 取该值（不校验枚举外值——写侧保证）
+    - attestation 字段存在 -> 取该值，非 {"asserted","inferred"} 枚举 ->
+      DistillDataError（不猜、不静默放行——手改/新写入方的非法值与坏 JSON
+      同样拒绝，门禁不被绕过）
     - 无 attestation：backfill=true -> "inferred"（回填推断）；否则 -> "asserted"
       （旧实测写入，write_teacher_source_json 产出的默认实测）
     """
     if "attestation" in doc:
-        return str(doc["attestation"])
+        att = doc["attestation"]
+        if att not in ("asserted", "inferred"):
+            raise DistillDataError(
+                f"attestation 非法（{att!r} 不在 asserted/inferred 枚举，"
+                "不猜、不静默放行）"
+            )
+        return str(att)
     return "inferred" if doc.get("backfill") is True else "asserted"
 
 
