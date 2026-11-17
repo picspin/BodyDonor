@@ -4,6 +4,8 @@
 > 核查方式：GitHub raw / GitHub API / HuggingFace API / Zenodo API / PyPI API 读取原文，
 > 原文引用为逐字摘录（verbatim quote），标注 URL 与访问日期。
 > 本文件是 M0 验收物之一；配套：`config/settings.yaml` 的 `teacher.allowed_tasks` 白名单 + CI 白名单负测试。
+> 商用合规审计（M7-LICENSE-CHECK 商用列 + 本文 §1.3/§1.4/§2.2/§7 商用约束的汇总）抽在内部附件
+> `COMMERCIAL-CHECK-internal.md`（已 gitignore，不入仓——R3 ④）。
 > 结论如有变更（上游改许可、新增任务），更新本文件并跑 `bodydonor license` 复核。
 
 ---

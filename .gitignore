@@ -26,3 +26,7 @@ data/
 
 # uv
 # .venv 已排除；uv.lock 必须进仓（版本 pin，Q7）
+
+# 商用合规审计内部附件（信息留磁盘不入仓；tracked 许可文档是
+# LICENSES-THIRD-PARTY.md，归属未决见 R3a 报告）
+COMMERCIAL-CHECK-internal.md
