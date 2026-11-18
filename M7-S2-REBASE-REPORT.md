@@ -74,11 +74,15 @@
 ## 5. 全量重跑
 
 - 命令：后台 detached `PYTHONPATH=~/work/BodyDonor-S2/src ~/work/BodyDonor/.venv/bin/python -m pytest tests/ --junitxml=/home/gogvf/work/BodyDonor-S2/m7-s2-rebase-impl-fulltest-junit.xml -p no:warnings > /home/gogvf/work/bodydonor-plans/s2-rebase-impl-fullrun.log 2>&1`，PID **617815**（记录，不管道化输出，无并行第二路 pytest）。
-- 结果：**待全量跑完后填写（见 §5a）。**
+- 结果：**全量跑完，见 §5a（768 passed / 0 failed / 0 error / 0 skipped，exit 0）。**
 
-## 5a. 全量核对（占位）
+## 5a. 全量核对（实测）
 
-<!-- FULLTEST-RESULT -->
+- **JUnit testsuite：`errors="0" failures="0" skipped="0" tests="768"`**，time 2694.926s（0:44:54，2026-11-19T04:20 起）。
+- 日志 0 行 FAILED/ERROR（grep 实测），exit 0。
+- **768 passed / 0 failed / 0 error / 0 skipped**（实测 summary `768 passed in 2694.94s (0:44:54)`）。
+- 与收尾轮（2026-11-14）对比：当时 620 项收集、612 passed / 3 failed（GPU 锁相撞）/ 4 skipped（worktree db 空）；本轮 main 合并 PR #4 后测试集扩大到 768 项，且 4 条真实数据验收测试**全部真跑通过（0 skipped）**——上轮的 3 failed（锁相撞）与 4 skipped（db 空）均为环境性，本轮同环境复测消失，进一步证实非代码问题。
+- GPU 锁纪律：全程无并行第二路 pytest。
 
 ## 6. deep-reviewer 审查（findings 清单与处理）
 
