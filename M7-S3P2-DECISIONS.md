@@ -21,9 +21,9 @@
   moose 无 SA（训练数据含 NC 部分是独立 caveat 不进 SA 轴）——两轴取值
   与 R3b 预写的 restriction_basis 一致，用户确认。
 - **落点**：
-  - synthseg：`src/bodydonor/license_registry.py:248-249` R3b 预写句
+  - synthseg：`src/bodydonor/license_registry.py:251` R3b 预写句
     "无 SA（SLA 非 ShareAlike 许可——用户 2026-11-18 确认）"——保留原句不动。
-  - moose：`src/bodydonor/license_registry.py:282-283` 补"（用户 2026-11-18 确认）"。
+  - moose：`src/bodydonor/license_registry.py:283-284` 补"（用户 2026-11-18 确认）"。
   - `LICENSES-THIRD-PARTY.md:446-447` share_alike 段"（标出请用户复核）"
     改"（用户 2026-11-18 确认）"。
 - **历史轮次报告不动**：R3b/终报的"暂定待用户复核"是确认前历史记录。

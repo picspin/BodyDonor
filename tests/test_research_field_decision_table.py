@@ -127,7 +127,7 @@ def test_share_alike_semantics_nninteractive_vs_synthseg() -> None:
     """M7-S3P2 ⑤：SA 轴语义两案例——nnInteractive（CC BY-NC-SA 4.0）是本仓
     唯一 ShareAlike 来源，派生物须以 BY-NC-SA 分发；SynthSeg（FreeSurfer SLA）
     是署名+修改标识条款，SLA 非 ShareAlike 许可（用户 2026-11-18 确认），
-    share_alike=False——报告标出请用户复核。"""
+    share_alike=False（用户 2026-11-18 确认）。"""
     by_task = {(e["teacher_id"], e["task"]): e for e in TEACHER_REGISTRY}
     nni = by_task[("nninteractive", "interactive_correction")]
     assert nni["share_alike"] is True
