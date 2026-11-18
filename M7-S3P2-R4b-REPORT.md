@@ -15,6 +15,7 @@
 | `71a8699` | docs：本报告 + 审查 findings 落盘（+119） |
 | `bbb638d` | docs：报告提交列表补本报告提交 71a8699（+1） |
 | `178f189` | fix：报告/审查文档（*-REPORT.md/*-REVIEW.md）跳过守卫扫描（+5/−1） |
+| `dacfea8` | docs：报告提交列表/状态表补 178f189（+6/−3） |
 
 diffstat（实测，c1b6d87..HEAD）：`tests/test_license_whitelist.py | 78 ++++++++++` + 报告/审查文档 2 份（+165），3 files changed 198 insertions（报告提交 71a8699 前实测）；追加 bbb638d/178f189 后含文档 5 提交。
 
