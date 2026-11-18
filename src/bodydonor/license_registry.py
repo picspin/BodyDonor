@@ -278,7 +278,7 @@ TEACHER_REGISTRY: list[dict] = [
         "restriction_basis": "许可明文 + 法务未决：权重 CC BY 4.0 本身允许商用（含衍生），"
         "不禁止本地科研蒸馏（LICENSE-CHECK §五）；保留在 NC 训练数据溯源（AutoPET）与"
         "'Commercial Version' 关系两项未决（§五未解决项 2/3），法务澄清后可升级 allowed。"
-        "两轴：署名义务，无 SA（训练数据含 NC 部分是独立 caveat，不进 SA 轴）",
+        "两轴：署名义务，无 SA（训练数据含 NC 部分是独立 caveat，不进 SA 轴——用户 2026-11-18 确认）",
         "output_license_inherits": ["CC BY 4.0（署名条款，MODEL_LICENSE）"],
         "class_map_ref": "moose-classes/v1 (待建)",
         "data_contract_version": "v1",

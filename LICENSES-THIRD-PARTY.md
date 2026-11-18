@@ -442,7 +442,7 @@ M1 下载登记时在引用文献里完成署名义务。
 - `attribution_required`（恒 True）：署名义务——research 不化解署名。
 - `share_alike`：SA 义务——仅 nnInteractive 为 True（CC BY-NC-SA 4.0
   ShareAlike 传染，§2.2）；SynthSeg 的 FreeSurfer SLA 不是 ShareAlike 许可
-  （标出请用户复核），Moose 权重 CC BY 4.0 亦非 SA。
+  （用户 2026-11-18 确认），Moose 权重 CC BY 4.0 亦非 SA。
 - `license_verified`：准入证据强度（双证据 true / 单一来源或出入 false）——
   两轴描述义务不能单独编码准入（7 个 unverified 与 25 个 allowed 同为
   Apache-2.0，两轴值相同），准入判定只读本字段：
