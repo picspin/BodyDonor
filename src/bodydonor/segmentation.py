@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .license_registry import LicenseRegistry
+from .license_registry import MODALITY_ALIASES, LicenseRegistry
 
 # TotalSegmentator 独立 venv（Q7：隔离环境）
 DEFAULT_TS_VENV = Path.home() / "work" / "BodyDonor" / ".venv-totalseg"
@@ -160,6 +160,65 @@ class RunnerResult:
         )
 
 
+# c 档唯一「数据集即 CT」对照表：a) 属性 b) DICOM 标签都无来源时兜底。
+# 每项依据：AMOS22 子集取 CT 部分（amos22 CT 子集切分）、ts_public 是
+# TotalSegmentator 公开 CT 集、ct_lite 即 CT 数据集。后续若要求每 case
+# 实测来源，需改 holdout.txt/数据清单格式（本轮不改）。
+DATASET_MODALITY: dict[str, str] = {
+    "amos": "CT",
+    "ts_public": "CT",
+    "ct_lite": "CT",
+}
+
+
+def _dicom_modality(path: Path) -> str | None:
+    """DICOM 文件内 Modality 标签（ingest.py W4 口径：缺失/空/字面 None 一律当缺失）。"""
+    import pydicom
+
+    try:
+        ds = pydicom.dcmread(str(path), force=False, stop_before_pixels=True)
+    except Exception:
+        return None
+    raw = getattr(ds, "Modality", None)
+    if raw is None:
+        return None
+    m = str(raw).strip()
+    if not m or m.upper() == "NONE":
+        return None
+    return m
+
+
+def resolve_modality(series: Any) -> str:
+    """三档解析模态（fail-closed，绝不默认 CT）。
+
+    a) 对象 .modality 属性（strip+upper，MODALITY_ALIASES 归一 PT→PET 等）；
+    b) 入参是 DICOM 文件/目录时读 Modality 标签（W4 口径）；
+    c) 数据集对照表 DATASET_MODALITY（对象 .source 属性或裸数据集名字符串）；
+    d) 三档皆无 -> ValueError（不猜）。
+    """
+    # a) 属性
+    raw = getattr(series, "modality", None)
+    if isinstance(raw, str) and raw.strip():
+        m = raw.strip().upper()
+        return MODALITY_ALIASES.get(m, m)
+    # b) DICOM 标签（入参本身是路径时）
+    p = Path(series) if isinstance(series, (str, Path)) else None
+    if p is not None and p.exists():
+        m = _dicom_modality(p if p.is_file() else next(iter(sorted(p.glob("*"))), p))
+        if m:
+            mm = m.strip().upper()
+            return MODALITY_ALIASES.get(mm, mm)
+    # c) 数据集对照表
+    source = getattr(series, "source", None)
+    if isinstance(source, str) and source in DATASET_MODALITY:
+        return DATASET_MODALITY[source]
+    if isinstance(series, str) and series in DATASET_MODALITY:
+        return DATASET_MODALITY[series]
+    raise ValueError(
+        f"modality 无来源（属性/DICOM 标签/数据集对照表皆无）：{series!r}，拒绝猜测"
+    )
+
+
 def run_total(
     image_path: Path,
     out_dir: Path,
@@ -167,7 +226,8 @@ def run_total(
     device: str = "gpu",
     settings: Settings | None = None,
     job_id: str = "",
-    modality: str | None = None,
+    *,
+    modality: str,
 ) -> RunnerResult:
     """以 JSON 契约调 TS runner（M2-align 3.2）：任务 JSON stdin -> 结果 JSON stdout。
 
@@ -356,9 +416,14 @@ def segment_series(
         engine.dispose()
     if row is None:
         raise SegmentWorkerError(f"unknown series: {series_id}")
-    # 白名单一票否决（分发层）：Series.modality 先查再传（S3 B1：MR series
-    # 不可派发 CT-only 任务；模态 NULL 时 check_task 退化为仅 task 门控）
-    check_worker_task(task, settings, modality=row.modality)
+    # 白名单一票否决（分发层）：Series.modality 优先，NULL 时 DICOM 标签回退、
+    # 再无则 raise（S3P2 ② fail-closed，闭合 S3P 未决 #4：NULL 模态不再退化为仅 task 门控）
+    try:
+        modality = resolve_modality(row)
+    except ValueError as e:
+        # app.py/cli.py 只捕获 SegmentWorkerError：ValueError 转型（否则 500/traceback）
+        raise SegmentWorkerError(str(e)) from None
+    check_worker_task(task, settings, modality=modality)
     if not row.storage_key:
         raise SegmentWorkerError(f"series {series_id} 无像素（commit 未落盘）")
 
@@ -416,6 +481,7 @@ def segment_series(
                 device=device,
                 settings=settings,
                 job_id=job_id,
+                modality=modality,
             )
         finally:
             _poll_stop.set()
@@ -528,6 +594,7 @@ __all__ = [
     "build_runner_cmd",
     "check_worker_task",
     "gpu_peak_memory_mi_b",
+    "resolve_modality",
     "merge_ts_output",
     "run_total",
     "segment_series",

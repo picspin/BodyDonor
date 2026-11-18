@@ -19,6 +19,9 @@ from bodydonor.segmentation import (
     SegmentWorkerError,
     check_worker_task,
     merge_ts_output,
+    resolve_modality,
+    run_total,
+    segment_series,
     ts_venv_cli,
 )
 
@@ -34,10 +37,16 @@ class TestWhitelist:
         """total 在白名单，放行。"""
         check_worker_task("total", settings)  # 不 raise
 
-    def test_brain_aneurysm_blocked(self, settings: Settings) -> None:
-        """brain_aneurysm 一票否决（CC BY-NC，无商业授权渠道）。"""
+    def test_blocked_task_vetoed_in_memory(self) -> None:
+        """blocked_tasks 机制：一票否决（内存条目——R3 ④删 brain_aneurysm 商用
+        理由后项目 config 的 blocked 列表为空，机制用内存条目验证）。"""
+        from bodydonor.config import TeacherConfig
+
+        blocked_settings = Settings(
+            teacher=TeacherConfig(allowed_tasks=[], blocked_tasks=["registry_blocked_task"])
+        )
         with pytest.raises(SegmentWorkerError, match="BLOCKED"):
-            check_worker_task("brain_aneurysm", settings)
+            check_worker_task("registry_blocked_task", blocked_settings)
 
     def test_not_in_whitelist_rejected(self, settings: Settings) -> None:
         """注册表无条目任务拒绝（M7-S3F ②：白名单回退退役，注册表唯一来源）。"""
@@ -50,9 +59,9 @@ class TestWhitelist:
 
         ok, _ = LicenseRegistry(settings).check_task("total")
         assert ok is True
-        ok, msg = LicenseRegistry(settings).check_task("brain_aneurysm")
+        ok, msg = LicenseRegistry(settings).check_task("coronary_arteries")
         assert ok is False
-        assert "BLOCKED" in msg
+        assert "not in teacher registry" in msg
 
 
 class TestMergeOutput:
@@ -136,16 +145,13 @@ class TestSegmentApi:
         monkeypatch.setattr(
             app_module.settings, "data_dir", tmp_path / "data"
         )
-        # mock segment_series（TS CLI 不进 CI）：白名单语义保留——blocked 任务
+        # mock segment_series（TS CLI 不进 CI）：白名单语义保留——白名单外任务
         # 由 mock 抛 SegmentWorkerError（与真实分发层 check_worker_task 一致）
         def _fake_segment(sid, s, task="total", device="gpu"):  # noqa: ANN001
             if task not in ("total", "total_mr", "body"):
-                # 模拟 license_registry.check_task 的注册表拒绝（BLOCKED/not in）
+                # 模拟 license_registry.check_task 的注册表拒绝（not in registry）
                 raise SegmentWorkerError(
-                    f"任务白名单拒绝：task '{task}' is BLOCKED (license: see "
-                    "LICENSES-THIRD-PARTY.md)"
-                    if task == "brain_aneurysm"
-                    else f"任务白名单拒绝：task '{task}' not in teacher registry"
+                    f"任务白名单拒绝：task '{task}' not in teacher registry"
                 )
             return _FakeResult(sid, task)
 
@@ -161,15 +167,15 @@ class TestSegmentApi:
         assert body["series_id"] == "nifti-abc"
         assert body["task"] == "total"
 
-    def test_segments_blocked_task_422(self) -> None:
-        """blocked 任务 → 422（白名单在分发层，不许绕过）。"""
+    def test_segments_unregistered_task_422(self) -> None:
+        """白名单外任务 → 422（白名单在分发层，不许绕过）。"""
         with TestClient(__import__("bodydonor.app", fromlist=["app"]).app) as c:
             r = c.post(
                 "/segments",
-                params={"series_id": "nifti-abc", "task": "brain_aneurysm"},
+                params={"series_id": "nifti-abc", "task": "coronary_arteries"},
             )
         assert r.status_code == 422
-        assert "BLOCKED" in r.text
+        assert "not in teacher registry" in r.text
 
 
 class _FakeResult:
@@ -194,3 +200,117 @@ class _FakeResult:
             "elapsed_s": self.elapsed_s,
             "peak_memory_mi_b": self.peak_memory_mi_b,
         }
+
+
+class TestResolveModality:
+    """S3P2 ②：resolve_modality 三档 fail-closed + run_total 必填 modality。"""
+
+    def test_tier_a_attr(self) -> None:
+        """a 档：.modality 属性优先，strip+upper+别名归一（PT→PET）。"""
+
+        class Row:
+            modality = " pt "
+            source = "amos"
+
+        assert resolve_modality(Row()) == "PET"
+
+    def test_tier_a_attr_no_alias(self) -> None:
+        """a 档：普通 CT 属性直接归一。"""
+
+        class Row:
+            modality = "ct"
+
+        assert resolve_modality(Row()) == "CT"
+
+    def test_tier_b_dicom_file(self, tmp_path: Path) -> None:
+        """b 档：入参是 DICOM 文件时读 Modality 标签（W4 口径）。"""
+        pydicom = pytest.importorskip("pydicom")
+        ds = pydicom.dataset.FileDataset(
+            "x", {}, file_meta=pydicom.dataset.FileMetaDataset(), preamble=b"\0" * 128
+        )
+        ds.Modality = "MR"
+        p = tmp_path / "slice.dcm"
+        ds.save_as(p, enforce_file_format=False)
+        assert resolve_modality(p) == "MR"
+
+    def test_tier_b_dicom_dir(self, tmp_path: Path) -> None:
+        """b 档：入参是 DICOM 目录时取第一个文件的 Modality。"""
+        pydicom = pytest.importorskip("pydicom")
+        ds = pydicom.dataset.FileDataset(
+            "x", {}, file_meta=pydicom.dataset.FileMetaDataset(), preamble=b"\0" * 128
+        )
+        ds.Modality = "CT"
+        d = tmp_path / "series"
+        d.mkdir()
+        ds.save_as(d / "1.dcm", enforce_file_format=False)
+        assert resolve_modality(d) == "CT"
+
+    def test_tier_c_dataset_table(self) -> None:
+        """c 档：.source 走数据集对照表（HoldoutEntry 形态）。"""
+
+        class Entry:
+            case_id = "amos_0001"
+            source = "amos"
+
+        assert resolve_modality(Entry()) == "CT"
+
+    def test_tier_c_bare_dataset_name(self) -> None:
+        """c 档：裸数据集名字符串（ct_lite 脚本路径）。"""
+        assert resolve_modality("ct_lite") == "CT"
+
+    def test_tier_d_raise(self) -> None:
+        """d 档：三档皆无 -> ValueError（不猜、不默认 CT）。"""
+
+        class Empty:
+            modality = None
+            source = "unknown_set"
+
+        with pytest.raises(ValueError, match="modality 无来源"):
+            resolve_modality(Empty())
+
+    def test_tier_d_dicom_missing_tag_raises(self, tmp_path: Path) -> None:
+        """b 档 DICOM 文件无 Modality 标签且无 c 档 -> raise（不默认）。"""
+        pydicom = pytest.importorskip("pydicom")
+        ds = pydicom.dataset.FileDataset(
+            "x", {}, file_meta=pydicom.dataset.FileMetaDataset(), preamble=b"\0" * 128
+        )
+        p = tmp_path / "no_modality.dcm"
+        ds.save_as(p, enforce_file_format=False)
+        with pytest.raises(ValueError, match="modality 无来源"):
+            resolve_modality(p)
+
+    def test_run_total_modality_required(self, tmp_path: Path) -> None:
+        """run_total 不传 modality 即 TypeError（签名层 fail-closed）。"""
+        with pytest.raises(TypeError, match="modality"):
+            run_total(tmp_path / "img.nii.gz", tmp_path / "out")
+
+    def test_segment_series_null_modality_raises_worker_error(self, tmp_path: Path) -> None:
+        """W1（R1a 审查）：NULL 模态 Series → SegmentWorkerError（非 ValueError）。
+
+        app.py / cli.py 只捕获 SegmentWorkerError；ValueError 会变成 500/traceback。
+        """
+        from sqlalchemy.orm import Session
+
+        from bodydonor import db
+        from bodydonor.db import init_db
+        from bodydonor.models import Case, Series
+
+        url = f"sqlite:///{tmp_path / 'w1.db'}"
+        init_db(url)
+        s = Settings()
+        s.database.url = url
+        engine = db._engine(url)
+        try:
+            with engine.connect() as c:
+                sess = Session(c)
+                sess.add(Case(case_id="case-w1"))
+                sess.add(
+                    Series(series_id="series-w1", case_id="case-w1", modality=None)
+                )
+                sess.commit()
+                sess.close()
+        finally:
+            engine.dispose()
+
+        with pytest.raises(SegmentWorkerError, match="modality"):
+            segment_series("series-w1", s, task="total")

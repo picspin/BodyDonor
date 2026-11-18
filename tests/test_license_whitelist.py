@@ -1,19 +1,26 @@
 """许可白名单负测试（M0 CI）。
 
 推理 worker 的任务分发层拒绝执行白名单外任务（M7-S3F ② 起注册表唯一来源）：
-- brain_aneurysm：禁用任务（CC BY-NC 4.0 且无商业授权渠道）——一票否决
+- blocked_tasks 机制：一票否决（R3 ④删 brain_aneurysm 商用理由后机制保留，
+  blocked 列表现在为空——机制测试用内存条目验证）
 - heartchambers_highres：licensed 任务，注册表无条目——拒绝
 - 任意未知任务名——拒绝
-放行路径：注册表 ready 条目（代码级静态条目，(task, modality) 门控）；
+放行路径：注册表就绪条目（M7-S3P2 ⑥ 就绪三分，(task, modality) 门控）；
 白名单回退已退役（M7-S3F ②）——注册表无条目即拒绝带原因。
 """
 
 from __future__ import annotations
 
+import re
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from bodydonor.config import Settings, TeacherConfig, load_settings
 from bodydonor.license_registry import LicenseRegistry
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -22,24 +29,25 @@ def registry() -> LicenseRegistry:
     return LicenseRegistry(load_settings())
 
 
-def test_blocked_task_brain_aneurysm_rejected(registry: LicenseRegistry) -> None:
-    """CC BY-NC 4.0 且无商业授权渠道的任务必须被一票否决，即使有人误加白。"""
-    ok, msg = registry.check_task("brain_aneurysm")
-    assert not ok
-    assert "BLOCKED" in msg
-
-
-def test_blocked_overrides_whitelist() -> None:
-    """即使 blocked 任务被错误写进 allowed_tasks，blocked 仍一票否决。"""
+def test_blocked_task_vetoed_in_memory_entry() -> None:
+    """blocked_tasks 机制：一票否决（内存条目验证——R3 ④删 brain_aneurysm
+    商用理由后项目 config 的 blocked 列表为空，机制本身保留）。"""
     bad = Settings(
         teacher=TeacherConfig(
-            allowed_tasks=["brain_aneurysm"],
-            blocked_tasks=["brain_aneurysm"],
+            allowed_tasks=["some_task"],
+            blocked_tasks=["some_task"],
         )
     )
-    ok, msg = LicenseRegistry(bad).check_task("brain_aneurysm")
+    ok, msg = LicenseRegistry(bad).check_task("some_task")
     assert not ok
     assert "BLOCKED" in msg
+
+
+def test_project_config_blocked_list_empty() -> None:
+    """R3 ④：项目 config/settings.yaml 的 blocked 列表为空（brain_aneurysm
+    商用理由已删，无其他任务被阻断）。"""
+    t = load_settings().teacher
+    assert t.blocked_tasks == []
 
 
 def test_licensed_task_not_whitelisted_by_default(registry: LicenseRegistry) -> None:
@@ -69,20 +77,19 @@ def test_total_task_allowed(registry: LicenseRegistry) -> None:
     assert ok, msg
 
 
-def test_commercial_distill_whitelist_only_total() -> None:
-    """商用蒸馏白名单只允许 total（LICENSES-THIRD-PARTY.md §7）。"""
+def test_commercial_distill_config_retired() -> None:
+    """R3 ④：commercial_distill_tasks 字段已删（TeacherConfig 无此字段）。"""
     t = load_settings().teacher
-    assert t.commercial_distill_tasks == ["total"]
-    assert t.is_commercial_distill_allowed("total")
-    assert not t.is_commercial_distill_allowed("lung_vessels")
-    assert not t.is_commercial_distill_allowed("heartchambers_highres")
+    assert not hasattr(t, "commercial_distill_tasks")
+    assert not hasattr(t, "is_commercial_distill_allowed")
 
 
 def test_bare_settings_registry_ready_task_allowed() -> None:
-    """空配置：注册表 ready 条目仍放行（契约变化，M7-S3 记录在案）。
+    """空配置：注册表就绪条目仍放行（契约变化，M7-S3 记录在案；M7-S3P2 ⑥
+    ready 布尔退役——就绪读三分 weights_present/class_map_present/share_alike）。
 
     M7-S3F ②：check_task 数据来源改读注册表（代码级静态条目，Apache-2.0 已核查），
-    注册表内 ready 条目放行——配置不再能撤销注册表内任务，仅 blocked_tasks
+    注册表内就绪条目放行——配置不再能撤销注册表内任务，仅 blocked_tasks
     能否决；注册表外未注册任务仍 fail-closed（白名单回退已退役）。
     """
     t = Settings().teacher
@@ -110,5 +117,81 @@ def test_settings_yaml_matches_verified_license_facts() -> None:
     # 核查确认需 license 的任务默认不加白
     for task in ("heartchambers_highres", "appendicular_bones", "tissue_types", "face"):
         assert task not in t.allowed_tasks, f"{task} 是 licensed 任务，默认不加白"
-    # 核查确认禁用
-    assert "brain_aneurysm" in t.blocked_tasks
+    # R3 ④：brain_aneurysm 商用理由已删，无任务被 blocked（列表为空）
+    assert t.blocked_tasks == []
+
+
+_NC_OPEN_SOURCE_RE = re.compile(
+    "open[" r"\s" "-]?source|open" "source|开" "源",  # 字面量拆开避免自命中
+    re.IGNORECASE,
+)
+
+# 白名单：仓库自身 Apache-2.0 层（Q2 已定分层）的保留行，按行号从
+# 真实文件动态读取——守卫文件内不硬编码这些文本（echo 行会自命中）。
+# 行号脆弱：格式微调即红，与守卫语义一致（改动保留行本就该过人审）。
+_ALLOWED_LINE_REFS = (
+    (Path("LICENSES-THIRD-PARTY.md"), (397,)),
+    (Path("proposal.md"), (16, 20, 33)),
+)
+
+# 受跟踪文件列表（git ls-files）——不扫未跟踪/gitignored 本地产物，
+# 本地与 CI 结果一致（审查 F2）。轮次报告/审查文档（*-REPORT.md /
+# *-REVIEW.md）是审查产物，引用检索词是本职——跳过。
+_SCAN_SKIP_DIRS = {".git", ".venv", ".pytest_cache", ".ruff_cache", "__pycache__"}
+_SCAN_SKIP_FILE_RE = re.compile(r"-REPORT\.md$|-REVIEW\.md$")
+_SCAN_SUFFIXES = {
+    ".md", ".py", ".txt", ".yaml", ".yml", ".json", ".html", ".rst", ".cfg",
+    ".toml", ".sh", ".js", ".ini", ".mako", ".lock", ".gitignore",
+}
+
+
+def test_no_nc_component_described_as_open_source() -> None:
+    """S3P2-R4b ⑦ 术语守卫：全仓受跟踪文本文件不得把 NC 许可成分
+    表述为那两个英文词（NC 不满足 OSI 定义；NC 成分应表述为
+    source-available, non-commercial）。R4b 清查实测：零处命中——
+    既有命中仅为 (a) 上游 Apache-2.0 README 逐字引用（"Openly
+    available for any usage"，表述准确，保留——正则抓的是 open+source
+    相邻组合，不碰该引文）与 (b) 仓库自身 Apache-2.0 层的中文表述
+    （proposal.md 分层，按行号白名单保留）。守卫防回归：若将来引入
+    NC 成分的那类表述，此测试红。审查 F1：本文件不做整文件自跳过——
+    正则字面量拆开 + 白名单动态读取 + 本文措辞改写，自身零命中；
+    将来写进本文件的违规表述仍会被抓住。"""
+    allowed_lines = set()
+    for f, nums in _ALLOWED_LINE_REFS:
+        lines = (REPO_ROOT / f).read_text(encoding="utf-8").splitlines()
+        for n in nums:
+            allowed_lines.add((f, lines[n - 1].strip()))
+    violations: list[str] = []
+    tracked = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "ls-files"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout.splitlines()
+    for name in sorted(tracked):
+        p = REPO_ROOT / name
+        if not p.is_file() or p.suffix.lower() not in _SCAN_SUFFIXES:
+            continue
+        rel_parts = set(Path(name).parts)
+        if rel_parts & _SCAN_SKIP_DIRS:
+            continue
+        if _SCAN_SKIP_FILE_RE.search(name):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            violations.append(f"{name}: <decode failed>")
+            continue
+        rel = Path(name)
+        for i, line in enumerate(text.splitlines(), 1):
+            if not _NC_OPEN_SOURCE_RE.search(line):
+                continue
+            if (rel, line.strip()) in allowed_lines:
+                continue
+            violations.append(f"{rel}:{i}: {line.strip()[:120]}")
+    assert not violations, (
+        "发现把 NC 许可成分表述为那两个英文词的行"
+        "（NC 不符合 OSI 定义；应表述为 source-available, non-commercial）:\n"
+        + "\n".join(violations)
+    )

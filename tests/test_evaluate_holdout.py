@@ -13,6 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from bodydonor.holdout import HoldoutEntry
+from bodydonor.segmentation import resolve_modality
+
 EVAL_SCRIPT = Path(__file__).resolve().parents[1] / "eval" / "evaluate_holdout.py"
 
 
@@ -105,3 +108,35 @@ def test_prostate_spotlight_full(eh):
 def test_prostate_spotlight_absent(eh):
     """无 prostate 计分时聚光为 None（不造字段）。"""
     assert eh.prostate_spotlight({"liver": 0.9}, {"liver": 30}, {}, []) is None
+
+
+def test_ts_teacher_inference_passes_modality(eh, monkeypatch, tmp_path):
+    """S3P2 ②：run_total 调用点 modality 由 resolve_modality 按条目解析
+    （HoldoutEntry.source 走数据集对照表，fail-closed 不默认 CT）。
+    """
+    captured = {}
+
+    class FakeRunner:
+        peak_vram_mb = None
+
+    def fake_run_total(image_path, out_dir, **kwargs):
+        captured.update(kwargs)
+        return FakeRunner()
+
+    def fake_acquire(*args, **kwargs):
+        class FakeLock:
+            def release(self):
+                return None
+
+        return FakeLock()
+
+    monkeypatch.setattr(
+        "bodydonor.segmentation.run_total", fake_run_total, raising=False
+    )
+    monkeypatch.setattr("bodydonor.gpu_lock.acquire", fake_acquire, raising=False)
+    entry = HoldoutEntry(case_id="s0045", source="ts_public")
+    out, peak = eh.ts_teacher_inference(tmp_path / "img.nii.gz", tmp_path / "out",
+                                        modality=resolve_modality(entry))
+    assert out == tmp_path / "out"
+    assert peak is None
+    assert captured.get("modality") == "CT"

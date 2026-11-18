@@ -42,12 +42,7 @@ class ExtractLimits(BaseModel):
 class TeacherConfig(BaseModel):
     engine: str = "totalsegmentator"
     allowed_tasks: list[str] = Field(default_factory=list)
-    commercial_distill_tasks: list[str] = Field(default_factory=list)
     blocked_tasks: list[str] = Field(default_factory=list)
-
-    def is_commercial_distill_allowed(self, task: str) -> bool:
-        """商用蒸馏白名单：仅 total（LICENSES-THIRD-PARTY.md §7）。"""
-        return task in self.commercial_distill_tasks
 
 
 class NnInteractiveConfig(BaseModel):

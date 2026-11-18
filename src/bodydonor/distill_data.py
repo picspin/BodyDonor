@@ -47,7 +47,8 @@ DISTILL_DATASET_ID = 501
 DISTILL_DATASET_NAME = f"Dataset{DISTILL_DATASET_ID:03d}_BodyDonorDistill"
 
 # ---------------------------------------------------------------------------
-# 许可门禁（LICENSES-THIRD-PARTY.md §8.1/§8.3；settings.yaml commercial_distill_tasks）
+# 许可门禁（LICENSES-THIRD-PARTY.md §8.1/§8.3；teacher 资格读注册表两轴+
+# license_verified，见 ontology.mask_allowed_in_distill_training docstring）
 # ---------------------------------------------------------------------------
 
 # 训练标签允许的来源白名单：TS total 教师 mask + 纯人工修正
@@ -81,42 +82,18 @@ REJECTED_SOURCES: dict[str, str] = {
     ),
 }
 
-# 商用蒸馏教师白名单（settings.teacher.commercial_distill_tasks 同源，代码内
-# 固化为常量以独立于 settings 加载；两处不一致由测试锁定）。
-# 仅商用路径使用——研究蒸馏路径不查它（M7-S3F ③ 用户定）
-COMMERCIAL_DISTILL_TASKS = frozenset({"total"})
-
-# 研究蒸馏路径不读 COMMERCIAL_DISTILL_TASKS（M7-S3F ③，测试注入验证脱钩）
-
-_DISTILL_PROFILES = ("commercial", "research")
-
-
 def check_distill_source(
     source: str,
     teacher_task: str = "",
     experimental: bool = False,
-    profile: str = "commercial",
 ) -> tuple[bool, str]:
     """蒸馏训练集准入检查（LICENSES §8.3 约束 1 的代码强制）。
 
     返回 (allowed, reason)。拒绝一律给出精确理由，不静默跳过。
 
-    profile（W8：非法值 raise ValueError，不静默落商用分支——CLI 已有 choices，
-    Python API 由本检查防护）：
-    - "commercial"（默认，行为与 HEAD 一致）：teacher 任务必须在
-      COMMERCIAL_DISTILL_TASKS（仅 total）；
-    - "research"：teacher 任务走注册表 research_use（ontology.
-      mask_allowed_in_distill_training 同语义；不由 commercial_distill_tasks
-      把关——S3 后续三项③）。
-
     - source 必须在 ALLOWED_TRAIN_SOURCES（total 教师 mask 或纯人工修正）
     - nnInteractive / SegVol / experimental 来源显式拒绝（REJECTED_SOURCES）
     """
-    if profile not in _DISTILL_PROFILES:
-        raise ValueError(
-            f"profile 非法：{profile!r}（期望 {list(_DISTILL_PROFILES)}；"
-            "大小写敏感，'Research' 不放行也不落商用分支）"
-        )
     if source in REJECTED_SOURCES:
         return False, REJECTED_SOURCES[source]
     if source not in ALLOWED_TRAIN_SOURCES:
@@ -126,13 +103,6 @@ def check_distill_source(
         )
     if experimental:
         return False, "experimental 标记产物不进蒸馏训练集（逃生通道隔离）"
-    if profile == "research" and source == "total":
-        # 研究路径：资格读注册表 research_use（不查 commercial_distill_tasks）
-        from .ontology import mask_allowed_in_distill_training
-
-        return mask_allowed_in_distill_training(
-            {"source": "teacher", "task": teacher_task, "experimental": False}
-        )
     if source == "total" and not teacher_task:
         # S3R4 W-4：source=total 缺 task 即拒绝（fail-closed）——补录路径手写
         # {"source": "total", "backfill": true} 无 task 不再过门禁（来源必须实测）
@@ -140,46 +110,32 @@ def check_distill_source(
             "source='total' 缺 teacher_task：来源必须实测（补录须写 task；"
             "空 task 不冒充已知——fail-closed）"
         )
-    if source == "total" and teacher_task not in COMMERCIAL_DISTILL_TASKS:
-        return False, (
-            f"teacher 任务 '{teacher_task}' 不在商用蒸馏白名单 "
-            f"{sorted(COMMERCIAL_DISTILL_TASKS)}（licensed 任务推定传染，LICENSES §8.1）"
+    if source == "total":
+        # R3 ④ + S3P2 ⑤：teacher 资格走注册表（两轴+license_verified，商用白名单
+        # 常量已删，防线不倒退——无条目/未核实即阻断）
+        from .ontology import mask_allowed_in_distill_training
+
+        return mask_allowed_in_distill_training(
+            {"source": "teacher", "task": teacher_task, "experimental": False}
         )
     return True, "ok"
 
 
-def mask_allowed_in_distill_training_strict(
-    mask_meta: dict[str, Any],
-    profile: str = "commercial",
-) -> tuple[bool, str]:
-    """扩展 ontology.mask_allowed_in_distill_training：M4 商用蒸馏的严格版。
+def mask_allowed_in_distill_training_strict(mask_meta: dict[str, Any]) -> tuple[bool, str]:
+    """扩展 ontology.mask_allowed_in_distill_training 的严格版。
 
     ontology 版只挡 experimental + teacher 任务；本版还挡：
     - nnInteractive 修正产物（source=nninteractive_guided 规范名 v2 +
       legacy 别名 manual-correction-nninteractive / nninteractive）
     - SegVol 逃生通道产物（source=segvol / segvol-escape）
     - 未知来源（不在 ALLOWED_TRAIN_SOURCES 也不在 REJECTED_SOURCES）
-
-    profile 透传 check_distill_source："commercial"（默认，与 HEAD 一致）/
-    "research"（研究路径，teacher 任务走注册表 research_use）；
-    非法值 raise ValueError（W8，透传层防护）。
     """
     if mask_meta.get("experimental"):
         return False, "experimental 标记的 mask 不进蒸馏训练集（逃生通道产物隔离）"
     return check_distill_source(
         str(mask_meta.get("source", "")),
         teacher_task=str(mask_meta.get("task", "")),
-        profile=profile,
     )
-
-
-def check_teacher_task_commercial(task: str) -> None:
-    """教师任务必须在商用蒸馏白名单（仅 total），否则 raise（纵深防线）。"""
-    if task not in COMMERCIAL_DISTILL_TASKS:
-        raise DistillDataError(
-            f"teacher 任务 '{task}' 不在商用蒸馏白名单 {sorted(COMMERCIAL_DISTILL_TASKS)}"
-            "（LICENSES §7/§8.1：商用蒸馏唯一安全教师）"
-        )
 
 
 class DistillDataError(Exception):
@@ -236,6 +192,9 @@ class DistillCase:
     # S3R4 M-3：默认空串——来源未知不冒充 total；prepare_dataset 门禁通过后实测覆盖
     label_source: str = ""
     teacher_task: str = ""
+    # S3P2-R2：证明层级（asserted=实测 | inferred=回填推断）——manifest 条目
+    # 必带，inferred 与 asserted 在 manifest/决策输出中肉眼可区分
+    attestation: str = ""
     n_classes_found: int = 0
     dropped_classes: list[str] = field(default_factory=list)
 
@@ -246,6 +205,7 @@ class DistillCase:
             "image_path": str(self.image_path),
             "label_source": self.label_source,
             "teacher_task": self.teacher_task,
+            "attestation": self.attestation,
             "teacher_out_dir": str(self.teacher_out),
             "n_classes_found": self.n_classes_found,
             "dropped_classes": list(self.dropped_classes),
@@ -255,10 +215,16 @@ class DistillCase:
 def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
     """读 ts_out 目录的来源清单（source.json，逐 case 可审计的事实源）。
 
-    - source.json 缺失 -> {"provenance_missing": True}（S3R1：不默认
-      {"source": "total", "task": "total"}——"来源未知"不得变成"来源已知"；
-      调用方对缺失来源按缺失处理，prepare_dataset 预检拒绝）。历史目录可显式
-      补录来源并记录 backfill 依据，不删不重做
+    三元状态 provenance_status（S3P2-R2：attestation 层级，布尔
+    provenance_missing 由同一状态同源推导，不维护两套事实）：
+    - "missing"：source.json 缺失或该 case 不在 ct_lite 库级清单 evidence_scope
+      内（S3R1：不默认 {"source": "total", "task": "total"}——"来源未知"不得
+      变成"来源已知"；调用方按缺失处理，prepare_dataset 预检拒绝）。历史目录
+      可显式补录来源并记录 backfill 依据，不删不重做
+    - "inferred"：文件带 backfill=true 且无 attestation 字段（回填推断——
+      mtime 窗口判据只能证"同一次拷贝"，不能证"同源产生"，证据等级低于实测）
+    - "asserted"：文件带 attestation 字段（取该值），或旧实测写入（无
+      attestation 无 backfill——write_teacher_source_json 实测写下的默认实测）
     - source.json 存在 -> 逐字段读出（source/task/experimental/created_by），
       prepare_dataset 把**实测来源**过许可门禁（不硬编码，防止 ts_out 目录里
       混入 nnInteractive 修正产物或 licensed 任务 mask 时门禁被绕过）
@@ -266,7 +232,7 @@ def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
     """
     meta_path = teacher_out.parent / "source.json"
     if not meta_path.exists():
-        return {"provenance_missing": True}
+        return {"provenance_status": "missing", "provenance_missing": True}
     try:
         doc = json.loads(meta_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
@@ -275,8 +241,34 @@ def read_teacher_provenance(teacher_out: Path) -> dict[str, Any]:
         ) from e
     if not isinstance(doc, dict):
         raise DistillDataError(f"来源清单格式非法（非 dict）：{meta_path}")
-    doc["provenance_missing"] = False
+    # S3P2-R2 ct_lite 库级清单（evidence_scope 枚举）：teacher_out.name 不在
+    # cases 内的新增 case 按 missing 处理、不继承库级 provenance（scope 只
+    # 覆盖回填时枚举的 case，新增目录回填后才有来源）
+    if "cases" in doc and teacher_out.name not in doc["cases"]:
+        return {"provenance_status": "missing", "provenance_missing": True}
+    doc["provenance_status"] = provenance_status_of(doc)
+    doc["provenance_missing"] = doc["provenance_status"] == "missing"
     return doc
+
+
+def provenance_status_of(doc: dict[str, Any]) -> str:
+    """source.json 字段 -> 三元状态（映射规则定死，read_teacher_provenance 共用）。
+
+    - attestation 字段存在 -> 取该值，非 {"asserted","inferred"} 枚举 ->
+      DistillDataError（不猜、不静默放行——手改/新写入方的非法值与坏 JSON
+      同样拒绝，门禁不被绕过）
+    - 无 attestation：backfill=true -> "inferred"（回填推断）；否则 -> "asserted"
+      （旧实测写入，write_teacher_source_json 产出的默认实测）
+    """
+    if "attestation" in doc:
+        att = doc["attestation"]
+        if att not in ("asserted", "inferred"):
+            raise DistillDataError(
+                f"attestation 非法（{att!r} 不在 asserted/inferred 枚举，"
+                "不猜、不静默放行）"
+            )
+        return str(att)
+    return "inferred" if doc.get("backfill") is True else "asserted"
 
 
 def write_teacher_source_json(teacher_out: Path, case_id: str) -> None:
@@ -284,16 +276,23 @@ def write_teacher_source_json(teacher_out: Path, case_id: str) -> None:
 
     推理脚本在 run_total 成功后调用：新跑出的 ts_out 不再靠"缺文件默认 total"，
     来源清单是实测写下的。失败 case 不写（目录里无 source.json = 该 case 未
-    成功产出，预检按 provenance_missing 拒绝——S3R1 不默认 total）。
+    成功产出，预检按 provenance_status 拒绝——S3R1 不默认 total）。
+
+    attestation 层级（S3P2-R2）：实测写下 attestation="asserted" +
+    evidence="run_output"；升级路径——覆盖 inferred（回填）文件时同样写
+    asserted（asserted 只能被更新的 asserted 覆盖，回填脚本永不降级）。
 
     内容与 read_teacher_provenance 的实测读回约定对齐：
-    {"source": "total", "task": "total", "created_by": ..., "case_id": ...}
+    {"source": "total", "task": "total", "created_by": ..., "case_id": ...,
+     "attestation": "asserted", "evidence": "run_output"}
     """
     doc = {
         "source": "total",
         "task": "total",
         "created_by": "run_distill_teacher_inference.py",
         "case_id": case_id,
+        "attestation": "asserted",
+        "evidence": "run_output",
     }
     path = teacher_out.parent / "source.json"
     path.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -440,12 +439,11 @@ def prepare_dataset(
     holdout_path: Path | None = None,
     dry_run: bool = False,
     job_id: str = "",
-    profile: str = "commercial",
 ) -> dict[str, Any]:
     """蒸馏数据集准备主入口：训练池 -> 泄漏重查 -> 逐 case 合并 -> nnU-Net 目录。
 
-    - 训练标签只来自 TS total 教师 mask（许可门禁逐 case 强制，profile 透传
-      check_distill_source：commercial 默认 / research 走注册表 research_use）
+    - 训练标签只来自 TS total 教师 mask（许可门禁逐 case 强制：check_distill_source
+      来源白名单 + 注册表两轴/license_verified 资格）
     - AMOS labelsTr / CT-Lite masks/ 绝不读入训练标签
     - 输出 nnUNet_raw/Dataset501_BodyDonorDistill：imagesTr/ labelsTr/
       dataset.json + manifest.json（逐 case 来源清单，ModelVersion 审计用）
@@ -464,7 +462,7 @@ def prepare_dataset(
     keep_classes = set(DISTILL_CLASSES.values())
     pool = build_train_pool(holdout_path)
 
-    raw_root = out_root or (Path.home() / "data" / "BodyDonor" / "nnUNet_raw")
+    raw_root = Path(out_root) if out_root else (Path.home() / "data" / "BodyDonor" / "nnUNet_raw")
     ds_dir = raw_root / DISTILL_DATASET_NAME
     images_tr = ds_dir / "imagesTr"
     labels_tr = ds_dir / "labelsTr"
@@ -484,17 +482,21 @@ def prepare_dataset(
     for c in pool:
         prov = read_teacher_provenance(c.teacher_out)
         provenances[c.case_id] = prov
-        if prov.get("provenance_missing"):
-            # S3R1：缺 source.json = 来源未知，不默认 total 进训练清单
-            # （历史目录先补录来源 + backfill 依据，再跑 prepare_dataset）
+        if prov.get("provenance_status") == "missing":
+            # S3R1：缺 source.json（或 ct_lite scope 外新增 case）= 来源未知，
+            # 不默认 total 进训练清单（历史目录先补录来源 + backfill 依据，
+            # 再跑 prepare_dataset）
             raise DistillDataError(
                 f"来源清单缺失 {c.case_id}：{c.teacher_out.parent / 'source.json'}"
                 "（不默认 total——来源未知不冒充已知；先补录来源并记录依据）"
             )
+        # S3P2-R2：inferred（回填推断）可用于研究，manifest 条目必须带
+        # attestation 使其肉眼可区分；asserted（实测）直接放行
+        c.attestation = str(prov.get("provenance_status", ""))
         # 许可门禁逐 case 强制：来源清单实测值（非硬编码）过白名单
         ok, reason = check_distill_source(
             str(prov.get("source", "")), teacher_task=str(prov.get("task", "")),
-            experimental=bool(prov.get("experimental", False)), profile=profile,
+            experimental=bool(prov.get("experimental", False)),
         )
         if not ok:
             raise DistillDataError(f"许可门禁拒绝 {c.case_id}：{reason}")
@@ -579,7 +581,6 @@ def prepare_dataset(
         "dataset": DISTILL_DATASET_NAME,
         "label_policy": {
             "allowed_sources": sorted(ALLOWED_TRAIN_SOURCES),
-            "teacher_tasks": sorted(COMMERCIAL_DISTILL_TASKS),
             "rejected": sorted(REJECTED_SOURCES),
             "amos_labelsTr_never_in_training": True,
             "ct_lite_masks_never_in_training": True,
@@ -643,7 +644,7 @@ def prepare_dataset(
 
 __all__ = [
     "ALLOWED_TRAIN_SOURCES",
-    "COMMERCIAL_DISTILL_TASKS",
+    "ALLOWED_TRAIN_SOURCES",
     "DISTILL_CLASSES",
     "DISTILL_DATASET_ID",
     "DISTILL_DATASET_NAME",
@@ -652,12 +653,12 @@ __all__ = [
     "REJECTED_SOURCES",
     "build_train_pool",
     "check_distill_source",
-    "check_teacher_task_commercial",
     "mask_allowed_in_distill_training_strict",
     "merge_teacher_mask",
     "missing_distill_classes",
     "nnunet_label_values",
     "prepare_dataset",
+    "provenance_status_of",
     "read_teacher_provenance",
     "teacher_out_complete",
     "write_teacher_source_json",

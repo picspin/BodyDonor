@@ -53,7 +53,8 @@ class SourceSeriesInfo:
     pixel_spacing: tuple[float, float] = (1.0, 1.0)  # (row, col) mm
     slice_thickness_mm: float = 1.0
     orientation_patient: tuple[float, ...] = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
-    # 每层 SOPInstanceUID + 切片位置（无则合成源实例按均匀层距排布）
+    # 每层 SOPInstanceUID + 切片位置（无则合成源实例按均匀层距排布）；
+    # sop_class_uid 可选（S3P2 ③：有则原样进 SEG 引用，无/空串走 fallback/raise）
     source_instances: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -74,8 +75,51 @@ class SegVerifyReport:
 
 
 def _normalize_modality(modality: str) -> str:
-    """内部别名归一化："X-ray" → CR（非 DICOM CS 合法值，W-1 同一语义）。"""
-    return "CR" if modality == "X-ray" else modality
+    """内部别名归一化："X-ray" → CR（非 DICOM CS 合法值，W-1 同一语义）；
+    其余值 strip().upper()（S3P1：与 license_registry check_task W8 同口径，
+    ingest 头标签只 strip 不 upper，小写变体不落默认 CT Storage）。"""
+    return "CR" if modality == "X-ray" else modality.strip().upper()
+
+
+# 合成源（无实例或实例无原样 SOP Class）的 fallback 映射表——S3P2 ③：
+# 仅 DX/CR/MR/CT 四模态（canonical 单一 SOP Class，刻意映射非默认兜底）；
+# 其余模态（PT/US/NM/MG/XA 及一切未映射）一律 raise，绝不默认 CT Image
+# Storage（静默产出结构错误的 SEG 比抛错危险）。
+_SYNTHETIC_SOP_CLASS_UIDS = {
+    "DX": "1.2.840.10008.5.1.4.1.1.1.1",  # Digital X-Ray Image Storage - Presentation
+    "CR": "1.2.840.10008.5.1.4.1.1.1",  # Computed Radiography Image Storage
+    "MR": "1.2.840.10008.5.1.4.1.1.4",  # MR Image Storage（S3P1 ②）
+    "CT": "1.2.840.10008.5.1.4.1.1.2",  # CT Image Storage
+}
+
+
+def resolve_source_sop_class_uid(source: SourceSeriesInfo, inst: dict[str, Any] | None) -> str:
+    """解析源实例 SOP Class UID（S3P2 ③：唯一解析点）。
+
+    顺序：(a) 实例自带非空 sop_class_uid → 原样用（逐字 round-trip，
+    Modality→SOP Class 是有损投影——MR 至少三档、PET 同样三档，映射表
+    无法区分各档）；(b) 合成源（inst is None，无实例信息）→ DX/CR/MR/CT
+    映射表 fallback；(c) 其余模态或真实实例缺 UID（旧持久化 JSON 无此键，
+    静默落通用 UID 即结构错误——审查 W1）→ raise SegExportError，绝不默认。
+    """
+    if inst is not None:
+        uid = str(inst.get("sop_class_uid", "") or "")
+        if uid:
+            return uid
+        modality = _normalize_modality(source.modality)
+        raise SegExportError(
+            f"源实例 {inst.get('sop_instance_uid', '')!r} 无原样 SOP Class UID"
+            "（旧持久化 JSON 缺 sop_class_uid 键）且模态映射有损"
+            f"（{modality}）——重跑 ingest 回填后导出（S3P2 ③，审查 W1）"
+        )
+    modality = _normalize_modality(source.modality)
+    try:
+        return _SYNTHETIC_SOP_CLASS_UIDS[modality]
+    except KeyError:
+        raise SegExportError(
+            f"源模态 {modality} 无 SOP Class 映射且实例无原样 SOP Class UID"
+            "——不默认 CT Image Storage（S3P2 ③，显式给出或补提取 sop_class_uid）"
+        ) from None
 
 
 def export_seg(
@@ -200,9 +244,21 @@ def _build_source_images(
     frame_of_reference_uid = generate_uid()  # 全序列共享一个 Frame of Reference
 
     images: list[Any] = []
+    # 审查 W2：混合 SOP Class 序列（逐帧引用各自 SOP Class，verify 只能看
+    # [0]）是验不出的结构错误——导出前断言全序列解析一致，不一致 raise
+    if source.source_instances:
+        resolved = {
+            resolve_source_sop_class_uid(source, inst) for inst in source.source_instances
+        }
+        if len(resolved) > 1:
+            raise SegExportError(
+                f"源实例 SOP Class 不一致（{sorted(resolved)}）——"
+                "一个 series 一个 SOP Class 是 DICOM 惯例，不产出混合引用 SEG"
+                "（S3P2 ③，审查 W2）"
+            )
     for i in range(n_slices):
-        if i < len(source.source_instances):
-            inst = source.source_instances[i]
+        inst = source.source_instances[i] if i < len(source.source_instances) else None
+        if inst is not None:
             ipp = np.asarray(inst["image_position_patient"], dtype=float)
             sop_uid = str(inst["sop_instance_uid"])
         else:
@@ -216,11 +272,10 @@ def _build_source_images(
         # 是 CR 写 CR（合成源实例仅用于 highdicom 引用，模态标签取源值）
         # S3R4 W-1：先归一化模态再查 SOP Class 映射——内部别名 "X-ray" 非
         # DICOM CS 合法值，规范化为 CR 后同查映射（别名不落默认 CT Storage）
+        # S3P2 ③：SOP Class 走唯一解析点——实例原样 UID 优先，合成源 DX/CR/MR
+        # fallback，其余 raise（不默认 CT Image Storage）
         modality = _normalize_modality(source.modality)
-        sop_class_uid = {
-            "DX": "1.2.840.10008.5.1.4.1.1.1.1",  # Digital X-Ray Image Storage - Presentation
-            "CR": "1.2.840.10008.5.1.4.1.1.1",  # Computed Radiography Image Storage
-        }.get(modality, "1.2.840.10008.5.1.4.1.1.2")  # 其余默认 CT Image Storage
+        sop_class_uid = resolve_source_sop_class_uid(source, inst)
         meta.MediaStorageSOPClassUID = sop_class_uid
         meta.MediaStorageSOPInstanceUID = sop_uid
         meta.TransferSyntaxUID = ExplicitVRLittleEndian
@@ -279,6 +334,7 @@ def verify_seg(
     source_mask_path: Path | str | None = None,
     expected_series_uid: str = "",
     expected_source_modality: str = "",
+    expected_source_sop_class_uid: str = "",
 ) -> SegVerifyReport:
     """SEG 三道校验：pydicom 重读 + highdicom 解析 + 与源 mask 逐体素 diff。
 
@@ -286,6 +342,9 @@ def verify_seg(
     非空时做逐体素 diff（体素语义：SEG 帧像素 = mask，形状一致才可比）。
     expected_source_modality 非空时从 ReferencedSOPClassUID 反查源影像模态
     并核对（S3R4 W-2：与报告 ⑥ 描述一致，与 SEG 自身模态分开）。
+    expected_source_sop_class_uid 非空时逐字比对 ReferencedSOPClassUID
+    （S3P2 ③：Modality→SOP Class 是有损投影，Enhanced MR / PET 各档靠
+    原样比对通过，不靠反查表）。
     """
     import highdicom as hd
     import pydicom
@@ -334,7 +393,10 @@ def verify_seg(
 
     # S3R4 W-2：源影像模态从 ReferencedSOPClassUID 反查（与 _build_source_images
     # 同一映射），期望模态非空时核对——SEG 引用的源实例与声称的源模态一致
-    if expected_source_modality:
+    # S3P2 ③：expected_source_sop_class_uid 非空时走逐字比对（Modality→SOP
+    # Class 是有损投影，Enhanced MR / PET 各档反查表区分不了，只能原样比对）
+    # ——原样比对给出时取代反查模态核对（反查表对这些 UID 必误报）。
+    if expected_source_modality or expected_source_sop_class_uid:
         try:
             ref_sop_class = str(
                 seg.ReferencedSeriesSequence[0]
@@ -344,15 +406,22 @@ def verify_seg(
         except (AttributeError, IndexError):
             rep.errors.append("SEG 无源实例引用（ReferencedInstanceSequence 缺失）")
         else:
-            src_modality = {
-                "1.2.840.10008.5.1.4.1.1.1.1": "DX",  # Digital X-Ray Image Storage
-                "1.2.840.10008.5.1.4.1.1.1": "CR",  # Computed Radiography Image Storage
-                "1.2.840.10008.5.1.4.1.1.2": "CT",  # CT Image Storage
-            }.get(ref_sop_class, ref_sop_class)  # 未知 UID 原样带出（不猜模态）
-            if src_modality != expected_source_modality:
-                rep.errors.append(
-                    f"SEG 源影像模态 {src_modality} != 期望 {expected_source_modality}"
-                )
+            if expected_source_sop_class_uid:
+                if ref_sop_class != expected_source_sop_class_uid:
+                    rep.errors.append(
+                        f"SEG 源 SOP Class {ref_sop_class} != 期望 {expected_source_sop_class_uid}"
+                    )
+            else:
+                src_modality = {
+                    "1.2.840.10008.5.1.4.1.1.1.1": "DX",  # Digital X-Ray Image Storage
+                    "1.2.840.10008.5.1.4.1.1.1": "CR",  # Computed Radiography Image Storage
+                    "1.2.840.10008.5.1.4.1.1.2": "CT",  # CT Image Storage
+                    "1.2.840.10008.5.1.4.1.1.4": "MR",  # MR Image Storage（S3P1 ②）
+                }.get(ref_sop_class, ref_sop_class)  # 未知 UID 原样带出（不猜模态）
+                if src_modality != expected_source_modality:
+                    rep.errors.append(
+                        f"SEG 源影像模态 {src_modality} != 期望 {expected_source_modality}"
+                    )
 
     # 3. 逐体素 diff：SEG 帧 -> mask 重建，与源 mask 对比
     if source_mask_path is not None:
@@ -392,11 +461,15 @@ def export_and_verify(
     """导出 + 校验一步：diff 非零或任何错误 -> SegVerifyError。"""
     export_seg(mask_path, source, out_path, **kwargs)
     # S3R5 W-2 收尾：透传源模态核对——导出链路默认核对源影像模态（open item 1）
+    # S3P2 ③：期望 SOP Class 与 _build_source_images 同一 helper（resolve 后
+    # 原样进 SEG 引用），建成与期望永不分叉；未映射模态在 export 阶段已 raise
+    inst = source.source_instances[0] if source.source_instances else None
     rep = verify_seg(
         out_path,
         source_mask_path=mask_path,
         expected_series_uid=source.series_uid,
         expected_source_modality=_normalize_modality(source.modality),
+        expected_source_sop_class_uid=resolve_source_sop_class_uid(source, inst),
     )
     if not rep.ok:
         raise SegVerifyError("; ".join(rep.errors))
@@ -410,6 +483,7 @@ __all__ = [
     "SegVerifyReport",
     "SourceSeriesInfo",
     "export_seg",
+    "resolve_source_sop_class_uid",
     "verify_seg",
     "export_and_verify",
 ]

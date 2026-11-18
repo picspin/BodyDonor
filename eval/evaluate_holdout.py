@@ -41,6 +41,7 @@ from bodydonor.holdout import (  # noqa: E402
     evaluate_gate,
     load_holdout,
 )
+from bodydonor.segmentation import resolve_modality  # noqa: E402
 
 DATA_ROOT = Path.home() / "data/BodyDonor/downloads"
 CT_LITE = DATA_ROOT / "ct_lite"
@@ -64,7 +65,9 @@ def _standard_values() -> dict[str, int]:
     return json.loads(cache.read_text(encoding="utf-8"))
 
 
-def ts_teacher_inference(image_path: Path, out_dir: Path) -> tuple[Path, float | None]:
+def ts_teacher_inference(
+    image_path: Path, out_dir: Path, *, modality: str
+) -> tuple[Path, float | None]:
     """对原图跑 TS total（GPU 锁全程持锁，JSON 契约 runner，M2-align 3.2/3.3）。
 
     返回 (out_dir, runner torch 分配器 peak_vram_mb)——M2 主值口径；peak 不可用
@@ -82,7 +85,8 @@ def ts_teacher_inference(image_path: Path, out_dir: Path) -> tuple[Path, float |
     )
     try:
         runner = run_total(image_path, out_dir, task="total", device="gpu",
-                           settings=settings, job_id=job_id)
+                           settings=settings, job_id=job_id,
+                           modality=modality)
     finally:
         lock.release()
     return out_dir, runner.peak_vram_mb
@@ -291,7 +295,9 @@ def main() -> int:
                 print(f"SKIP {case_id}（teacher 输出缺失，--skip-inference）")
                 continue
             print(f"[holdout] {case_id}: TS teacher 推理（GPU 锁）...")
-            _, peak_vram = ts_teacher_inference(image_path, teacher_dir)
+            _, peak_vram = ts_teacher_inference(
+                image_path, teacher_dir, modality=resolve_modality(e)
+            )
             n_fresh_inference += 1
             if peak_vram is not None:
                 peak_vram_by_case[case_id] = peak_vram

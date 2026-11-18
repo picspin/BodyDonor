@@ -4,6 +4,8 @@
 > 核查方式：GitHub raw / GitHub API / HuggingFace API / Zenodo API / PyPI API 读取原文，
 > 原文引用为逐字摘录（verbatim quote），标注 URL 与访问日期。
 > 本文件是 M0 验收物之一；配套：`config/settings.yaml` 的 `teacher.allowed_tasks` 白名单 + CI 白名单负测试。
+> 商用合规审计（M7-LICENSE-CHECK 商用列 + 本文 §1.3/§1.4/§2.2/§7 商用约束的汇总）抽在内部附件
+> `COMMERCIAL-CHECK-internal.md`（已 gitignore，不入仓——R3 ④）。
 > 结论如有变更（上游改许可、新增任务），更新本文件并跑 `bodydonor license` 复核。
 
 ---
@@ -73,7 +75,7 @@
 https://raw.githubusercontent.com/wasserth/TotalSegmentator/master/totalsegmentator/map_to_binary.py ，访问日期 2026-11-06。）
 
 **与注册表的差异注记**（M7-S3F ② 安装包实测，M7-S3F ⑤ W13 同步；`license_registry.py`）：
-上表 README 清单与注册表 `research_use` 状态并非一一对应——
+上表 README 清单与注册表 `research_distill` 状态（M7-S3P R4 M-2 统一：单一资格字段，原 research_use 已删）并非一一对应——
 
 - **注册表 `allowed`（双证据齐全：README open + 本地 TS 2.10.0 安装包 `class_map` 含该任务
   且 `commercial_models` 不含）**：`lung_vessels`、`body`、`cerebral_bleed`、`hip_implant`、
@@ -416,3 +418,37 @@ M1 下载登记时在引用文献里完成署名义务。
 - 上游改许可时本结论失效，须重新核实并更新本文件。
 - M4 训练数据流自本节落盘起解锁，仅限商用路径输入；研究用混合输入另立
   训练集并标注仅科研。
+
+---
+
+## 9. 许可两轴与准入显式化（M7-S3P2 ⑤，2026-11-18 用户确认法务事实）
+
+> §7 汇总决策表之后、软件准入判定（`src/bodydonor/license_registry.py`
+> TEACHER_REGISTRY 两轴字段 + `src/bodydonor/ontology.py`
+> mask_allowed_in_distill_training）的许可事实基线。本节不是法律意见。
+
+**法务事实（用户 2026-11-18 给出）**：
+
+1. research（研究用途）只化解 NC 条款，不化解 ShareAlike。
+2. nnInteractive（CC BY-NC-SA 4.0）蒸馏出的学生权重是衍生作品，须以
+   BY-NC-SA 分发。
+3. SynthSeg（FreeSurfer SLA v1.0）蒸馏出的学生权重同理是衍生作品，但
+   **不以 BY-NC-SA 分发**：隔离为独立制品并单列许可（SynthSeg 制品单列
+   FreeSurfer SLA v1.0；moose 制品单列 CC BY 4.0）。synthseg / moose
+   蒸馏出的学生权重同样隔离为独立制品（用户 2026-11-18 决定：BY-NC-SA
+   偏严格，隔离独立制品）。
+4. 软件内不另建合规门禁，依据只留文档（本文件与注册表 restriction_basis）。
+
+**注册表字段语义（M7-S3P2 ⑤ 迁移）**：
+
+- `attribution_required`（恒 True）：署名义务——research 不化解署名。
+- `share_alike`：SA 义务——仅 nnInteractive 为 True（CC BY-NC-SA 4.0
+  ShareAlike 传染，§2.2）；SynthSeg 的 FreeSurfer SLA 不是 ShareAlike 许可
+  （用户 2026-11-18 确认），Moose 权重 CC BY 4.0 亦非 SA。
+- `license_verified`：准入证据强度（双证据 true / 单一来源或出入 false）——
+  两轴描述义务不能单独编码准入（7 个 unverified 与 25 个 allowed 同为
+  Apache-2.0，两轴值相同），准入判定只读本字段：
+  未核实 → 阻断待核实；已核实且研究可用 → 放行，SA 派生物按
+  output_license_inherits 保留条款。
+- `output_license_inherits`：派生物保留条款登记（share_alike=True 条目
+  强制非空——validate_entry 拒绝静默丢条款）。

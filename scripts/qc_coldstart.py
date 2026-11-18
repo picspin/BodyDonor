@@ -26,10 +26,11 @@ import numpy as np
 
 from bodydonor.config import load_settings
 from bodydonor.qc import run_qc
+from bodydonor.segmentation import resolve_modality
 
 
 def ts_teacher_mask(
-    image_path: Path, out_dir: Path, task: str = "total"
+    image_path: Path, out_dir: Path, task: str = "total", *, modality: str
 ) -> tuple[np.ndarray | None, list[str], float]:
     """对原图跑 TS teacher 推理，合并为多类标签图（真卡，GPU 锁全程持锁）。"""
     from sqlalchemy import text  # noqa: F401
@@ -49,7 +50,7 @@ def ts_teacher_mask(
         try:
             run_total(
                 image_path, out_dir, task=task, device="gpu", settings=s,
-                job_id=job_id, modality="CT",
+                job_id=job_id, modality=modality,
             )
         finally:
             lock.release()
@@ -156,7 +157,8 @@ def main() -> int:
             continue
         teacher_out = data / "ts_out" / case_id
         print(f"[coldstart] {case_id}: teacher inference + qc ...")
-        teacher_arr, class_names, _ = ts_teacher_mask(img_path, teacher_out)
+        teacher_arr, class_names, _ = ts_teacher_mask(img_path, teacher_out,
+                                                      modality=resolve_modality("ct_lite"))
         if teacher_arr is None:
             print(f"SKIP {case_id}（teacher 输出缺失）")
             continue
@@ -171,7 +173,7 @@ def main() -> int:
             series_id=case_id,
             hu_values=img_hu,
             totalseg_classes=idx_to_class,
-            modality="CT",  # 冷启动校准集是 CT-Lite（S3 模态门闩：HU 规则只 CT）
+            modality=resolve_modality("ct_lite"),  # S3 模态门闩：HU 规则只 CT
         )
         # teacher mask vs 公开集真值：逐类 Dice（真实体素计算）。
         # CT-Lite 真值 mask 用 **TS 标准 class_map 值**（liver=5 等），与

@@ -2,10 +2,33 @@
 
 许可事实来源：LICENSES-THIRD-PARTY.md（M0 联网核查结论）。
 
-判定优先级（S3R4 M-2 文档澄清，非重构）：蒸馏资格唯一来源是条目的
-``research_distill`` 字段（ontology.mask_allowed_in_distill_training 判定层读它；
-``research_use`` 只作路由/说明文字，不参与蒸馏判定——两字段在 unverified 上
-当前一致，长期以 research_distill 为准）。
+许可两轴 + 准入（M7-S3P2 ⑤，S3R4 M-2 统一替代）：
+- ``attribution_required`` / ``share_alike``：许可义务两轴（按 LICENSES-THIRD-PARTY.md）。
+- ``license_verified``：证据强度（双证据 true / 单一来源或出入 false）。
+- 准入判定读 ontology.mask_allowed_in_distill_training（两轴不能单独编码准入：
+  准入未核实的条目与 allowed 条目同为 Apache-2.0，差别只在证据强度——须
+  license_verified 显式承载；判定层新方案见该函数 docstring。决策表 tests/
+  test_research_field_decision_table.py 断言迁移前后判定逐条一致）。
+
+法务事实（2026-11-18 用户确认）：research 只化解 NC 条款，不化解 ShareAlike；
+nnInteractive（CC BY-NC-SA 4.0）蒸馏出的学生权重是衍生作品，须以 BY-NC-SA
+分发（隔离为独立制品 + 单列许可也是满足其 SA 义务的方式）；SynthSeg/MOOSE
+蒸馏出的学生权重不以 BY-NC-SA 分发，隔离为独立制品并单列许可（用户
+2026-11-18 决定）；软件内不另建合规门禁，依据只留文档。
+
+就绪三分（M7-S3P2 ⑥，S3R2 ③"三分结构"的字段化）：单一布尔 ``ready`` 退役，
+拆成三个可推导字段——
+- ``weights_present``：从 ``weight_integrity`` 推导。规则（全仓统一）：
+  weight_integrity.status == "verified"（sha256 已核实）→ True；
+  "not_recorded" / 其他 → False。
+- ``class_map_present``：从 ``class_map_ref`` 推导。规则（全仓统一）：
+  class_map_ref 不含「待建」/「待落地」占位标记 → True；含 → False。
+- ``share_alike``：既有字段（M7-S3P2 ⑤），直接复用不重建。
+
+check_task 就绪判定读 weights_present / class_map_present，拒绝原因写明是
+哪一项挡住（缺权重 / 缺 class_map）；share_alike=True 的条目是许可义务
+（放行 + 原因注记 SA 义务），不作挡项（R4a-fix 忠实拆分零政策变化）。
+recalibration_ready（qc.py）是数值重算抽检，另一概念，不相干。
 """
 
 from __future__ import annotations
@@ -24,18 +47,41 @@ _REGISTRY_FIELDS = (
     "checkpoint_id",
     "modalities",
     "output_type",
-    "research_use",
     "known_restrictions",
     "provenance",
-    "ready",
     "weight_integrity",
-    "research_distill",
+    "attribution_required",
+    "share_alike",
+    "license_verified",
     "restriction_basis",
     "output_license_inherits",
 )
 
-# 研究蒸馏资格枚举（M7-PLAN v3 §2.2.1 新增三字段行；S3 收口轮 ④）
-RESEARCH_DISTILL_VALUES = ("allowed", "conditional", "blocked", "unverified")
+# 许可两轴取值（M7-S3P2 ⑤）：attribution_required 恒 True（本仓无公有领域来源），
+# share_alike 只有 nnInteractive（CC BY-NC-SA 4.0）为 True。
+ATTRIBUTION_REQUIRED_VALUES = (True,)
+SHARE_ALIKE_VALUES = (True, False)
+
+# 模态别名（M7-S3P R3 ④）：注册表登记 'PET'/'X-RAY'，DICOM 头内 Modality 代码
+# 分别是 'PT'（PS3.3 C.7.3.1.1 定义词）与投影 X 光 'DX'/'CR'——ingest 层原样
+# 记录不翻译，归一化时并成登记模态。X 光代码口径与 review_session 同。
+MODALITY_ALIASES: dict[str, str] = {"PT": "PET", "DX": "X-RAY", "CR": "X-RAY"}
+
+# 就绪三分推导（M7-S3P2 ⑥）：规则唯一来源，全仓统一（docstring 同文）。
+READY_PLACEHOLDER_MARKERS = ("待建", "待落地")
+
+
+def weights_present(entry: dict) -> bool:
+    """weight_integrity.status == 'verified'（sha256 已核实）→ True。"""
+    return entry.get("weight_integrity", {}).get("status") == "verified"
+
+
+def class_map_present(entry: dict) -> bool:
+    """class_map_ref 非空且不含「待建」/「待落地」占位标记 → True。"""
+    cls_ref = str(entry.get("class_map_ref") or "")
+    return bool(cls_ref) and not any(
+        m in cls_ref for m in READY_PLACEHOLDER_MARKERS
+    )
 
 # 首批条目（M7-LICENSE-CHECK §二/四/八 + M7-PLAN v3.2 §二；provenance 即核查依据）
 TEACHER_REGISTRY: list[dict] = [
@@ -46,7 +92,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "unpinned (venv totalsegmentator==2.10.0)",
         "modalities": ("CT",),
         "output_type": "mask",
-        "research_use": "allowed",
         "known_restrictions": [],
         "provenance": {
             "source": "https://github.com/wasserth/TotalSegmentator/ (LICENSE + README Subtasks)",
@@ -54,11 +99,24 @@ TEACHER_REGISTRY: list[dict] = [
             "verified": "M0/M4 结论 + M7-LICENSE-CHECK §四（total 与 total_mr 同列 "
             "'Openly available for any usage (Apache-2.0)' 清单）",
         },
-        "ready": True,
-        "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
-        "research_distill": "allowed",
+        # M7-S3P2 ⑥：权重实测记录（S3 W4 nnInteractive 先例同法）——本机
+        # Dataset298_total_6mm checkpoint_final.pth sha256/size 实测
+        # （2026-11-18，S3R2 ③ total 研究推理实测已走通 n_classes=117）
+        "weight_integrity": {
+            "sha256": "3489323a4b759506ab46b489eb78b72142f2143aea6e6d828604d754bd7a9270",
+            "size_bytes": 164951587,
+            "status": "verified",
+            "checkpoint_path": "~/.totalsegmentator/nnunet/results/"
+            "Dataset298_TotalSegmentator_total_6mm_1559subj/"
+            "nnUNetTrainer_4000epochs_NoMirroring__nnUNetPlans__3d_fullres/"
+            "fold_0/checkpoint_final.pth",
+        },
+        "attribution_required": True,
+        "share_alike": False,
+        "license_verified": True,
         "restriction_basis": "许可明文：Apache-2.0（LICENSE-CHECK §四，total 在 "
-        "'Openly available for any usage (Apache-2.0)' 清单内）",
+        "'Openly available for any usage (Apache-2.0)' 清单内）。两轴：署名义务，"
+        "无 SA（research 不化解署名）",
         "output_license_inherits": [],
         "class_map_ref": "ontology/v1/map.yaml",
         "data_contract_version": "v1",
@@ -70,18 +128,18 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "unpinned (权重未下载)",
         "modalities": ("MR",),
         "output_type": "mask",
-        "research_use": "allowed",
         "known_restrictions": [],
         "provenance": {
             "source": "https://github.com/wasserth/TotalSegmentator/ (README Subtasks 清单)",
             "version": "2.10.0",
             "verified": "M7-LICENSE-CHECK §四（公开 _mr 任务同在 Apache-2.0 清单内）",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
-        "research_distill": "allowed",
+        "attribution_required": True,
+        "share_alike": False,
+        "license_verified": True,
         "restriction_basis": "许可明文：Apache-2.0（LICENSE-CHECK §四，公开 _mr 任务 "
-        "同在 Apache-2.0 清单内）",
+        "同在 Apache-2.0 清单内）。两轴：署名义务，无 SA",
         "output_license_inherits": [],
         "class_map_ref": "ts-mr-classes/v1 (TS MR 50 类，待落地为 ontology 条目)",
         "data_contract_version": "v1",
@@ -101,7 +159,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "MRI_CORE_vitb.pth (~360MB, 未下载)",
         "modalities": ("MR",),
         "output_type": "feature",
-        "research_use": "allowed",
         "known_restrictions": ["Duke-110K 训练数据不含脑 MRI（脑部不在覆盖内）"],
         "provenance": {
             "source": "https://github.com/mazurowski-lab/mri_foundation (README License 节)",
@@ -109,22 +166,29 @@ TEACHER_REGISTRY: list[dict] = [
             "verified": "M7-LICENSE-CHECK §二：code and models 均 Apache-2.0（README 声明，"
             "仓库无 LICENSE 文件已注记；不写 CC BY 4.0——那是论文 arXiv 许可）",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
-        "research_distill": "allowed",
+        "attribution_required": True,
+        "share_alike": False,
+        "license_verified": True,
         "restriction_basis": "许可明文：Apache-2.0（LICENSE-CHECK §二，README 'code and "
-        "models' 声明；仓库无 LICENSE 文件已注记）",
+        "models' 声明；仓库无 LICENSE 文件已注记）。两轴：署名义务，无 SA",
         "output_license_inherits": [],
         "feature_schema": {"embed_dim": 768, "patch": 16, "space": "image"},
     },
-    # nnInteractive：交互式提示分割教师（LICENSE-CHECK §八；两处证据链接）
+    # nnInteractive：交互式提示分割教师（LICENSE-CHECK §八；两处证据链接）。
+    # R3 ④：modalities CT/MR/PET 有据——README §Abstract 原文 "Trained on 120+
+    # diverse volumetric 3D datasets (CT, MRI, PET, 3D Microscopy, etc.)"
+    # （master readme.md 2026-11-16 实取）；显微/微CT 不在数据域内不登记。
+    # R3 ④ 特别核查：上游 HF 仓库 MIC-DKFZ/nnInteractive 实测只有
+    # nnInteractive_v1.0/fold_0/checkpoint_final.pth 一个 checkpoint（ siblings
+    # 全列 + 本地 tree manifest 对照），本地部署同款，models.json 上游与本地均
+    # 只列一个模型——无多 checkpoint，不拆分登记。
     {
         "teacher_id": "nninteractive",
         "task": "interactive_correction",
         "checkpoint_id": "nnInteractive_v1.0",
         "modalities": ("CT", "MR", "PET"),
         "output_type": "mask",
-        "research_use": "restricted",
         "known_restrictions": [
             "权重 CC BY-NC-SA 4.0：仅交互式标注辅助，产物不进商用蒸馏训练集"
         ],
@@ -136,7 +200,6 @@ TEACHER_REGISTRY: list[dict] = [
             "文件夹 LICENSE 首行（nni_runner 暴露为 session.license）为准，"
             "注册表 provenance 引用该运行时值",
         },
-        "ready": True,
         "weight_integrity": {
             "sha256": "b3ac4421f85457bbd1aa0d87f5e67bcb7bc8e2ce6b824b6ac45077cc5d630ea9",
             "size_bytes": 411387150,
@@ -148,13 +211,15 @@ TEACHER_REGISTRY: list[dict] = [
         },
         "class_map_ref": "prompt-targets/v1 (目标由交互提示决定，无固定类映射)",
         "data_contract_version": "v1",
-        "research_distill": "conditional",
-        "restriction_basis": "项目政策：修正产物不进蒸馏（M6 已记录边界，S3 后续三项③ "
-        "用户定）+ 许可明文 CC BY-NC-SA 4.0（LICENSE-CHECK §八：研究路由允许、"
-        "派生物标 SA 并传播署名、商用须法务）",
+        "attribution_required": True,
+        "share_alike": True,
+        "license_verified": True,
+        "restriction_basis": "项目政策：修正产物不进蒸馏（M6 已记录边界）+ 许可明文 "
+        "CC BY-NC-SA 4.0（LICENSE-CHECK §八：两轴 attribution+share_alike，"
+        "派生物须以 BY-NC-SA 分发并传播署名、商用须法务）",
         "output_license_inherits": ["CC-BY-NC-SA 4.0（ShareAlike：派生物须同许可并传播署名）"],
     },
-    # SynthSeg / MOOSE：QC/研究路由，research_distill=conditional（S3 收口轮 ④
+    # SynthSeg / MOOSE：QC/研究路由，两轴 conditional 语义（S3 收口轮 ④
     # 用户定方向：不因商业政策模糊自动禁止本地科研蒸馏；§五/§六）
     {
         "teacher_id": "synthseg",
@@ -162,9 +227,8 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "FreeSurfer 分发 (未下载)",
         "modalities": ("MR",),
         "output_type": "mask",
-        "research_use": "restricted",
         "known_restrictions": [
-            "research_distill=conditional：权重适用 FreeSurfer Software License "
+            "conditional 语义（两轴 + 继承条款）：权重适用 FreeSurfer Software License "
             "Agreement v1.0，本地科研蒸馏按 conditional 放行（派生物按 "
             "output_license_inherits 保留条款）；商用蒸馏须先走法务——未决项："
             "FreeSurfer 第 3 条第三方权利条款 + ADNI DUA（§六未解决项 1/2），"
@@ -176,13 +240,15 @@ TEACHER_REGISTRY: list[dict] = [
             "version": "synthseg",
             "verified": "M7-LICENSE-CHECK §六",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
-        "research_distill": "conditional",
+        "attribution_required": True,
+        "share_alike": False,
+        "license_verified": True,
         "restriction_basis": "许可明文 + 法务未决：FreeSurfer Software License Agreement "
         "v1.0 明示允许并入专有程序、商业化风险自担（LICENSE-CHECK §六），不禁止本地"
         "科研蒸馏；保留在第 3 条第三方权利条款与 ADNI DUA 未决（§六未解决项 1/2），"
-        "法务澄清后可升级 allowed",
+        "法务澄清后可升级 allowed。两轴：署名 + 修改标识（SLA §六 Part B 1(c)/(d)），"
+        "无 SA（SLA 非 ShareAlike 许可——用户 2026-11-18 确认）",
         "output_license_inherits": ["FreeSurfer Software License Agreement v1.0 "
         "(attribution + 修改标识条款，§六 Part B 1(c)/(d))"],
         "class_map_ref": "synthseg-classes/v1 (待建)",
@@ -192,11 +258,12 @@ TEACHER_REGISTRY: list[dict] = [
         "teacher_id": "moose",
         "task": "moose_qc",
         "checkpoint_id": "未下载",
+        # R3 ④：CT/PET 有据——M7-LICENSE-CHECK §一 总表书面支持 'CT/PET'；
+        # DICOM 头内 PET 代码 PT 由 MODALITY_ALIASES 匹配。
         "modalities": ("CT", "PET"),
         "output_type": "mask",
-        "research_use": "restricted",
         "known_restrictions": [
-            "research_distill=conditional：训练数据含 NC 部分（AutoPET 溯源未决），"
+            "conditional 语义（两轴 + 继承条款）：训练数据含 NC 部分（AutoPET 溯源未决），"
             "本地科研蒸馏按 conditional 放行（派生物按 output_license_inherits "
             "保留条款）；商用蒸馏须先走法务——未决项：NC 训练数据溯源 + "
             "'Commercial Version' 关系（§五未解决项 2/3），法务澄清前不升级 allowed"
@@ -206,24 +273,30 @@ TEACHER_REGISTRY: list[dict] = [
             "version": "moose",
             "verified": "M7-LICENSE-CHECK §五：代码 Apache-2.0，权重 CC BY 4.0（项目自述）",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
-        "research_distill": "conditional",
+        "attribution_required": True,
+        "share_alike": False,
+        "license_verified": True,
         "restriction_basis": "许可明文 + 法务未决：权重 CC BY 4.0 本身允许商用（含衍生），"
         "不禁止本地科研蒸馏（LICENSE-CHECK §五）；保留在 NC 训练数据溯源（AutoPET）与"
-        "'Commercial Version' 关系两项未决（§五未解决项 2/3），法务澄清后可升级 allowed",
+        "'Commercial Version' 关系两项未决（§五未解决项 2/3），法务澄清后可升级 allowed。"
+        "两轴：署名义务，无 SA（训练数据含 NC 部分是独立 caveat，不进 SA 轴"
+        "——用户 2026-11-18 确认）",
         "output_license_inherits": ["CC BY 4.0（署名条款，MODEL_LICENSE）"],
         "class_map_ref": "moose-classes/v1 (待建)",
         "data_contract_version": "v1",
     },
-    # nnUNet v2：框架条目，不附带权重，mask 任务逐任务登记
+    # nnUNet v2：框架条目，不附带权重，mask 任务逐任务登记。
+    # R3 ④：modalities 拓宽为 CT/MR/PET——MR/PET 依据 M7-LICENSE-CHECK §一 总表
+    # 'MRI/PET'；CT 依据 §七 结论（框架自适应任意数据集流水线，Dataset501
+    # channel_names['0']='ct' 实证 CT 流水线在用；框架本身不产生蒸馏资格，
+    # 逐任务权重许可仍取决于训练数据）。
     {
         "teacher_id": "nnunet_v2",
         "task": "framework",
         "checkpoint_id": None,
-        "modalities": ("CT", "MR"),
+        "modalities": ("CT", "MR", "PET"),
         "output_type": "framework",
-        "research_use": "unverified",
         "known_restrictions": [
             "框架条目：不附带权重，不产生蒸馏资格（LICENSE-CHECK §七）；"
             "具体 mask 任务须逐任务登记"
@@ -233,21 +306,23 @@ TEACHER_REGISTRY: list[dict] = [
             "version": "v2",
             "verified": "M0 结论 + M7-LICENSE-CHECK §一",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
-        "research_distill": "unverified",
+        "attribution_required": True,
+        "share_alike": False,
+        "license_verified": False,
         "restriction_basis": "许可明文：框架条目不附带权重，不产生蒸馏资格（LICENSE-CHECK "
-        "§七）；具体任务模型须逐任务登记核实后才有资格",
+        "§七）；具体任务模型须逐任务登记核实后才有资格。两轴对框架条目 N/A——按 "
+        "Apache-2.0 填署名义务，license_verified=False（无权重可蒸馏，准入阻断）",
         "output_license_inherits": [],
     },
-    # FleXray：X-ray 模态约束（非许可问题；权重 CC BY-NC 4.0，§三）
+    # FleXray：X-ray 模态约束（非许可问题；权重 CC BY-NC 4.0，§三）。
+    # R3 ④：登记 'X-RAY'——比对侧 strip().upper()，混合大小写 'X-ray' 永不相等。
     {
         "teacher_id": "flexray",
         "task": "flexray_xray",
         "checkpoint_id": "未下载",
-        "modalities": ("X-ray",),
+        "modalities": ("X-RAY",),
         "output_type": "mask",
-        "research_use": "restricted",
         "known_restrictions": [
             "模态约束：仅 X-ray；权重 CC BY-NC 4.0，合成数据集合集 CC BY-NC 4.0"
         ],
@@ -256,11 +331,13 @@ TEACHER_REGISTRY: list[dict] = [
             "version": "flexray",
             "verified": "M7-LICENSE-CHECK §三：代码 MIT，权重 CC BY-NC 4.0",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
-        "research_distill": "conditional",
+        "attribution_required": True,
+        "share_alike": False,
+        "license_verified": True,
         "restriction_basis": "许可明文：权重 CC BY-NC 4.0 禁止商业目的使用，QC/研究路由"
-        "（输出不进商用蒸馏训练）允许（LICENSE-CHECK §三资格判断理由）",
+        "（输出不进商用蒸馏训练）允许（LICENSE-CHECK §三资格判断理由）。两轴：署名"
+        "义务，无 SA（CC BY-NC 4.0 不是 ShareAlike）",
         "output_license_inherits": ["CC-BY-NC 4.0（NC：派生物不得用于商业目的）"],
         "class_map_ref": "flexray-classes/v1 (待建)",
         "data_contract_version": "v1",
@@ -274,7 +351,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "unpinned (权重未下载)",
         "modalities": ("CT",),
         "output_type": "mask",
-        "research_use": "allowed",
         "known_restrictions": [],
         "provenance": {
             "source": "https://github.com/wasserth/TotalSegmentator/ (README Subtasks open 清单)",
@@ -283,11 +359,12 @@ TEACHER_REGISTRY: list[dict] = [
             "Apache-2.0 权重）+ TS 2.10.0 安装包 map_to_binary.class_map 含该任务且 "
             "commercial_models 不含",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
-        "research_distill": "allowed",
+        "attribution_required": True,
+        "share_alike": False,
+        "license_verified": True,
         "restriction_basis": "许可明文：Apache-2.0（M7-S3F ②，LICENSES-THIRD-PARTY.md "
-        "§1.2 open 清单 + TS 2.10.0 安装包双证据）",
+        "§1.2 open 清单 + TS 2.10.0 安装包双证据）。两轴：署名义务，无 SA",
         "output_license_inherits": [],
         "class_map_ref": "ts-classes/v1 (TS 2.10.0 map_to_binary.class_map)",
         "data_contract_version": "v1",
@@ -315,7 +392,7 @@ TEACHER_REGISTRY: list[dict] = [
 ] + [
     # 本组仅在 README open 清单（LICENSES-THIRD-PARTY.md §1.2），本地 TS 2.10.0
     # 安装包 class_map 不含（vertebrae_pp_refined 在 2.10.0 无此类）——许可证据
-    # 单一来源，结构未核实。许可摘要：登记 unverified，ready=False（未核实），
+    # 单一来源，结构未核实。许可摘要：登记 unverified（未核实），
     # 注册表 provenance 记明差异。
     {
         "teacher_id": "totalsegmentator",
@@ -323,7 +400,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "unpinned (权重未下载；2.10.0 安装包 class_map 不含该任务)",
         "modalities": ("CT",),
         "output_type": "mask",
-        "research_use": "unverified",
         "known_restrictions": [
             "仅 README open 清单（Apache-2.0 权重，访问 2026-11-06）；"
             "本地 TS 2.10.0 安装包 class_map 不含，结构输出未核实"
@@ -334,11 +410,13 @@ TEACHER_REGISTRY: list[dict] = [
             "verified": "M7-S3F ②：LICENSES-THIRD-PARTY.md §1.2 open 清单；安装包未核实 "
             "（class_map 不含）——结构未核实",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
-        "research_distill": "unverified",
+        "attribution_required": True,
+        "share_alike": False,
+        "license_verified": False,
         "restriction_basis": "许可证据单一来源：仅 README open 清单（LICENSES-THIRD-PARTY.md "
-        "§1.2），安装包结构未核实——资格未核实待双证据",
+        "§1.2），安装包结构未核实——准入未核实待双证据（两轴暂按 Apache-2.0：署名义务，"
+        "无 SA）",
         "output_license_inherits": [],
         "class_map_ref": "ts-classes/v1 (待落地：2.10.0 class_map 不含，需按 README 定义建)",
         "data_contract_version": "v1",
@@ -361,7 +439,6 @@ TEACHER_REGISTRY: list[dict] = [
         "checkpoint_id": "unpinned (权重未下载)",
         "modalities": ("CT",),
         "output_type": "mask",
-        "research_use": "unverified",
         "known_restrictions": [
             "TS 2.10.0 安装包 commercial_models 含该任务（id 305，需 license）："
             "非商用走 academic license 渠道；与 README open 清单出入已注记"
@@ -373,11 +450,13 @@ TEACHER_REGISTRY: list[dict] = [
             "（需 license）；README open 清单（访问 2026-11-06）称 open——按安装包实况 "
             "登记 unverified",
         },
-        "ready": False,
         "weight_integrity": {"sha256": None, "size_bytes": None, "status": "not_recorded"},
-        "research_distill": "unverified",
+        "attribution_required": True,
+        "share_alike": False,
+        "license_verified": False,
         "restriction_basis": "许可明文出入：安装包 commercial_models 含该任务（id 305，需 "
-        "license）与 README open 清单有出入（M7-S3F ②）——按安装包实况资格未核实",
+        "license）与 README open 清单有出入（M7-S3F ②）——按安装包实况准入未核实"
+        "（两轴暂按 Apache-2.0：署名义务，无 SA；⑥ 轮再议 NC 框架下消解）",
         "output_license_inherits": [],
         "class_map_ref": "ts-classes/v1 (TS 2.10.0 map_to_binary.class_map)",
         "data_contract_version": "v1",
@@ -396,22 +475,32 @@ def validate_entry(entry: dict) -> None:
         raise ValueError(f"注册表条目缺字段：{missing}")
     if entry["output_type"] not in ("mask", "feature", "framework"):
         raise ValueError(f"output_type 非法：{entry['output_type']!r}")
-    if entry["research_use"] not in ("allowed", "restricted", "unverified"):
-        raise ValueError(f"research_use 非法：{entry['research_use']!r}")
-    if entry["research_distill"] not in RESEARCH_DISTILL_VALUES:
-        raise ValueError(f"research_distill 非法：{entry['research_distill']!r}")
+    if not isinstance(entry["attribution_required"], bool) or not entry["attribution_required"]:
+        raise ValueError(
+            f"attribution_required 非法：{entry['attribution_required']!r}（本仓无公有"
+            "领域来源，恒 True；bool 非 int）"
+        )
+    if not isinstance(entry["share_alike"], bool):
+        raise ValueError(
+            f"share_alike 非法：{entry['share_alike']!r}（bool 非 int，1/0 会过枚举比较）"
+        )
+    if not isinstance(entry["license_verified"], bool):
+        raise ValueError(
+            f"license_verified 非法：{entry['license_verified']!r}（bool：双证据 true / "
+            "单一来源或出入 false）"
+        )
     rb = entry["restriction_basis"]
     if not isinstance(rb, str) or not rb.strip():
         raise ValueError("restriction_basis 必填（限制依据：许可明文或项目政策，附出处）")
     if not isinstance(entry["output_license_inherits"], list):
         raise ValueError("output_license_inherits 必须是列表（无需保留条款则显式空列表）")
-    # S3R4 M-1：conditional 且 inherits 空列表 -> 条款被静默丢弃（ontology 判定
-    # 落 "ok"）——入口拒绝登记（派生物保留条款必须显式登记）
-    if entry["research_distill"] == "conditional" and not entry["output_license_inherits"]:
+    # S3P2 ⑤（承接 S3R4 M-1）：share_alike 且 inherits 空列表 -> SA 条款被静默
+    # 丢弃（派生物按 output_license_inherits 保留条款）——入口拒绝登记
+    if entry["share_alike"] and not entry["output_license_inherits"]:
         raise ValueError(
-            f"{entry['teacher_id']}/{entry['task']} research_distill=conditional 但 "
-            "output_license_inherits 为空：conditional 派生物须按保留条款登记"
-            "（无需条款则改登记 allowed/unverified，不静默丢条款）"
+            f"{entry['teacher_id']}/{entry['task']} share_alike=True 但 "
+            "output_license_inherits 为空：SA 派生物须按保留条款登记"
+            "（share_alike=False 且无需条款则显式空列表，不静默丢条款）"
         )
     if not isinstance(entry["known_restrictions"], list):
         raise ValueError("known_restrictions 必须是列表（无限制则显式空列表）")
@@ -425,13 +514,10 @@ def validate_entry(entry: dict) -> None:
             f"mask 教师 {entry['teacher_id']}/{entry['task']} 缺 class_map_ref 或 "
             "data_contract_version（无法判断结构覆盖与跨教师比较）"
         )
-    # W16：占位守卫匹配「待建」与「待落地」两种措辞——永远不能在类映射落地前 ready
-    cls_ref = str(entry.get("class_map_ref") or "")
-    if entry.get("ready") and ("待建" in cls_ref or "待落地" in cls_ref):
-        raise ValueError(
-            f"{entry['teacher_id']}/{entry['task']} ready=True 但 class_map_ref "
-            f"是占位（{entry['class_map_ref']}）——先落地类映射再 ready"
-        )
+    # W16 占位守卫（M7-S3P2 ⑥ 字段化迁移）：ready 布尔退役后，占位 class_map_ref
+    # 的旧「ready=True × 占位」矛盾不再可表达——守卫语义移到路由侧
+    # class_map_present 推导（占位 → 派生 False → check_task 拒绝派发）；
+    # 登记带占位 ref 仍合法（13 个未就绪条目即此形态）。
     if entry["output_type"] == "feature" and not entry.get("feature_schema"):
         raise ValueError(f"feature 教师 {entry['teacher_id']} 缺 feature_schema")
 
@@ -485,10 +571,6 @@ LICENSE_FACTS: dict[str, dict[str, str]] = {
         "count": "18",
         "holder": "University Hospital Basel, jakob.wasserthal@usb.ch",
     },
-    "totalsegmentator.brain_aneurysm": {
-        "license": "CC BY-NC 4.0",
-        "usage": "BLOCKED — no commercial license available",
-    },
     "nninteractive.code": {
         "license": "Apache-2.0",
         "usage": "any",
@@ -525,7 +607,6 @@ class LicenseRegistry:
         return {
             "teacher_engine": t.engine,
             "allowed_tasks": t.allowed_tasks,
-            "commercial_distill_tasks": t.commercial_distill_tasks,
             "blocked_tasks": t.blocked_tasks,
             "nninteractive": self.settings.nninteractive.model_dump(),
             "experimental_text_prompt": self.settings.experimental_text_prompt.model_dump(),
@@ -536,10 +617,14 @@ class LicenseRegistry:
     def check_task(self, task: str, modality: str | None = None) -> tuple[bool, str]:
         """教师路由判定（worker 分发层与 CI 负测试共用）。
 
-        注册表唯一来源（M7-S3F ②：白名单回退退役）：
+        注册表唯一来源（M7-S3F ②：白名单回退退役；M7-S3P2 ⑥：ready 布尔
+        退役，就绪三分 weights_present / class_map_present / share_alike）：
         - settings.teacher.blocked_tasks 仍一票否决（blocked 是许可硬约束）。
-        - 注册表有条目且 ready 且模态匹配 → 放行。
-        - 注册表有条目但模态不符 / 未就绪 → 拒绝并带原因（回退语义 §2.2.3）。
+        - 注册表有条目且就绪（weights_present 且 class_map_present）且模态
+          匹配 → 放行；share_alike=True 的条目（SA 是许可义务不是可用性挡项，
+          R4a-fix 忠实拆分零政策变化）放行并在原因里注记 SA 义务。
+        - 注册表有条目但模态不符 / 未就绪 → 拒绝并带原因，原因写明是哪一项
+          挡住（缺权重 / 缺 class_map；SA 只出现在放行义务注记里）。
         - 注册表无条目 → 拒绝并带原因（新任务走注册表登记，不走白名单旁路）。
         """
         if task in self.settings.teacher.blocked_tasks:
@@ -547,8 +632,9 @@ class LicenseRegistry:
         entries = [e for e in TEACHER_REGISTRY if e["task"] == task]
         if entries:
             if modality is not None:
-                # 归一化（W8）：与 qc.py 同口径（"mr"/" MR" 按 MR 处理）
-                m = modality.strip().upper()
+                # 归一化（W8）：与 qc.py 同口径（"mr"/" MR" 按 MR 处理）；
+                # R3 ④：别名 PT → PET（DICOM 代码匹配注册表登记值）
+                m = MODALITY_ALIASES.get(modality.strip().upper(), modality.strip().upper())
                 ok = [e for e in entries if m in e["modalities"]]
                 if not ok:
                     return (
@@ -557,15 +643,41 @@ class LicenseRegistry:
                         f"(registered modalities: "
                         f"{sorted({mm for e in entries for mm in e['modalities']})})",
                     )
-            ready = [e for e in ok if e["ready"]] if modality is not None else [
-                e for e in entries if e["ready"]
-            ]
+            else:
+                ok = entries
+            ready = [e for e in ok if weights_present(e) and class_map_present(e)]
             if not ready:
+                # 拒绝原因写明挡项（M7-S3P2 ⑥）：逐项收集后去重
+                # （审查 W1 修复：三元表达式串联有优先级陷阱，改逐条列表收集；
+                # R4a-fix：只列真实挡项——"checkpoint 未部署"仅当全部条目
+                # 缺权重时出现，SA 不进拒绝原因）
+                blocked = sorted(
+                    {
+                        item
+                        for e in ok
+                        for item in (
+                            *(["缺权重"] if not weights_present(e) else []),
+                            *(["缺 class_map"] if not class_map_present(e) else []),
+                        )
+                    }
+                )
+                prefix = "checkpoint 未部署；" if any(
+                    not weights_present(e) for e in ok
+                ) else ""
                 return (
                     False,
                     f"task '{task}' registered but not ready "
-                    f"(checkpoint 未部署；见注册表 ready=False)",
+                    f"({prefix}挡项: {'/'.join(blocked)}；"
+                    "见注册表就绪三分 weights_present/class_map_present)",
                 )
+            sa = [e for e in ready if e["share_alike"]]
+            if sa:
+                # SA 义务注记（R4a-fix）：share_alike 是许可义务（派生物按
+                # output_license_inherits 保留条款），不是可用性挡项
+                inherits = "；".join(
+                    c for e in sa for c in e.get("output_license_inherits", [])
+                )
+                return True, f"allowed（SA 义务：{inherits or '派生物按保留条款保留'}）"
             return True, "allowed"
         return (
             False,

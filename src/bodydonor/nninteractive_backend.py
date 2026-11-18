@@ -183,10 +183,12 @@ def correct_image(
     """对单张 NIfTI 跑一次 nnInteractive 交互修正（短会话：锁 → 推理 → 落盘 → 放锁）。
 
     已知缺口（S3R4 W-7，非 silently 全覆盖）：注册表门控（LicenseRegistry.
-    check_task 一票否决 blocked/ready）只覆盖 TS 教师路径（run_total →
+    check_task 一票否决 blocked/就绪三分）只覆盖 TS 教师路径（run_total →
     check_worker_task）；本模块 correct_image / _run_locked **未接注册表门控**
-    ——blocked/ready 判定对 nnInteractive 修正路径失效。当前 interactive_
-    correction ready=True 故无实害；蒸馏防线在数据侧（修正产物 sidecar source
+    ——blocked/就绪判定对 nnInteractive 修正路径失效。当前 interactive_
+    correction 就绪三分齐（权重部署、class_map 在位；share_alike=True 是
+    放行义务注记不作挡项，R4a-fix），check_task 对该任务实际放行——但生产
+    修正路径不过 check_task，蒸馏防线在数据侧（修正产物 sidecar source
     标签 + REJECTED_SOURCES / ontology 判定拒绝该来源）。
 
     - device: auto | cuda | cpu（auto = CUDA 可用则 cuda，否则 cpu）

@@ -15,8 +15,8 @@
 - **显存峰值**：`torch.cuda.reset_peak_memory_stats()` 起始 +
   `torch.cuda.max_memory_allocated()` 结束，换算 MiB。这是主值（分配器口径）；
   主进程的 nvidia-smi 轮询是交叉核对值（全局口径，两者都记录）。
-- **白名单**：主进程先做（check_worker_task）；runner 收到任务后再查一次
-  RUNNER_BLOCKED_TASKS（纵深防线，runner 不信任 stdin 输入）。
+- **白名单**：主进程先做（check_worker_task，blocked 一票否决——唯一防线，
+  R3 ④删 runner 侧纵深镜像后主进程判定即终审）。
 
 用法（主进程不直接跑本文件，由 segmentation.build_runner_cmd 组装命令）：
 
@@ -36,10 +36,6 @@ from typing import Any
 # 本文件由 `.venv-totalseg/bin/python` 执行（torch/totalsegmentator 只在该 venv
 # 可用，主 .venv 隔离——Q7）。主 .venv import 本模块只拿任务/结果契约常量，
 # 不触发 TS import（延迟到 run_task/main 内）。
-
-# runner 侧白名单纵深：只查本黑名单（主进程 check_worker_task 是第一道，
-# 走许可注册表；这里第二道，防绕过）
-RUNNER_BLOCKED_TASKS = {"brain_aneurysm"}
 
 
 def _log(msg: str) -> None:
@@ -93,19 +89,6 @@ def run_task(task_json: dict[str, Any]) -> dict[str, Any]:
     task = str(task_json["task"])
     device = str(task_json.get("device", "gpu"))
     output_dir = Path(str(task_json["output_dir"]))
-
-    # runner 侧白名单纵深（blocked 一票否决；主进程已查过一次）
-    if task in RUNNER_BLOCKED_TASKS:
-        return {
-            "status": "error",
-            "exit_code": 2,
-            "mask_path": None,
-            "classes": [],
-            "wall_seconds": 0.0,
-            "peak_vram_mb": None,
-            "error": f"任务白名单拒绝（runner 侧纵深）：'{task}' is BLOCKED "
-            "(license: see LICENSES-THIRD-PARTY.md)",
-        }
 
     if not input_nii.exists():
         return {

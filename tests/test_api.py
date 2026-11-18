@@ -34,7 +34,7 @@ def test_license_endpoint(client: TestClient) -> None:
     body = r.json()
     assert body["reference_doc"] == "LICENSES-THIRD-PARTY.md"
     assert "total" in body["allowed_tasks"]
-    assert "brain_aneurysm" in body["blocked_tasks"]
+    assert body["blocked_tasks"] == []  # R3 ④：brain_aneurysm 商用理由已删
     facts = body["license_facts"]
     assert facts["nninteractive.weights"]["license"] == "CC BY-NC-SA 4.0"
 

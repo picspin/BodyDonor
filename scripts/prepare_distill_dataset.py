@@ -41,15 +41,11 @@ def main() -> int:
                     help="只构建训练池 + 泄漏检查 + 统计，不落盘")
     ap.add_argument("--out-root", default="",
                     help="nnUNet_raw 根目录（默认 ~/data/BodyDonor/nnUNet_raw）")
-    ap.add_argument("--profile", default="commercial", choices=["commercial", "research"],
-                    help="许可门禁口径（S3F ③）：commercial 只放行 total；"
-                         "research 走注册表 research_use")
     args = ap.parse_args()
 
     out_root = Path(args.out_root) if args.out_root else None
     try:
-        result = prepare_dataset(out_root=out_root, dry_run=args.dry_run,
-                                 profile=args.profile)
+        result = prepare_dataset(out_root=out_root, dry_run=args.dry_run)
     except Exception as e:  # noqa: BLE001 — 许可门禁/泄漏/数据缺失都从这里呈现
         print(f"[distill] 失败：{e}", file=sys.stderr)
         return 1
