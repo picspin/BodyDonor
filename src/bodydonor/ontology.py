@@ -606,6 +606,7 @@ def mask_allowed_in_distill_training(mask_meta: dict[str, Any]) -> tuple[bool, s
       output_license_inherits 保留 SA 条款；conditional 语义由该继承字段承接）；
     - 无权重条目（nnunet_v2/framework）→ 阻断（无可蒸馏之物，license_verified=False）。
     注册表无条目 / blocked_tasks 一票否决语义不变。
+    license_verified 字段方案：用户 2026-11-18 已接受并保留。
 
     nnInteractive 来源（M4 阶段 3 补缺口；命名 v1→v2 用户 2026-11-09 决定）：
     修正产物 source=nninteractive_guided（规范名，v2；nnInteractive 产物绝不用
