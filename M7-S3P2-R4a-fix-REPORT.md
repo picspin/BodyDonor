@@ -1,7 +1,6 @@
 # M7-S3P2 R4a-fix 轮次报告——⑥ check_task 准入规则纠偏（SA 是义务不是挡项）
 
-2026-11-18。基线 R4a HEAD `a1632cc`，本轮 6 提交 `a95200b..a19345f`（含本报告
-前置提交）。只做本修复；⑦ 另派不在本轮。
+2026-11-18。基线 R4a HEAD `a1632cc`，本轮 7 提交 `a95200b..6235ec2`（含本报告提交）。只做本修复；⑦ 另派不在本轮。
 
 ## 背景
 
@@ -29,6 +28,7 @@ class_map_present and not share_alike`——SA 成了挡项。协调方实测确
 | `3caae8f` | nninteractive_backend docstring SA 挡项叙述同步 |
 | `e003495` | R4a 报告 §4/§2/状态表更正——原预期语义变更论证作废 |
 | `a19345f` | 审查 Nit 1 修正（测试注释过时引用）+ 审查 findings 文件 |
+| `6235ec2` | R4a-fix 轮次报告（本文件） |
 
 diffstat（实测）：6 files, +137/-45。
 
