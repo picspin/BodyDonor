@@ -11,10 +11,15 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from bodydonor.config import Settings, TeacherConfig, load_settings
 from bodydonor.license_registry import LicenseRegistry
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -113,3 +118,66 @@ def test_settings_yaml_matches_verified_license_facts() -> None:
         assert task not in t.allowed_tasks, f"{task} 是 licensed 任务，默认不加白"
     # R3 ④：brain_aneurysm 商用理由已删，无任务被 blocked（列表为空）
     assert t.blocked_tasks == []
+
+
+_NC_OPEN_SOURCE_RE = re.compile(
+    r"open[\s-]?source|opensource|开源", re.IGNORECASE
+)
+
+# 本测试文件自身的正则/注释行会被 rglob 扫到，运行时跳过。
+_SELF = Path(__file__).relative_to(REPO_ROOT)
+
+# 上游逐字引用（Apache-2.0 total/total_mr 权重 README 原文）与仓库自身
+# Apache-2.0 层（proposal.md 分层开源）以外的许可以外文件——扫描时跳过
+# 二进制/venv/缓存，只看文本文件。
+_SCAN_SKIP_DIRS = {".git", ".venv", ".pytest_cache", ".ruff_cache", "__pycache__"}
+_SCAN_SUFFIXES = {
+    ".md", ".py", ".txt", ".yaml", ".yml", ".json", ".html", ".rst", ".cfg", ".toml",
+}
+
+
+def test_no_nc_component_described_as_open_source() -> None:
+    """S3P2-R4b ⑦ 术语守卫：全仓文本文件不得把 NC 许可成分表述为
+    "open source"（NC 不满足 OSI 定义）。R4b 清查实测：零处命中——
+    既有命中仅为 (a) 上游 Apache-2.0 README 逐字引用
+    ("Openly available for any usage"，表述准确，保留) 与 (b) 仓库自身
+    Apache-2.0 层的中文「开源」（proposal.md 分层，保留）。守卫防回归：
+    若将来引入 NC 成分的 "open source" 表述，此测试红。
+
+    白名单例外（逐字精确匹配，不覆盖整行语义豁免）：
+    - LICENSES-THIRD-PARTY.md §8.2 推理 4 引用项目分层原文「开源层 Apache 2.0」
+      （指仓库自身 Apache-2.0 层，非 NC 成分）。
+    """
+    allowed_lines = {
+        (Path("LICENSES-THIRD-PARTY.md"),
+         "（Q1–Q10：后端 BSL 1.1，开源层 Apache 2.0；蒸馏流水线属专有层）。"),
+        # proposal.md 三行：仓库自身 Apache-2.0 层（分层开源 Q2 已定），
+        # 非 NC 成分——保留并注明理由。
+        (Path("proposal.md"), "## 2. 许可证：分层开源（Q2 已定）"),
+        (Path("proposal.md"),
+         "| Web UI、TUI、API 契约、导入、基础 QC | **Apache 2.0** | 公开源码，吸引用户和贡献者 |"),
+        (Path("proposal.md"), "- 授权模块属于专有镜像层，激活校验代码不进开源仓。"),
+    }
+    violations: list[str] = []
+    for p in sorted(REPO_ROOT.rglob("*")):
+        if not p.is_file() or p.suffix.lower() not in _SCAN_SUFFIXES:
+            continue
+        rel_parts = set(p.relative_to(REPO_ROOT).parts)
+        if rel_parts & _SCAN_SKIP_DIRS:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        rel = p.relative_to(REPO_ROOT)
+        for i, line in enumerate(text.splitlines(), 1):
+            if not _NC_OPEN_SOURCE_RE.search(line):
+                continue
+            if (rel, line.strip()) in allowed_lines or rel == _SELF:
+                continue
+            violations.append(f"{rel}:{i}: {line.strip()[:120]}")
+    assert not violations, (
+        "发现把成分表述为 open source 的行（NC 许可不满足 OSI 定义；"
+        "NC 成分应表述为 source-available, non-commercial）:\n"
+        + "\n".join(violations)
+    )
