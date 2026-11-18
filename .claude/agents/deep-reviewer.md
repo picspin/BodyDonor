@@ -64,4 +64,4 @@ deep-reviewer 只负责审查与复核，不负责修复——修复由实施方
 
 ## 调用约定
 
-审查一律经 `scripts/deep_review_from_main.sh` 发起：规则由该脚本从 main 分支提取（`git show main:.claude/agents/deep-reviewer.md`）并注入审查 prompt，main 版规则优先于工作树版。不要直接派 deep-reviewer 子代理而不走脚本——直接派遣时规则来源是工作树版，未提交的规则改动会污染审查。
+审查一律经 `scripts/deep_review_from_main.sh` 发起：规则文本由该脚本从 main 分支提取（`git show main:.claude/agents/deep-reviewer.md`）并注入审查 prompt，注入部分的规则以 main 版为准（子代理自身的 name/tools/hook 仍由工作树版解析，未提交的规则改动会影响子代理行为）。不要直接派 deep-reviewer 子代理而不走脚本——直接派遣时规则来源是工作树版，未提交的规则改动会污染审查。

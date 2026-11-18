@@ -13,7 +13,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 case "${1:-}" in
@@ -27,12 +27,17 @@ echo "review_sha=${review_sha}"
 # 规则只从 main 提取；main 上没有规则文件即失败，绝不静默用工作树版。
 # 本地 main 可能滞后于 origin/main（脚本不自动 fetch）——不一致时警告，规则文件有差异即 fatal。
 rule_file=".claude/agents/deep-reviewer.md"
-if git rev-parse -q --verify origin/main >/dev/null 2>&1 \
-   && [ "$(git rev-parse main)" != "$(git rev-parse origin/main)" ]; then
-  echo "WARNING: 本地 main ($(git rev-parse --short main)) != origin/main ($(git rev-parse --short origin/main))，规则取自本地 main" >&2
-  if ! git diff --quiet main origin/main -- "$rule_file"; then
-    echo "ERROR: ${rule_file} 在本地 main 与 origin/main 间有差异，先同步本地 main 再审查" >&2
+if git rev-parse -q --verify origin/main >/dev/null 2>&1; then
+  if ! git rev-parse -q --verify main >/dev/null 2>&1; then
+    echo "ERROR: 本地 main 不存在（origin/main 存在）" >&2
     exit 1
+  fi
+  if [ "$(git rev-parse main)" != "$(git rev-parse origin/main)" ]; then
+    echo "WARNING: 本地 main ($(git rev-parse --short main)) != origin/main ($(git rev-parse --short origin/main))，规则取自本地 main" >&2
+    if ! git diff --quiet main origin/main -- "$rule_file"; then
+      echo "ERROR: ${rule_file} 在本地 main 与 origin/main 间有差异，先同步本地 main 再审查" >&2
+      exit 1
+    fi
   fi
 fi
 tmpdir="$(mktemp -d)"
@@ -84,16 +89,27 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 
 # 调一次 claude -p 派发审查（findings 落盘由被调会话完成）。
+# 先删残留：同 HEAD 重跑时旧 findings 文件不得被当作新结果。
+out_file="reviews/review-${review_sha}.json"
+rm -f "$out_file"
 claude -p --dangerously-skip-permissions < "$prompt_file"
 
-# 校验 findings 文件存在且合法。
-out_file="reviews/review-${review_sha}.json"
+# 校验 findings 文件存在且合法（结构：review_sha 匹配 + findings 是数组）。
 if [ ! -s "$out_file" ]; then
   echo "ERROR: ${out_file} 未生成或为空" >&2
   exit 1
 fi
-if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$out_file" >/dev/null 2>&1; then
-  echo "ERROR: ${out_file} 不是合法 JSON" >&2
+if ! python3 - "$out_file" "$review_sha" <<'PYEOF' >/dev/null 2>&1
+import json, sys
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+if not isinstance(d, dict) or d.get("review_sha") != sys.argv[2]:
+    raise SystemExit(1)
+if not isinstance(d.get("findings"), list):
+    raise SystemExit(1)
+PYEOF
+then
+  echo "ERROR: ${out_file} 校验失败（非 JSON / review_sha 不匹配 / findings 非数组）" >&2
   exit 1
 fi
 echo "OK: ${out_file}"
