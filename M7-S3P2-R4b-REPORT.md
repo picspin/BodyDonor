@@ -13,8 +13,10 @@
 | `6d5a557` | test：⑦ 术语守卫——全仓 NC 成分 open source 表述清查零残留回归断言（+68） |
 | `5786f54` | fix：审查 F1/F2 修复——自跳过改行级豁免（动态白名单）+ 扫描改 git ls-files（+44/−34） |
 | `71a8699` | docs：本报告 + 审查 findings 落盘（+119） |
+| `bbb638d` | docs：报告提交列表补本报告提交 71a8699（+1） |
+| `178f189` | fix：报告/审查文档（*-REPORT.md/*-REVIEW.md）跳过守卫扫描（+5/−1） |
 
-diffstat（实测，c1b6d87..HEAD）：`tests/test_license_whitelist.py | 78 ++++++++++`，1 file changed。
+diffstat（实测，c1b6d87..HEAD）：`tests/test_license_whitelist.py | 78 ++++++++++` + 报告/审查文档 2 份（+165），3 files changed 198 insertions（报告提交 71a8699 前实测）；追加 bbb638d/178f189 后含文档 5 提交。
 
 ## ⑦ 逐项证据
 
@@ -30,7 +32,8 @@ diffstat（实测，c1b6d87..HEAD）：`tests/test_license_whitelist.py | 78 +++
 | M0-REPORT.md | 1 | (a) 22 行 M0 核实记录引用上游 README 原文 | 保留 |
 | proposal.md | 3 | (c) 16/20/33 行：仓库自身 Apache-2.0 层（分层开源 Q2 已定），与 NC 成分无关 | 保留 |
 | src/bodydonor/license_registry.py | 3 | (a) 98/116 行 docstring 引用上游清单原文 + 561 行 `"usage": "any (openly available for any usage)"` 注册表事实字段（Apache-2.0 total 任务，表述准确） | 保留 |
-| M7-S3P2-R4b-REVIEW.md | 5 | 本轮审查报告自身（findings 引用检索词与复现行文） | 保留（报告产物） |
+| M7-S3P2-R4b-REVIEW.md | 5 | 本轮审查报告自身（findings 引用检索词与复现行文） | 保留（审查产物，守卫跳过 `178f189`） |
+| M7-S3P2-R4b-REPORT.md | ~10 | 本轮报告自身（清查清单引用检索词） | 保留（报告产物，守卫跳过 `178f189`） |
 | plans/（10 行） | — | s3p2-r4b-dispatch / s3p2-r4-dispatch（派遣文自身）+ M7-LICENSE-CHECK.md（上游 README 逐字引用 118/122）+ M7-PLAN-v3-research.md 等其余文档零命中 | 保留（plans 仓不在本 worktree 改动范围） |
 
 其余 plans 文档（M7-PLAN-v3-research / M7-PLAN-v3.2-ANALYSIS / NEXT-ITERATION-PLAN / M6-PLAN）与全部非 md 扩展（*.py/*.txt/*.yaml/*.json/*.html/*.sh/*.js/*.ini/*.lock/*.gitignore，git ls-files 188 文件扩展名普查）**零命中**（grep + Python `re.findall` 交叉实测）。
@@ -70,6 +73,6 @@ deep-reviewer 1 个子代理（只读，无 Bash），6 findings（Major 2 / Min
 
 ## 未决清单
 
-- **无阻塞未决。** ⑦ 清查零处 NC 相关表述，守卫已固化；审查 6 findings 全部闭环（4 修 1 不采纳 1 闭环）。
+- **无阻塞未决。** ⑦ 清查零处 NC 相关表述，守卫已固化；审查 6 findings 全部闭环（4 修 1 不采纳 1 闭环）；轮次报告/审查文档跳过守卫（`178f189`，复测 59 passed）。
 - 非本轮范围：plans 仓（~/work/bodydonor-plans/）内派遣文自身含检索词，属协调方文件，不在 worktree 改动范围；M7-LICENSE-CHECK.md 的上游引用为准确表述无需改。
 - 上游 README "Openly available for any usage" 引文按派遣逐字保留——若上游将来改口径（如改用 source-available 表述），引用需随上游更新重扫（LICENSES-THIRD-PARTY.md §1.2/§8 访问日期 2026-11-06/11-08/11-13）。
