@@ -88,12 +88,45 @@ def test_amend_with_config_and_marker_allowed(scratch_repo):
     assert r.returncode == 0, r.stderr
 
 
+def test_rename_out_of_config_without_marker_rejected(scratch_repo):
+    # 审查 blocker：--name-only 默认 renames 只列新路径，rename out 逃检
+    _touch_config(scratch_repo)
+    _run(["git", "commit", "-q", "-m", "add cfg [config-change]"], scratch_repo)
+    (scratch_repo / "config" / "settings.yaml").rename(
+        scratch_repo / "settings.yaml"
+    )
+    _run(["git", "add", "-A"], scratch_repo)
+    r = _run(["git", "commit", "-m", "rename out no marker"], scratch_repo)
+    assert r.returncode != 0
+
+
+def test_non_ascii_config_name_without_marker_rejected(scratch_repo):
+    # 审查 W1：默认 core.quotePath=true 输出带引号转义，^config/ 不匹配
+    cfg = scratch_repo / "config" / "中文.yaml"
+    cfg.parent.mkdir(exist_ok=True)
+    cfg.write_text("x: 1\n")
+    _run(["git", "add", "config/"], scratch_repo)
+    r = _run(["git", "commit", "-m", "nonascii no marker"], scratch_repo)
+    assert r.returncode != 0
+
+
+def test_amend_no_edit_reuses_old_marker_pinned_limitation(scratch_repo):
+    # 审查 W3：--no-edit 复用旧消息标记、本次新改动放行——README 已文档化的接受限制
+    _touch_config(scratch_repo)
+    _run(["git", "commit", "-q", "-m", "cfg [config-change]"], scratch_repo)
+    (scratch_repo / "config" / "settings.yaml").write_text("y: 2\n")
+    _run(["git", "add", "config/"], scratch_repo)
+    r = _run(["git", "commit", "--amend", "--no-edit"], scratch_repo)
+    assert r.returncode == 0, r.stderr
+
+
 def test_comment_line_marker_not_recognized(scratch_repo):
     _touch_config(scratch_repo)
     msg_file = scratch_repo / "msg.txt"
     msg_file.write_text("test: no marker\n#[config-change] in comment\n")
     r = _run(["git", "commit", "-F", str(msg_file)], scratch_repo)
     assert r.returncode != 0
+    assert "[config-change]" in r.stderr
 
 
 def test_hook_install_doc_matches_fixture(tmp_path):
