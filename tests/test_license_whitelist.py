@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -121,63 +122,72 @@ def test_settings_yaml_matches_verified_license_facts() -> None:
 
 
 _NC_OPEN_SOURCE_RE = re.compile(
-    r"open[\s-]?source|opensource|开源", re.IGNORECASE
+    "open[" r"\s" "-]?source|open" "source|开" "源",  # 字面量拆开避免自命中
+    re.IGNORECASE,
 )
 
-# 本测试文件自身的正则/注释行会被 rglob 扫到，运行时跳过。
-_SELF = Path(__file__).relative_to(REPO_ROOT)
+# 白名单：仓库自身 Apache-2.0 层（Q2 已定分层）的保留行，按行号从
+# 真实文件动态读取——守卫文件内不硬编码这些文本（echo 行会自命中）。
+# 行号脆弱：格式微调即红，与守卫语义一致（改动保留行本就该过人审）。
+_ALLOWED_LINE_REFS = (
+    (Path("LICENSES-THIRD-PARTY.md"), (397,)),
+    (Path("proposal.md"), (16, 20, 33)),
+)
 
-# 上游逐字引用（Apache-2.0 total/total_mr 权重 README 原文）与仓库自身
-# Apache-2.0 层（proposal.md 分层开源）以外的许可以外文件——扫描时跳过
-# 二进制/venv/缓存，只看文本文件。
+# 受跟踪文件列表（git ls-files）——不扫未跟踪/gitignored 本地产物，
+# 本地与 CI 结果一致（审查 F2）。
 _SCAN_SKIP_DIRS = {".git", ".venv", ".pytest_cache", ".ruff_cache", "__pycache__"}
 _SCAN_SUFFIXES = {
-    ".md", ".py", ".txt", ".yaml", ".yml", ".json", ".html", ".rst", ".cfg", ".toml",
+    ".md", ".py", ".txt", ".yaml", ".yml", ".json", ".html", ".rst", ".cfg",
+    ".toml", ".sh", ".js", ".ini", ".mako", ".lock", ".gitignore",
 }
 
 
 def test_no_nc_component_described_as_open_source() -> None:
-    """S3P2-R4b ⑦ 术语守卫：全仓文本文件不得把 NC 许可成分表述为
-    "open source"（NC 不满足 OSI 定义）。R4b 清查实测：零处命中——
-    既有命中仅为 (a) 上游 Apache-2.0 README 逐字引用
-    ("Openly available for any usage"，表述准确，保留) 与 (b) 仓库自身
-    Apache-2.0 层的中文「开源」（proposal.md 分层，保留）。守卫防回归：
-    若将来引入 NC 成分的 "open source" 表述，此测试红。
-
-    白名单例外（逐字精确匹配，不覆盖整行语义豁免）：
-    - LICENSES-THIRD-PARTY.md §8.2 推理 4 引用项目分层原文「开源层 Apache 2.0」
-      （指仓库自身 Apache-2.0 层，非 NC 成分）。
-    """
-    allowed_lines = {
-        (Path("LICENSES-THIRD-PARTY.md"),
-         "（Q1–Q10：后端 BSL 1.1，开源层 Apache 2.0；蒸馏流水线属专有层）。"),
-        # proposal.md 三行：仓库自身 Apache-2.0 层（分层开源 Q2 已定），
-        # 非 NC 成分——保留并注明理由。
-        (Path("proposal.md"), "## 2. 许可证：分层开源（Q2 已定）"),
-        (Path("proposal.md"),
-         "| Web UI、TUI、API 契约、导入、基础 QC | **Apache 2.0** | 公开源码，吸引用户和贡献者 |"),
-        (Path("proposal.md"), "- 授权模块属于专有镜像层，激活校验代码不进开源仓。"),
-    }
+    """S3P2-R4b ⑦ 术语守卫：全仓受跟踪文本文件不得把 NC 许可成分
+    表述为那两个英文词（NC 不满足 OSI 定义；NC 成分应表述为
+    source-available, non-commercial）。R4b 清查实测：零处命中——
+    既有命中仅为 (a) 上游 Apache-2.0 README 逐字引用（"Openly
+    available for any usage"，表述准确，保留——正则抓的是 open+source
+    相邻组合，不碰该引文）与 (b) 仓库自身 Apache-2.0 层的中文表述
+    （proposal.md 分层，按行号白名单保留）。守卫防回归：若将来引入
+    NC 成分的那类表述，此测试红。审查 F1：本文件不做整文件自跳过——
+    正则字面量拆开 + 白名单动态读取 + 本文措辞改写，自身零命中；
+    将来写进本文件的违规表述仍会被抓住。"""
+    allowed_lines = set()
+    for f, nums in _ALLOWED_LINE_REFS:
+        lines = (REPO_ROOT / f).read_text(encoding="utf-8").splitlines()
+        for n in nums:
+            allowed_lines.add((f, lines[n - 1].strip()))
     violations: list[str] = []
-    for p in sorted(REPO_ROOT.rglob("*")):
+    tracked = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "ls-files"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout.splitlines()
+    for name in sorted(tracked):
+        p = REPO_ROOT / name
         if not p.is_file() or p.suffix.lower() not in _SCAN_SUFFIXES:
             continue
-        rel_parts = set(p.relative_to(REPO_ROOT).parts)
+        rel_parts = set(Path(name).parts)
         if rel_parts & _SCAN_SKIP_DIRS:
             continue
         try:
             text = p.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
+            violations.append(f"{name}: <decode failed>")
             continue
-        rel = p.relative_to(REPO_ROOT)
+        rel = Path(name)
         for i, line in enumerate(text.splitlines(), 1):
             if not _NC_OPEN_SOURCE_RE.search(line):
                 continue
-            if (rel, line.strip()) in allowed_lines or rel == _SELF:
+            if (rel, line.strip()) in allowed_lines:
                 continue
             violations.append(f"{rel}:{i}: {line.strip()[:120]}")
     assert not violations, (
-        "发现把成分表述为 open source 的行（NC 许可不满足 OSI 定义；"
-        "NC 成分应表述为 source-available, non-commercial）:\n"
+        "发现把 NC 许可成分表述为那两个英文词的行"
+        "（NC 不符合 OSI 定义；应表述为 source-available, non-commercial）:\n"
         + "\n".join(violations)
     )
