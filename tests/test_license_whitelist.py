@@ -135,8 +135,10 @@ _ALLOWED_LINE_REFS = (
 )
 
 # 受跟踪文件列表（git ls-files）——不扫未跟踪/gitignored 本地产物，
-# 本地与 CI 结果一致（审查 F2）。
+# 本地与 CI 结果一致（审查 F2）。轮次报告/审查文档（*-REPORT.md /
+# *-REVIEW.md）是审查产物，引用检索词是本职——跳过。
 _SCAN_SKIP_DIRS = {".git", ".venv", ".pytest_cache", ".ruff_cache", "__pycache__"}
+_SCAN_SKIP_FILE_RE = re.compile(r"-REPORT\.md$|-REVIEW\.md$")
 _SCAN_SUFFIXES = {
     ".md", ".py", ".txt", ".yaml", ".yml", ".json", ".html", ".rst", ".cfg",
     ".toml", ".sh", ".js", ".ini", ".mako", ".lock", ".gitignore",
@@ -173,6 +175,8 @@ def test_no_nc_component_described_as_open_source() -> None:
             continue
         rel_parts = set(Path(name).parts)
         if rel_parts & _SCAN_SKIP_DIRS:
+            continue
+        if _SCAN_SKIP_FILE_RE.search(name):
             continue
         try:
             text = p.read_text(encoding="utf-8")
