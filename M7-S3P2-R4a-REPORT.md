@@ -184,3 +184,9 @@ deep-reviewer 1 个（只读，无 shell——findings 见 M7-S3P2-R4a-REVIEW.md
 6. **recalibration_ready（qc.py:88-89）**：数值重算抽检，另一概念，本轮未动
    （任务明令）；`test_src_no_ready_residual` 守卫已将其列为豁免。
 7. **⑦ 全仓清查**：另派，不在本轮。
+
+## Addendum 2026-11-18：vertebrae_body 消解论证已确认
+
+NC 框架下无商业暴露、pending 项直接消解的论证已由用户 2026-11-18 确认，
+该 pending 项关闭。证据冲突本身作为文档注记保留：`known_restrictions` 与
+`provenance.verified` 原文不动，注册表 vertebrae_body 条目不动。
