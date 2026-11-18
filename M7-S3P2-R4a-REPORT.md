@@ -42,12 +42,10 @@ diffstat（实测）：6 files, +289/-58。
 
 ### 2. check_task 读三字段（src/bodydonor/license_registry.py:604-667）
 
-- 就绪判定（:642-645）：`weights_present(e) and class_map_present(e) and not
-  e["share_alike"]`——三字段齐才放行。
-- 拒绝原因写明挡项（:646-661）：逐条列表收集 + set 去重，原因字符串含
-  「缺权重」/「缺 class_map」/「SA 义务」逐项（审查 W1 修复后的最终形态）。
-- 实测拒绝原因：`body_mr` → "挡项: 缺权重"；占位 class_map 合成条目 →
-  "挡项: 缺 class_map"；nninteractive 形态 → "挡项: SA 义务"。
+**本节已由 R4a-fix 更正：下述准入含 SA 挡项与 SA 拒绝原因是 R4a 政策变化，
+已返工**（6531609）——准入改 `weights_present and class_map_present`，SA
+移入放行义务注记，拒绝原因只列真实挡项，"checkpoint 未部署"前缀仅当条目
+缺权重时出现（下述行号引用 R4a 时的旧形态）。
 
 ### 3. validate_entry 占位守卫迁移（:511-515）
 
@@ -59,12 +57,17 @@ class_map_present=False → check_task 拒绝派发。占位类映射永远不�
 
 ### 4. 快照 nninteractive route 变更（tests/data/m2_decision_table.json）
 
-`[True, "ok+license_inherits"]` → `[False, "blocked:not-ready"]`：⑥ 预期语义
-变更——nninteractive share_alike=True，就绪三分下 check_task 以 SA 义务挡。
-生产实害论证：nninteractive_backend.py:183-190 生产修正路径（correct_image /
-_run_locked）未接注册表门控（S3R4 W-7 已知缺口，docstring 明示），check_task
-只覆盖 TS 教师路径；蒸馏防线在数据侧（sidecar source + ontology 判定拒绝）。
-其余 35 条目 route 判定零变化（对照脚本实测：changed count = 1）。
+**本节已由 R4a-fix 更正（见 M7-S3P2-R4a-fix-REPORT.md）：原"⑥ 预期语义
+变更"论证作废。** R4a 把 `[True, "ok+license_inherits"]` 改为
+`[False, "blocked:not-ready"]` 是政策变化，不是忠实拆分：旧 ready=True 已把
+SA（share_alike=True）接受在内，SA 是许可义务不是可用性挡项；就绪三分
+拆分应保持旧行为不变（零政策变化），SA 是否该挡路由是待用户定的政策问题。
+R4a-fix 已还原（0969cdc）——nninteractive route 回 `[True,
+"ok+license_inherits"]`，check_task 准入规则改 `weights_present and
+class_map_present`，SA 移入放行义务注记（6531609）。生产实害论证
+（nninteractive_backend.py:183-190 生产修正路径未接注册表门控，S3R4 W-7
+已知缺口）对还原后状态仍成立且必要：SA 条目现在路由放行，蒸馏防线在数据侧
+（sidecar source + ontology 判定拒绝）。
 
 ## 拆分后状态表
 
@@ -128,7 +131,7 @@ vertebrae_body 条目）、`share_alike=False`。license_verified=False（保持
 | 条目 | weights_present | class_map_present | share_alike | check_task |
 |---|---|---|---|---|
 | totalsegmentator/total | True（本实测 sha256） | True | False | 放行（"allowed"） |
-| nninteractive/interactive_correction | True | True | True（CC BY-NC-SA） | 拒绝（"挡项: SA 义务"——生产路径不过 check_task，无实害） |
+| nninteractive/interactive_correction | True | True | True（CC BY-NC-SA） | 放行（R4a-fix 6531609：SA 是放行义务注记不作挡项；生产路径不过 check_task，无实害） |
 
 ## 测试（数字实测）
 
@@ -136,7 +139,7 @@ vertebrae_body 条目）、`share_alike=False`。license_verified=False（保持
   既有 22）。新增：
   - `test_weights_present_derivation_boundaries`（verified/not_recorded/缺失键）
   - `test_class_map_present_derivation_boundaries`（无标记/待建/待落地/缺失键）
-  - `test_check_task_rejection_reason_names_blocked_item`（缺权重/缺 class_map/SA 三分）
+  - `test_check_task_rejection_reason_names_blocked_item`（缺权重/缺 class_map/SA 义务注记，R4a-fix 更正）
   - `test_check_task_rejection_reason_combinations_all_named`（审查 W1 失败测试
     先行：7 组合参数化，组合挡项逐项报全）
   - `test_all_36_entries_three_ready_fields_valued`（36 条目三字段逐条有值 +
