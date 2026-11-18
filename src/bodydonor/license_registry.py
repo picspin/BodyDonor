@@ -11,8 +11,10 @@
   test_research_field_decision_table.py 断言迁移前后判定逐条一致）。
 
 法务事实（2026-11-18 用户确认）：research 只化解 NC 条款，不化解 ShareAlike；
-nnInteractive（CC BY-NC-SA 4.0）与 SynthSeg 蒸馏出的学生权重是衍生作品，须以
-BY-NC-SA 分发；软件内不另建合规门禁，依据只留文档。
+nnInteractive（CC BY-NC-SA 4.0）蒸馏出的学生权重是衍生作品，须以 BY-NC-SA
+分发（隔离为独立制品 + 单列许可也是满足其 SA 义务的方式）；SynthSeg/MOOSE
+蒸馏出的学生权重不以 BY-NC-SA 分发，隔离为独立制品并单列许可（用户
+2026-11-18 决定）；软件内不另建合规门禁，依据只留文档。
 
 就绪三分（M7-S3P2 ⑥，S3R2 ③"三分结构"的字段化）：单一布尔 ``ready`` 退役，
 拆成三个可推导字段——
@@ -278,7 +280,8 @@ TEACHER_REGISTRY: list[dict] = [
         "restriction_basis": "许可明文 + 法务未决：权重 CC BY 4.0 本身允许商用（含衍生），"
         "不禁止本地科研蒸馏（LICENSE-CHECK §五）；保留在 NC 训练数据溯源（AutoPET）与"
         "'Commercial Version' 关系两项未决（§五未解决项 2/3），法务澄清后可升级 allowed。"
-        "两轴：署名义务，无 SA（训练数据含 NC 部分是独立 caveat，不进 SA 轴——用户 2026-11-18 确认）",
+        "两轴：署名义务，无 SA（训练数据含 NC 部分是独立 caveat，不进 SA 轴"
+        "——用户 2026-11-18 确认）",
         "output_license_inherits": ["CC BY 4.0（署名条款，MODEL_LICENSE）"],
         "class_map_ref": "moose-classes/v1 (待建)",
         "data_contract_version": "v1",

@@ -432,9 +432,11 @@ M1 下载登记时在引用文献里完成署名义务。
 1. research（研究用途）只化解 NC 条款，不化解 ShareAlike。
 2. nnInteractive（CC BY-NC-SA 4.0）蒸馏出的学生权重是衍生作品，须以
    BY-NC-SA 分发。
-3. SynthSeg（FreeSurfer SLA v1.0）蒸馏出的学生权重同理是衍生作品，须以
-   BY-NC-SA 分发；若 repo 出站许可为不带 SA 的纯 NC，这些权重必须隔离为
-   独立制品并单列许可。
+3. SynthSeg（FreeSurfer SLA v1.0）蒸馏出的学生权重同理是衍生作品，但
+   **不以 BY-NC-SA 分发**：隔离为独立制品并单列许可（SynthSeg 制品单列
+   FreeSurfer SLA v1.0；moose 制品单列 CC BY 4.0）。synthseg / moose
+   蒸馏出的学生权重同样隔离为独立制品（用户 2026-11-18 决定：BY-NC-SA
+   偏严格，隔离独立制品）。
 4. 软件内不另建合规门禁，依据只留文档（本文件与注册表 restriction_basis）。
 
 **注册表字段语义（M7-S3P2 ⑤ 迁移）**：
