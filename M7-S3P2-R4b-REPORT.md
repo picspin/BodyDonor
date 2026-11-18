@@ -12,6 +12,7 @@
 |---|---|
 | `6d5a557` | test：⑦ 术语守卫——全仓 NC 成分 open source 表述清查零残留回归断言（+68） |
 | `5786f54` | fix：审查 F1/F2 修复——自跳过改行级豁免（动态白名单）+ 扫描改 git ls-files（+44/−34） |
+| `71a8699` | docs：本报告 + 审查 findings 落盘（+119） |
 
 diffstat（实测，c1b6d87..HEAD）：`tests/test_license_whitelist.py | 78 ++++++++++`，1 file changed。
 
