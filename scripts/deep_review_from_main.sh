@@ -25,7 +25,16 @@ review_sha="$(git rev-parse HEAD)"
 echo "review_sha=${review_sha}"
 
 # 规则只从 main 提取；main 上没有规则文件即失败，绝不静默用工作树版。
+# 本地 main 可能滞后于 origin/main（脚本不自动 fetch）——不一致时警告，规则文件有差异即 fatal。
 rule_file=".claude/agents/deep-reviewer.md"
+if git rev-parse -q --verify origin/main >/dev/null 2>&1 \
+   && [ "$(git rev-parse main)" != "$(git rev-parse origin/main)" ]; then
+  echo "WARNING: 本地 main ($(git rev-parse --short main)) != origin/main ($(git rev-parse --short origin/main))，规则取自本地 main" >&2
+  if ! git diff --quiet main origin/main -- "$rule_file"; then
+    echo "ERROR: ${rule_file} 在本地 main 与 origin/main 间有差异，先同步本地 main 再审查" >&2
+    exit 1
+  fi
+fi
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 if ! git cat-file -e "main:${rule_file}" 2>/dev/null; then
