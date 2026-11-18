@@ -97,20 +97,9 @@
 
 无 CONFIRMED bug → 无需失败测试/修复流程。审查未覆盖项已由调用方补齐（亲读核实，见审查文件「已查无问题」表）：`component_convergence`（`qc_priority.py:136`）与 `record_review_decision`（`qc_reflux.py:25`）签名与调用点一致；holdout→models 无 import 环；w3/w4 调用链一致。
 
-## 8. 未决清单
-
-**无 API 兼容未决**（受影响文件测试 94+53 passed，S2 意图与 main API 无正面冲突，无旧 API 调用需要裁决）。
-
-本轮新增未决（均为 main 自带，不属 rebase 回归，提请用户定夺）：
-
-1. `distill_data.py:652-653` `__all__` 重复条目 `"ALLOWED_TRAIN_SOURCES"`（main 自带 646-647，rebase 原样重放）——是否随下轮清理。
-2. `qc_priority.py:239` 硬编码 `< 10` 未引用 `MIN_PER_CLASS`（main 自带，当前三处同值）——是否统一引用常量。
-
-沿袭既有 S2 报告未决（`M7-S2-REPORT.md` §10，本轮不重复处理）：calib 集缺失、teacher_reliability_entry 消费方接线、local_artifacts marker、旧 manifest 双哈希字段、case_ids_hash 理论边界、worktree 无生产 db 数据。
-
 ## 7. 与既有 S2 报告的关系
 
-- `M7-S2-REPORT.md`（rebase 随带，157 行）记录的是收尾轮（2026-11-14）的结果，本轮不改动它；其 §11 提交列表为旧 hash（`ab8da49` 等），rebase 后新 hash 见本报告 §1.1。
+- `M7-S2-REPORT.md`（rebase 随带，157 行）记录的是收尾轮（2026-11-14）的结果，本轮不改动它；其 §11 提交列表为旧 hash（`ab8da49` 等），rebase 后新 hash 见本报告 §7。
 
 ### 提交新旧 hash 对照（9 提交，逐条 1:1，主题一致）
 
@@ -125,3 +114,14 @@
 | `d2a7209` | `0624587` | fix: derived_from_case_ids_hash 写实值 + 防回归测试 |
 | `37e110c` | `d752f43` | docs: §7 测试表修正 |
 | `aa591c1` | `a99e7a1` | docs: M7-S2-REPORT 定稿 |
+
+## 8. 未决清单
+
+**无 API 兼容未决**（受影响文件测试 94+53 passed，S2 意图与 main API 无正面冲突，无旧 API 调用需要裁决）。
+
+本轮新增未决（均为 main 自带，不属 rebase 回归，提请用户定夺）：
+
+1. `distill_data.py:652-653` `__all__` 重复条目 `"ALLOWED_TRAIN_SOURCES"`（main 自带 646-647，rebase 原样重放）——是否随下轮清理。
+2. `qc_priority.py:239` 硬编码 `< 10` 未引用 `MIN_PER_CLASS`（main 自带，当前三处同值）——是否统一引用常量。
+
+沿袭既有 S2 报告未决（`M7-S2-REPORT.md` §10，本轮不重复处理）：calib 集缺失、teacher_reliability_entry 消费方接线、local_artifacts marker、旧 manifest 双哈希字段、case_ids_hash 理论边界、worktree 无生产 db 数据。
