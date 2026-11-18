@@ -231,8 +231,8 @@ def test_dicom_pt_code_matches_pet_registered_modality() -> None:
         if e["teacher_id"] == "nninteractive" and e["task"] == "interactive_correction"
     )
     saved = lr.TEACHER_REGISTRY
-    # nninteractive 条目（PET 已登记）；share_alike=False 使就绪三分不因 SA 挡
-    # （⑥：本测试只验模态匹配，SA 挡项另有测试）
+    # nninteractive 条目（PET 已登记）；share_alike=False 只为隔离 SA 义务
+    # 注记对本测试的影响（R4a-fix：本测试只验模态匹配）
     lr.TEACHER_REGISTRY = [{**nni, "share_alike": False}]
     try:
         ok, msg = LicenseRegistry(_settings()).check_task(
