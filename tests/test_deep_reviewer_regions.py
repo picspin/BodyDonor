@@ -25,5 +25,5 @@ def test_agent_file_contains_six_checkpoint_keywords():
         "mock 冒充实测",
         "M6-F 原案",
         "严重度指引",
-   ):
+    ):
         assert kw in text, f"missing keyword: {kw}"
