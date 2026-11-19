@@ -650,7 +650,6 @@ def prepare_dataset(
 
 __all__ = [
     "ALLOWED_TRAIN_SOURCES",
-    "ALLOWED_TRAIN_SOURCES",
     "DISTILL_CLASSES",
     "DISTILL_DATASET_ID",
     "DISTILL_DATASET_NAME",
