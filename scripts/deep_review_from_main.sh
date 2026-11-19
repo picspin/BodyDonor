@@ -120,6 +120,7 @@ for f in d["findings"]:
 
 # 补写 region / resolved_in_commit / stale（子代理只写最小格式，三键由包装脚本负责）。
 d["region"] = sys.argv[3]
+d.setdefault("stale", False)
 for f in d["findings"]:
     f.setdefault("resolved_in_commit", None)
 with open(sys.argv[1], "w") as f:
