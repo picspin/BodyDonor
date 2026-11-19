@@ -76,10 +76,14 @@ ${scope}
 ## 执行方式
 
 用 Task 工具派 deep-reviewer 子代理执行上述规则的审查（对抗式并行深审，issue 二次核实后才入列）。
-审查输出按规则的输出格式给出：人类可读结论 + \`\`\`findings\`\`\` JSON 数组。
+派遣指令里必须写明被审 base sha：\`${review_sha}\`（审查开始时的 HEAD，本次审查范围的基点）。
+审查输出按规则的输出格式给出：人类可读结论（首行写明本次审查的 base sha：\`${review_sha}\`）
++ \`\`\`findings\`\`\` JSON 数组。
 除人类可读结论与 findings 块外，把完整 findings 写进文件 \`reviews/review-${review_sha}.json\`，
-最小格式 \`{"review_sha": "<sha>", "findings": [...]}\`（沿用规则的 findings 字段：
-severity/file/line/evidence/suggestion/reproduction）。
+格式 \`{"review_sha": "${review_sha}", "findings": [...]}\`（findings 沿用规则的字段：
+severity/file/line/evidence/suggestion/reproduction，不增不减；region/resolved_in_commit/stale
+由包装脚本产出时补写——region=本次审查范围字符串，resolved_in_commit 未解决为 null，stale 标 HEAD
+是否在审查期间移动）。
 EOF
 
 echo "prompt: ${prompt_file}"
@@ -99,7 +103,7 @@ if [ ! -s "$out_file" ]; then
   echo "ERROR: ${out_file} 未生成或为空" >&2
   exit 1
 fi
-if ! python3 - "$out_file" "$review_sha" <<'PYEOF' >/dev/null 2>&1
+if ! python3 - "$out_file" "$review_sha" "$scope" <<'PYEOF' >/dev/null 2>&1
 import json, sys
 with open(sys.argv[1]) as f:
     d = json.load(f)
@@ -107,9 +111,36 @@ if not isinstance(d, dict) or d.get("review_sha") != sys.argv[2]:
     raise SystemExit(1)
 if not isinstance(d.get("findings"), list):
     raise SystemExit(1)
+for f in d["findings"]:
+    if not isinstance(f, dict):
+        raise SystemExit(1)
+    for k in ("severity", "file", "line", "evidence", "suggestion", "reproduction"):
+        if k not in f:
+            raise SystemExit(1)
+
+# 补写 region / resolved_in_commit / stale（子代理只写最小格式，三键由包装脚本负责）。
+d["region"] = sys.argv[3]
+for f in d["findings"]:
+    f.setdefault("resolved_in_commit", None)
+with open(sys.argv[1], "w") as f:
+    json.dump(d, f, ensure_ascii=False, indent=2)
 PYEOF
 then
-  echo "ERROR: ${out_file} 校验失败（非 JSON / review_sha 不匹配 / findings 非数组）" >&2
+  echo "ERROR: ${out_file} 校验失败（非 JSON / review_sha 不匹配 / findings 字段缺失）" >&2
   exit 1
+fi
+
+# HEAD 移动检测：审查期间 HEAD 一变，报告即 stale（fresh 报告才可被引用）。
+now_sha="$(git rev-parse HEAD)"
+if [ "$now_sha" != "$review_sha" ]; then
+  echo "STALE: HEAD moved during review (${review_sha} -> ${now_sha})"
+  python3 - "$out_file" <<'PYEOF' >/dev/null 2>&1
+import json, sys
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+d["stale"] = True
+with open(sys.argv[1], "w") as f:
+    json.dump(d, f, ensure_ascii=False, indent=2)
+PYEOF
 fi
 echo "OK: ${out_file}"

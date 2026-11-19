@@ -13,6 +13,9 @@ dist/
 bodydonor.db
 *.sqlite3
 logs/
+# 审查 JSON 报告（运行产物，与 JUnit XML 同类；审计轨迹是轮次报告 md + PR 评论。
+# region=包装脚本传入的审查范围字符串；引用结论前须跑 scripts/check_review_fresh.py）
+reviews/
 
 # 数据目录不在仓内（~/data/BodyDonor），但防误放
 data/
