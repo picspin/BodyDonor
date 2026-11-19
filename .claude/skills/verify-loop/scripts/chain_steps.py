@@ -187,7 +187,8 @@ def step7_save(series_id: str) -> dict:
     status, seg_meta = _get(f"/review/{series_id}/seg-meta")
     assert status == 200, f"seg-meta {status}: {seg_meta}"
     entries = seg_meta if isinstance(seg_meta, list) else []
-    classes = [c["name"] if isinstance(c, dict) else c for c in entries]
+    # seg-meta item: {"class": "label-N", "label_value": N, ...}
+    classes = [c["class"] if isinstance(c, dict) else c for c in entries]
     assert classes, f"seg-meta 空: {str(seg_meta)[:200]}"
     first = classes[0]
     body = json.dumps({"deleted_classes": [first], "source": "manual"}).encode()

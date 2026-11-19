@@ -40,7 +40,9 @@ echo "repo=$REPO tmp=$TMPD port=$PORT"
 # scratch DB + 临时 data dir（绝不碰真实 bodydonor.db / ~/data/BodyDonor）
 # settings.yaml 写进 $TMPD：chain_app.py（服务端）与 chain_steps.py（步骤端）
 # 都经 VERIFY_LOOP_TMP 绑定同一份（fail-closed：未设即拒绝启动）
+# data/tmp 子目录预建：segment_series 的 TS 临时目录落在 resolved_data_dir/tmp
 export VERIFY_LOOP_TMP="$TMPD"
+mkdir -p "$TMPD/data/tmp"
 cat > "$TMPD/settings.yaml" <<YAML
 deployment_mode: on_prem
 data_dir: $TMPD/data
