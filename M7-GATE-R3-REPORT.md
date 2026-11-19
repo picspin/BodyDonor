@@ -97,7 +97,8 @@
 ### 实跑验证（机制自证）
 
 - 第一轮审查期间提交 c98699f → wrapper 实跑打印 `STALE: HEAD moved during review (79e0798... -> c98699f...)` 并把报告 `stale` 写成 `true`（实测 JSON 内 stale=True）。
-- 终审未动 HEAD → 报告 `stale=False`；`python3 scripts/check_review_fresh.py reviews/review-8b687b4....json` 判定路径可用（fresh 报告 FRESH exit 0）。
+- 终审未动 HEAD → 报告 `stale=False`。
+- 报告回填提交 60f6b13 落盘后，`python3 scripts/check_review_fresh.py reviews/review-8b687b4....json` 实测打印 `STALE: review_sha=8b687b4..., HEAD=60f6b13...` exit 1——审查结论绑定被审 sha，后续提交即使只是 docs 也使旧报告失效，读侧判定路径按契约工作。
 
 ## 未决清单
 
