@@ -88,6 +88,8 @@ def fake_claude(tmp_path: Path):
         '  movelate) printf \'{"review_sha":"%s","findings":[],"region":"TBD",'
         '"resolved_in_commit":null}\' "$sha" > "reviews/review-$sha.json" &&'
         ' git -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m "moved";;\n'
+        '  missingfield) printf \'{"review_sha":"%s","findings":[{"severity":"warning",'
+        '"file":"src/x.py","line":12}]}\' "$sha" > "reviews/review-$sha.json" ;;\n'
         '  *) printf \'{"review_sha":"%s","findings":[{"severity":"warning",'
         '"file":"src/x.py","line":12,"evidence":"e","suggestion":"s",'
         '"reproduction":"r"}]}\' "$sha" > "reviews/review-$sha.json" ;;\n'
@@ -224,3 +226,15 @@ def test_wrapper_fresh_when_head_unchanged(tmp_path, fake_claude):
     assert "STALE" not in r.stdout
     data = json.loads((repo / "reviews" / f"review-{review_head}.json").read_text())
     assert data["stale"] is False
+
+
+def test_wrapper_rejects_finding_missing_field(tmp_path, fake_claude):
+    """findings 条目缺现有六字段之一（此处缺 evidence/suggestion/reproduction）必须报错。"""
+    repo = _make_scratch(tmp_path)
+    _add_work_branch(repo)
+    bindir, stdin_path = fake_claude
+
+    r = _run_wrapper(repo, bindir, stdin_path, "work", fake_mode="missingfield")
+
+    assert r.returncode != 0
+    assert "校验失败" in r.stderr

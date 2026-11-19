@@ -25,8 +25,15 @@ def main() -> int:
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} reviews/review-<sha>.json", file=sys.stderr)
         return 2
-    with open(sys.argv[1]) as f:
-        report = json.load(f)
+    try:
+        with open(sys.argv[1]) as f:
+            report = json.load(f)
+    except FileNotFoundError:
+        print(f"STALE: report not found: {sys.argv[1]}")
+        return 1
+    except json.JSONDecodeError as e:
+        print(f"STALE: report not valid JSON: {sys.argv[1]} ({e})")
+        return 1
     review_sha = report.get("review_sha", "")
     head = current_head()
     if report.get("stale") is True:

@@ -66,4 +66,4 @@ deep-reviewer 只负责审查与复核，不负责修复——修复由实施方
 
 审查一律经 `scripts/deep_review_from_main.sh` 发起：规则文本由该脚本从 main 分支提取（`git show main:.claude/agents/deep-reviewer.md`）并注入审查 prompt，注入部分的规则以 main 版为准（子代理自身的 name/tools/hook 仍由工作树版解析，未提交的规则改动会影响子代理行为）。不要直接派 deep-reviewer 子代理而不走脚本——直接派遣时规则来源是工作树版，未提交的规则改动会污染审查。
 
-审查绑定 commit：每次审查产出 `reviews/review-<sha>.json`（sha=审查开始时的 HEAD，由包装脚本抓取；region=本次审查范围字符串）。HEAD 一变旧报告即 stale（包装脚本在 HEAD 移动时把报告的 `stale` 写成 true）。引用任何审查结论前必须跑 `scripts/check_review_fresh.py reviews/review-<sha>.json` 核验：打印 FRESH 才可引用，打印 STALE 即失效不得引用。
+审查绑定 commit：每次审查产出 `reviews/review-<sha>.json`（sha=审查开始时的 HEAD，由包装脚本抓取；region=本次审查范围字符串）。HEAD 一变旧报告即 stale（包装脚本在 HEAD 移动时把报告的 `stale` 写成 true）。引用任何审查结论前必须跑 `scripts/check_review_fresh.py reviews/review-<sha>.json` 核验：打印 FRESH 才可引用，打印 STALE 即失效不得引用。包装脚本的退出码不代表新鲜（HEAD 移动时仍 exit 0，只打印 STALE）——新鲜与否一律以 `check_review_fresh.py` 的结果为准。
