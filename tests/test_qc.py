@@ -35,19 +35,22 @@ def test_thresholds_file_exists():
 
 
 def test_thresholds_all_have_source(th):
-    """每个阈值带 source 注记（proposal §7：报告里可见）。"""
+    """每个阈值带 source 注记（proposal §7：报告里可见）。M7-S2：已调过的
+    派生统计不再标 cold_start，写实来源 holdout_30_dev。"""
     for rule, cfg in th["rules"].items():
         assert "source" in cfg, f"rule {rule} 缺 source"
-        assert cfg["source"] in ("cold_start", "calibrated_on_N")
+        assert cfg["source"] in ("cold_start", "calibrated_on_N", "holdout_30_dev")
 
 
 def test_multi_teacher_enabled_in_m4(th):
-    """多教师一致性 M4 启用（proposal §7：学生模型出现后开，不造假数据）。"""
+    """多教师一致性 M4 启用（proposal §7：学生模型出现后开，不造假数据）。
+    M7-S2 元数据诚实：聚合方式在 30 例 gate 上选定，source 写实
+    holdout_30_dev、calibrated_on=30（样本内开发指标，不再标 cold_start）。"""
     cfg = th["rules"][RULE_MULTI_TEACHER]
     assert cfg["enabled"] is True
     assert cfg["threshold"] == 0.80
-    assert cfg["source"] == "cold_start"  # 阈值数值未变，校准的是聚合方式
-    assert cfg["calibrated_on"] == 0
+    assert cfg["source"] == "holdout_30_dev"  # 阈值数值未变，校准的是聚合方式
+    assert cfg["calibrated_on"] == 30
     assert "mean Dice" in cfg["note"]
     assert "5/30" in cfg["note"]  # 校准数字在注记里可见
 
