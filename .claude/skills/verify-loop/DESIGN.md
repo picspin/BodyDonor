@@ -117,19 +117,45 @@ MaskVersion、Step 11 trace 行）的稳定形态，先跑通再定性。
 - **gitignore**：`bodydonor.db`、`eval/*`（目录级）、`tests/data/`
   白名单例外、`logs/`、`data/`。
 
-## 未验证 / 开放问题（Phase B 前须拍板）
+## Phase B 决定（4 项开放问题逐项拍板）
 
-1. **mock 分段路径缺席**：`/segments` 只走真实 `segment_series`
-   （CPU 也需 TS 权重 + 分钟级）。Phase B 若走 mock 须自建（如在
-   链脚本内 monkeypatch 或独立 mock 端点）——本探针不悄悄绕过，
-   留 Phase B 决定。
-2. **review.html 渲染确认深度**：niivue 需加载 `/static/
-   niivue.umd.js` + NIfTI 端点出图；CDP "确认"的最低标准（页面
-   200 + 无 console error？三视口 canvas 非空？）Phase B 定。
-3. **Windows 侧 msedge.exe 路径可移植性**：先例脚本写死 Windows
-   exe 路径（`/mnt/c/...`）；若本轮机器无 Edge，Phase B 需备选
-   （headless chromium 下载或降级为 HTTP-only 冒烟）。
-4. **DecisionTrace 两行的精确定义**：链路中 qc_scoring 一行 +
-   gate_decision 一行已确认写入点；但 verify-loop 断言"两行"时是
-   按 `trace_kind` 过滤还是计数整表，Phase B 按 M6-e 语义
-   （同一 series 两条 kind 各 ≥1）定。
+1. **分段走真实 CPU 路径，不建 mock**。探针实测（2026-11-20）：TS 权重
+   在盘（`~/.totalsegmentator/.../checkpoint_final.pth` 157.3MB，与注册表
+   weight_integrity sha256 一致），独立 venv `~/work/BodyDonor/.venv-totalseg`
+   存在，合成 NIfTI（64×64×40）真实 CPU 分段 **87s 完成、117 类、exit 0**
+   （`ts_runner.run_task` 直跑）。链路定位本就"比 pytest 重"（决定 1），
+   90s 可接受。**保真度损失：无**——真实 `segment_series` 全路径
+   （白名单→GPU 锁→runner→merge→MaskVersion）。不建 mock 端点、不做
+   monkeypatch：链脚本不引测试桩，保真即链路价值。测试（tests/）仍走
+   mock（沿用 `test_segmentation.py` TestSegmentApi 的既有模式），
+   两层分工与仓内现状一致。
+
+2. **review.html 渲染确认 = 页面 200 + `hdr-status`=="已加载" +
+   4 canvas 非空 + console 无 error**。依据：页面自身在 loadVolumes
+   成功后才 `setHeader("ok","已加载")`（review.html:376）——这是应用
+   自带的"niivue 加载 + NIfTI 端点 + mask 端点全通"就绪信号，先例
+   `bench_review_combined.py` 同口径。4 canvas = axial/coronal/sagittal/mip
+   （review.html 各 setSliceType 后 canvas 必渲染）。console error 经
+   CDP `Runtime.consoleAPICalled`（type=error）采集，出现即红。不额外
+   做像素级断言（canvas 位图比对脆弱且无判别力增量）。
+
+3. **Edge 在本机存在**（`/mnt/c/Program Files (x86)/Microsoft/Edge/
+   Application/msedge.exe` 实测），链路用 Edge headless + CDP（先例
+   同法，`Browser.close` 收尾不用 taskkill——不误杀用户会话）。**Edge
+   缺席机器的 fallback = HTTP-only 冒烟**：GET /review、
+   /static/niivue.umd.js、image.nii.gz、mask.nii.gz 全 200 且非空。
+   诚实边界：HTTP-only **不验证** JS 执行、niivue WebGL 渲染、
+   console error、前端 fetch 流程——输出明标 `degraded` 字样，链路
+   仍绿（后端契约已验证，浏览器渲染属环境依赖），但 degrade 事实
+   写进链路输出不隐瞒。
+
+4. **DecisionTrace "两行" = `pipeline_stage` 列（非 trace_kind）**。
+   骨架用词纠正：`models.py:208` DecisionTrace 无 trace_kind 列，
+   阶段列为 `pipeline_stage`（'qc_scoring' | 'gate_decision'，索引
+   `ix_decision_traces_stage`）。M6-e 语义断言：同 series_id 下
+   `SELECT pipeline_stage, COUNT(*) ... GROUP BY pipeline_stage` 两档
+   **各 ≥1**（gate_decision 行在 priority 路径含 auto 档，全量每 MV
+   一条，qc_pipeline.py:454-505）。断言按 stage 过滤、不计数整表
+   （整表含其他 series/重放的行）。
+
+## 未验证 / 开放问题（Phase B 前须拍板）
