@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess  # noqa: S404 — 仅 git status（repo 自身）
 import sys
 import tempfile
@@ -41,6 +42,28 @@ REPO = Path(__file__).resolve().parents[4]  # .claude/skills/verify-loop/scripts
 sys.path.insert(0, str(REPO))  # tests.factories 在 repo 根
 
 APP = "http://127.0.0.1:8765"
+
+
+def _settings():
+    """绑定 scratch 配置（VERIFY_LOOP_TMP/settings.yaml，run_chain.sh 写入）。
+
+    fail-closed：VERIFY_LOOP_TMP 未设即拒绝（不静默回落真实 config/——
+    绝不碰真实 bodydonor.db，DESIGN.md 决定 3）。
+    """
+    import os
+
+    import bodydonor.config as cfg
+
+    tmp = os.environ.get("VERIFY_LOOP_TMP", "")
+    if not tmp:
+        print("ERROR: VERIFY_LOOP_TMP 未设（fail-closed）", file=sys.stderr)
+        raise SystemExit(2)
+    yaml_path = Path(tmp) / "settings.yaml"
+    if not yaml_path.exists():
+        print(f"ERROR: settings.yaml 不存在：{yaml_path}", file=sys.stderr)
+        raise SystemExit(2)
+    cfg.DEFAULT_CONFIG_PATH = yaml_path
+    return cfg.load_settings()
 
 # git-status-clean 白名单（DESIGN.md 决定 3）：bodydonor.db+-wal/-shm、
 # eval/*.json、tests/data/、logs/、__pycache__/、*.py[cod]。链路临时产物在
@@ -149,10 +172,9 @@ def step8_mask_version(series_id: str, min_version: int = 2) -> dict:
     from sqlalchemy import select
 
     from bodydonor import db as bdb
-    from bodydonor.config import Settings
     from bodydonor.models import MaskVersion
 
-    engine = bdb._engine(Settings().database.url)
+    engine = bdb._engine(_settings().database.url)
     try:
         with engine.connect() as conn:
             from sqlalchemy.orm import Session
@@ -177,12 +199,11 @@ def step9_10_export_seg(series_id: str) -> dict:
     from sqlalchemy import select
 
     from bodydonor import db as bdb
-    from bodydonor.config import Settings
     from bodydonor.export_seg import export_and_verify
     from bodydonor.models import Series
     from bodydonor.pipeline import source_info_from_persisted
 
-    sset = Settings()
+    sset = _settings()
     engine = bdb._engine(sset.database.url)
     try:
         with engine.connect() as conn:
@@ -222,10 +243,9 @@ def step11_traces(series_id: str) -> dict:
     from sqlalchemy import func, select
 
     from bodydonor import db as bdb
-    from bodydonor.config import Settings
     from bodydonor.models import DecisionTrace
 
-    engine = bdb._engine(Settings().database.url)
+    engine = bdb._engine(_settings().database.url)
     try:
         with engine.connect() as conn:
             from sqlalchemy.orm import Session
@@ -307,6 +327,9 @@ def main() -> int:
             return 1
         if name == "ingest":
             state["series_id"] = out["series_id"]
+            # Step 6（cdp_open_review.py，run_chain.sh 调）取 sid 的 state 文件
+            sid_file = Path(os.environ.get("VERIFY_LOOP_TMP", "/tmp")) / "series_id"
+            sid_file.write_text(out["series_id"], encoding="utf-8")
         results[name] = out
     done = {"all_pass": True, "series_id": state.get("series_id"), "results": results}
     print(json.dumps(done, ensure_ascii=False, indent=1))
