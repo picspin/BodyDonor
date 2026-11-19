@@ -69,6 +69,21 @@ def find_edge() -> str | None:
     return which
 
 
+def _win_temp_dir() -> Path:
+    """Windows 侧 TEMP 目录（Edge profile 落点；WSL /tmp 传给 Windows exe 无效）。
+
+    /mnt/c/Users/<user>/AppData/Local/Temp 惰性探测，找不到回落 WSL tmp
+    （此时 Edge 可能附着既有会话——链路输出可见，不静默）。
+    """
+    import getpass
+
+    for user in {getpass.getuser(), "Wendy"}:
+        p = Path(f"/mnt/c/Users/{user}/AppData/Local/Temp")
+        if p.is_dir():
+            return p
+    return Path(tempfile.gettempdir())
+
+
 def http_smoke(app: str, series_id: str) -> tuple[bool, dict]:
     """Edge 缺席 fallback：HTTP-only 冒烟（决定 3）。"""
     checks = []
@@ -85,7 +100,12 @@ def cdp_confirm(app: str, series_id: str, edge: str, timeout_s: float) -> tuple[
     """Edge headless + CDP websocket 渲染确认（决定 2 四项标准）。"""
     import websocket  # 先例同依赖（venv websocket-client）
 
-    profile = tempfile.mkdtemp(prefix="vl-edge-")
+    profile = tempfile.mkdtemp(
+        prefix="vl-edge-", dir=_win_temp_dir()
+    )
+    # Windows exe 的 user-data-dir 须是 Windows 可见路径（WSL /tmp 传进去
+    # 无效——Edge 忽略该 flag 落回默认 profile，附着既有会话的 tab，
+    # 渲染确认落空；实测 2026-11-20）。profile 直接建在 /mnt/c/.../Temp 下。
     cmd = [
         edge,
         # --headless=new：旧 --headless 会附着既有 Edge 会话（tabs[0] 是用户
