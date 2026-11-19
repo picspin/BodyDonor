@@ -32,7 +32,6 @@ export BODYDONOR_DB=""
 
 TMPD="$(mktemp -d /tmp/verify-loop.XXXXXX)"
 LOG="$TMPD/uvicorn.log"
-trap 'rm -rf "$TMPD"' EXIT
 
 echo "=== verify-loop start $(date -Is) ==="
 echo "repo=$REPO tmp=$TMPD port=$PORT"
@@ -62,6 +61,7 @@ cleanup() {
     kill "$SERVER_PID" 2>/dev/null
     wait "$SERVER_PID" 2>/dev/null
   fi
+  rm -rf "$TMPD"
 }
 trap cleanup EXIT
 
