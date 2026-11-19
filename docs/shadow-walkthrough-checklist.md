@@ -58,8 +58,9 @@ FROM decision_traces t ORDER BY t.case_id, t.pipeline_stage;
 
 ## C2. 日志无 ERROR
 
-本仓库无独立日志文件（亲查：`ls ~/data/BodyDonor/*.log` 仅测试日志；FastAPI
-日志走 uvicorn stdout）。走查启动命令重定向到固定文件（剧本文末环境前提）：
+本仓库无独立日志文件（亲查：`ls ~/data/BodyDonor/*.log` 无命中；FastAPI
+日志走 uvicorn stdout，历轮测试日志在 `~/data/BodyDonor/tmp/` 下）。走查启动
+命令重定向到固定文件（剧本文末环境前提）：
 
 ```bash
 nohup uvicorn bodydonor.app:app --host 0.0.0.0 > ~/data/BodyDonor/tmp/walkthrough-uvicorn.log 2>&1 &
@@ -139,8 +140,8 @@ JOIN qc_reports q ON json_extract(t.input_refs, '$.qc_report_id') = q.qc_report_
   - `volume_prior` 未 flagged（一票否决）；
   - flags 数量越多 overall_score 线性越低（0 flag → 1.0）。
 - **走查流程通过**（每例打勾）：
-  - [ ] 导入选中（选择器规则不排除；层数 ≥30 防线不触发——本轮四例 dry-run
-        实测 78/93/306/419 层）。
+  - [ ] 导入选中（选择器规则不排除；层数 ≥30 防线不触发——本轮四例 nibabel
+        实测 78/93/278/419 层）。
   - [ ] teacher 分割成功，MaskVersion(source=teacher) 落库。
   - [ ] QCReport 落库 + qc_scoring trace 落库（每例）。
   - [ ] 决策回流成功（gate_decision trace 补填，C1 判定全过）。

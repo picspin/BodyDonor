@@ -12,7 +12,7 @@
 - 数据目录 `~/data/BodyDonor/`；DB 用 worktree 根的 `bodydonor.db` 副本
   （schema 已升级到 alembic head `f8a3b9c2d1e4`；生产库
   `~/data/BodyDonor/bodydonor.db` 只读不写）。
-- 后端启动（M5-BACKLOG-REPORT §先例）：`nohup uvicorn bodydonor.app:app
+- 后端启动（先例 M5-BACKLOG-REPORT.md:53）：`nohup uvicorn bodydonor.app:app
   --host 0.0.0.0 > ~/data/BodyDonor/tmp/walkthrough-uvicorn.log 2>&1 &`，
   健康检查 `GET /health`（src/bodydonor/app.py:131）。
 - 测试命令用 venv：`~/work/BodyDonor/.venv/bin/python`，PYTHONPATH 指本
@@ -50,7 +50,7 @@ case 存在性核实方法（走查当天复核一遍即可）：
 ### 第 1 步：导入（ingest）
 
 - CLI 通道（本地盘）：`bodydonor import <nii 路径> --modality CT`
-  （src/bodydonor/cli.py:42；NIfTI 必须显式模态，cli.py:52 注释）。
+  （src/bodydonor/cli.py:42；NIfTI 必须显式模态，cli.py:48 注释）。
 - 本轮四例已实测 dry-run：s0662=419 层、s0071/amos_0014/amos_0004 均轴位
   选中（走查当天以实际输出为准）。
 - 记下输出的 Series ID（形如 `nifti-xxxxxxxx`）。
