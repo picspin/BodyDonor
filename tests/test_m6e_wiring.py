@@ -2,9 +2,10 @@
 
 - 接线单测：case_id 给出且学生预测可取 → multi_teacher_consistency 真跑；
   无 case_id / 学生预测缺失 → 显式 skipped="no student mask"（不进 flags）。
-- 419 对回归：M4 离线评估（eval/student_teacher_consistency.json，均值聚合
-  flag 5/30 例，M4-REPORT §3.4）为基线，30 例 hold-out 用真实教师+学生 mask
-  跑 run_qc，对比接入后 flag 行为（±1 例边界差异允许）。
+- 419 对回归：期望值单一事实来源 eval/consistency_baseline.json
+  （regression_flag 5 例 + mean 0.856，M4-REPORT §3.4 实测固化，A 项），
+  30 例 hold-out 用真实教师+学生 mask 跑 run_qc，对比接入后 flag 行为
+  （±1 例边界差异允许）。
 """
 
 from __future__ import annotations
@@ -214,12 +215,15 @@ def _teacher_volume_and_classes(
 
 
 def _baseline_flagged_cases() -> set[str]:
-    """离线评估 flag 的 5 例（M4-REPORT §3.4 实测，2026-11-11）。
+    """回归期望 flag 集：单一事实来源 eval/consistency_baseline.json。
 
-    s0209 0.1181、amos_0005 0.6592、s0338 0.7081、amos_0006 0.7567、
-    amos_0016 0.7862——均值聚合 flag 5/30 例（正是分歧最大的 5 例）。
+    M4 离线评估均值聚合 flag 5/30 例（M4-REPORT §3.4 实测，2026-11-11）；
+    数值与出处固化在基线文件 regression_flag 段（A 项），测试不再硬编码。
     """
-    return {"s0209", "amos_0005", "s0338", "amos_0006", "amos_0016"}
+    baseline = json.loads(
+        (REPO / "eval" / "consistency_baseline.json").read_text(encoding="utf-8")
+    )
+    return set(baseline["regression_flag"]["flagged_cases"])
 
 
 def _real_products_available() -> bool:
@@ -233,8 +237,8 @@ def _real_products_available() -> bool:
       （load_student_prediction 的产物路径）；DB passed ModelVersion 的
       weights_key 无法定位 nnUNet_raw/Dataset*/dataset.json 时同样缺失
       （load_student_prediction 会 raise），逐 case 捕获转 skip 条件。
-    - eval/student_teacher_consistency.json（mean Dice 基线，gitignored 运行
-      产物）——缺失时同样 skip（回归测试内惰性读取，探测先行保证一致）。
+    - eval/consistency_baseline.json（回归期望 flag 集 + mean Dice 基线，
+      A 项固化入仓）——缺失时同样 skip。
     """
     data = Path.home() / "data/BodyDonor"
     paths = [
@@ -242,7 +246,7 @@ def _real_products_available() -> bool:
         data / "downloads/ct_lite/ts_class_map.json",
         data / "downloads/ct_lite/ts_out",
         data / "student_holdout/pred/dataset.json",
-        REPO / "eval" / "student_teacher_consistency.json",
+        REPO / "eval" / "consistency_baseline.json",
     ]
     if not all(p.exists() for p in paths):
         return False
@@ -283,9 +287,9 @@ def test_regression_419_pairs_flag_baseline() -> None:
     from bodydonor.qc import run_qc
     from bodydonor.student_pred import load_student_prediction
 
-    baseline_path = REPO / "eval" / "student_teacher_consistency.json"
+    baseline_path = REPO / "eval" / "consistency_baseline.json"
     baseline_mean = float(
-        json.loads(baseline_path.read_text(encoding="utf-8"))["overall"]["mean"]
+        json.loads(baseline_path.read_text(encoding="utf-8"))["baseline"]["mean"]
     )
     holdout = [
         line.split("\t")[0]
