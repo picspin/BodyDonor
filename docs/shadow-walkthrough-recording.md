@@ -55,7 +55,8 @@
 | `qc_report_id` | `DecisionTrace.input_refs.qc_report_id` | qc_scoring trace 里 |
 | `review_task_id` | `DecisionTrace.review_task_id`（仅 forced/suggested） | gate_decision trace 里 |
 | `recording_file` | 录屏文件名 | 上表命名 |
-| `recording_start` / `recording_end` | 录屏起止（本地时间，秒级） | 对应 `DecisionTrace.timestamp` / `human_outcome.decided_at` |
+| `recording_start` / `recording_end` | 录屏起止（**UTC**，秒级，格式
+  `%Y-%m-%dT%H:%M:%SZ`） | 对应 `DecisionTrace.timestamp` / `human_outcome.decided_at`（qc_trace.py:251 写 UTC，本地时间须换算） |
 | `decided_at` | `DecisionTrace.human_outcome.decided_at`（qc_trace.py:234 update_human_outcome 写入，格式 `%Y-%m-%dT%H:%M:%SZ`） | 决策回流端点响应里可查 |
 
 对应关系核对（走查当天照做）：
@@ -63,8 +64,9 @@
 1. 每例录屏开始前记 `recording_start`；录屏内操作与 trace 时间戳比对：
    `human_outcome.decided_at` 应落在 `[recording_start, recording_end]`
    窗口内。
-2. `series_id` 三处一致：录屏文件名、会话索引、`decision_traces.series_id`
-   （查 SQL 见 checklist.md）。
+2. `case_id` 与录屏文件名一致；`series_id` 两处一致：会话索引与
+   `decision_traces.series_id`（录屏文件名只含 case_id，查 SQL 见
+   checklist.md）。
 3. Case C 的 submit-nni 产物 `correction_source.json` 的
    `provenance.sessionId`（app.py:1114 docstring）也写进会话索引——
    录屏内提交动作 ↔ sidecar ↔ 新 MaskVersion 三者可对上。

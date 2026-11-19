@@ -49,12 +49,17 @@ FROM decision_traces t ORDER BY t.case_id, t.pipeline_stage;
 
 判定（打勾条件）：
 
-- [ ] 每例 `gate_decision` 行 decision 与医生判定一致（accepted/corrected/rejected）。
+- [ ] 每例 `gate_decision` 行 decision 与医生判定一致（accepted/corrected/
+      rejected）；**auto 档例外**：auto 不建 ReviewTask（qc_pipeline.py:409-422），
+      无决策端点路径，gate_decision 行不存在、human_outcome 不补填——记
+      「不适用」，非不通过（剧本第 6 步）。
 - [ ] 每例 `qc_scoring` 行 human_outcome 为 null（恒 null，非遗漏）。
 - [ ] `decided_at` 落在会话索引 `recording_start`/`recording_end` 窗口内
       （recording.md 对应关系第 1 条）。
 - [ ] 决策回流后 `config/qc_thresholds.yaml` 的 `calibrated_on` 计数 +1/例
-      （qc_reflux.py record_review_decision；走查当天 diff config 核对）。
+      （qc_reflux.py record_review_decision；走查当天 diff config 核对）；
+      核对后 `git checkout -- config/qc_thresholds.yaml` 还原（防误提交，
+      先例 759411f）。
 
 ## C2. 日志无 ERROR
 
@@ -66,8 +71,8 @@ FROM decision_traces t ORDER BY t.case_id, t.pipeline_stage;
 nohup uvicorn bodydonor.app:app --host 0.0.0.0 > ~/data/BodyDonor/tmp/walkthrough-uvicorn.log 2>&1 &
 ```
 
-查法（grep 模式已在本轮测试日志 `~/data/BodyDonor/tmp/m7-s3r2-fulltest.log`
-实测，命中 0 = 通过）：
+查法（grep 模式为通用判据，走查当天先在 uvicorn 日志上跑一遍基线；命中
+0 = 通过）：
 
 ```bash
 grep -cE "ERROR|Traceback|Exception" ~/data/BodyDonor/tmp/walkthrough-uvicorn.log
@@ -114,7 +119,8 @@ ORDER BY series_id, version;
 - [ ] 每个 ReviewTask 追到唯一 MaskVersion（join 1 行/任务）。
 - [ ] 双键 mismatch 查询 0 行。
 - [ ] Case C 走查后 `mask_versions` 有新行，source=`nninteractive_guided`，
-      version = 基线 teacher 版本 +1（MaskVersion.series_id 下递增）。
+      version = 该 series 现有 max(version)+1（app.py:1671 附近实测
+      `version = (last or 0) + 1`，series 内递增）。
 - [ ] gate_decision trace 的 `mask_version_id` 与上面 join 到的一致
       （trace.input_refs.qc_report_id ↔ 同 QCReport）。
 

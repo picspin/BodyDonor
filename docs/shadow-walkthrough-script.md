@@ -1,7 +1,9 @@
 # 影子走查剧本（Shadow Walkthrough Script）
 
 定位：院内科研 RESEARCH-ONLY 准备文档。影子走查 = 医生按真实流程走一遍
-导入 → 分割 → 审阅 → 决策，全程只读观察、不改变产品行为；数据只用合成/公开
+导入 → 分割 → 审阅 → 决策，不修改产品代码与生产库（走查动作会产生受控写入：
+worktree DB 行、config/qc_thresholds.yaml 的 calibrated_on——收尾还原、
+submit-nni 的新 MaskVersion）；数据只用合成/公开
 脱敏集（AMOS22 公开子集 CC-BY-4.0、TotalSegmentator ct_lite 样例），**绝不碰
 真实患者数据**。本文是走查当天的操作剧本；医生人选与时间待用户定（见文末
 「待用户定」）。
@@ -12,9 +14,12 @@
 - 数据目录 `~/data/BodyDonor/`；DB 用 worktree 根的 `bodydonor.db` 副本
   （schema 已升级到 alembic head `f8a3b9c2d1e4`；生产库
   `~/data/BodyDonor/bodydonor.db` 只读不写）。
-- 后端启动（先例 M5-BACKLOG-REPORT.md:53）：`nohup uvicorn bodydonor.app:app
-  --host 0.0.0.0 > ~/data/BodyDonor/tmp/walkthrough-uvicorn.log 2>&1 &`，
-  健康检查 `GET /health`（src/bodydonor/app.py:131）。
+- 后端启动（先例 M5-BACKLOG-REPORT.md:53）——**必须 cd 进 worktree 并设
+  PYTHONPATH**（实测 venv 的 bodydonor 指向主 checkout，DB url 相对 cwd，
+  不设则以主 checkout 代码 + 主 checkout DB 启动）：
+  `cd ~/work/BodyDonor-shadow && PYTHONPATH=$PWD/src nohup ~/work/BodyDonor/.venv/bin/python -m uvicorn bodydonor.app:app --host 0.0.0.0 --port 8000 > ~/data/BodyDonor/tmp/walkthrough-uvicorn.log 2>&1 &`，
+  健康检查 `GET /health`（src/bodydonor/app.py:131），并核对
+  `python -c "import bodydonor; print(bodydonor.__file__)"` 输出本 worktree 路径。
 - 测试命令用 venv：`~/work/BodyDonor/.venv/bin/python`，PYTHONPATH 指本
   worktree 的 `src`。
 
@@ -51,8 +56,8 @@ case 存在性核实方法（走查当天复核一遍即可）：
 
 - CLI 通道（本地盘）：`bodydonor import <nii 路径> --modality CT`
   （src/bodydonor/cli.py:42；NIfTI 必须显式模态，cli.py:48 注释）。
-- 本轮四例已实测 dry-run：s0662=419 层、s0071/amos_0014/amos_0004 均轴位
-  选中（走查当天以实际输出为准）。
+- 本轮四例已实测 nibabel 层数：s0662=419、amos_0014=93、s0071=278、
+  amos_0004=78；四例 dry-run 均选中（走查当天以实际输出为准）。
 - 记下输出的 Series ID（形如 `nifti-xxxxxxxx`）。
 
 ### 第 2 步：teacher 分割（看 teacher mask）
@@ -99,9 +104,14 @@ case 存在性核实方法（走查当天复核一遍即可）：
   同一事务补填该 review_task_id 下**全部** gate_decision DecisionTrace 的
   human_outcome（已补填不覆盖，幂等）；并累计 qc_thresholds.yaml
   calibrated_on（qc_reflux.py record_review_decision）。
-- Case B 走 forced 任务决策；Case A/D 若 auto 未建任务，用 CLI
-  `bodydonor qc-calibrate` 之外的口径如实记录「auto 档无决策端点路径」，
-  医生判定写入走查记录（本轮如实呈现 gating 语义，不绕过产品行为）。
+- Case B 走 forced 任务决策；Case A/D 若 auto 档未建 ReviewTask（auto 不建
+  任务，qc_pipeline.py:409-422），**没有决策端点路径**（端点以 review_task_id
+  为锚，app.py:563）：医生判定直接写入走查记录，注明「auto 档无决策端点路径，
+  human_outcome 不补填（设计语义）」，并引用 app.py:563（本轮如实呈现 gating
+  语义，不绕过产品行为）。
+- 注意：决策回流会写 `config/qc_thresholds.yaml` 的 `calibrated_on`（受 git
+  管理）；走查收尾时 `git checkout -- config/qc_thresholds.yaml` 还原，防误
+  提交（先例 759411f 误提交教训）。
 
 ### 第 7 步：收尾核对
 
