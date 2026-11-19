@@ -23,7 +23,8 @@
   ——修正 mask 是二值 0/1，`target_label` 是语义类号（liver=44）。2026-11-11
   GPU 验证 mask 非零 16754 体素，sidecar 却报 `n_target_voxels 0`
   （commit `f26693e`：fix(m4) n_target_voxels 二值 mask 计数）。修为
-  `(mask > 0).sum()`（src/bodydonor/nni_runner.py:222）。
+  `(mask > 0).sum()`（src/bodydonor/nni_runner.py:227；函数
+  `_count_target_voxels` 定义在 :218-227）。
 - **diff 触发条件**：mask 计数 / 比较 / 前景判定口径改动（任何
   `== 类号` 形式的 mask 比较）。
 - **检查项**：二值 mask 一律 `> 0` 计数，不拿语义类号直接 `==` 比较；
