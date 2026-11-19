@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -29,6 +30,67 @@ SKILL_SCRIPTS = (
 sys.path.insert(0, str(SKILL_SCRIPTS))
 
 import chain_steps  # noqa: E402
+
+
+class TestCdpPageTarget:
+    """Step 6 CDP 目标选择（82f0722 竞态修复的回归守卫）。
+
+    /json 里 Edge 扩展 background_page 可排在 page 前（注册竞态）——
+    目标选择必须取 type=="page"；page 缺失时须轮询等待或失败，
+    不得回落 tabs[0]（= 修掉的竞态目标）。
+    """
+
+    @staticmethod
+    def _fake_urlopen_factory(tabs_responses: list):
+        """构造 urlopen 替身：/json 依次返回 tabs_responses，/json/version 恒 ok。"""
+        import io
+        import itertools
+
+        calls = itertools.count()
+
+        class FakeResp(io.BytesIO):
+            pass
+
+        def fake_urlopen(url, timeout=None):  # noqa: ANN001
+            n = next(calls)
+            if "/json/version" in url:
+                return FakeResp(b'{"Browser": "fake"}')
+            if url.rstrip("/").endswith("/json"):
+                body = tabs_responses[min(n - 1, len(tabs_responses) - 1)]
+                return FakeResp(body)
+            raise AssertionError(f"unexpected url {url}")
+
+        return fake_urlopen
+
+    def test_background_page_first_takes_page_tab(self, monkeypatch) -> None:
+        """background_page 排前 → 仍选 type=="page" 的目标（不选 tabs[0]）。"""
+        import cdp_open_review
+
+        tabs = [
+            {"type": "background_page", "webSocketDebuggerUrl": "ws://bg"},
+            {"type": "page", "webSocketDebuggerUrl": "ws://page"},
+        ]
+        monkeypatch.setattr(
+            cdp_open_review.urllib.request,
+            "urlopen",
+            self._fake_urlopen_factory([json.dumps(tabs).encode()]),
+        )
+        assert cdp_open_review._select_cdp_target(tabs) == "ws://page"
+
+    def test_no_page_tab_never_falls_back_to_tabs0(self, monkeypatch) -> None:
+        """先红（Phase D finding 1）：/json 只有 background_page（page 未注册）
+        → 不得回落 tabs[0]（竞态目标），须重试或失败。"""
+        import cdp_open_review
+
+        tabs = [
+            {"type": "background_page", "webSocketDebuggerUrl": "ws://bg"},
+        ]
+        monkeypatch.setattr(
+            cdp_open_review.urllib.request,
+            "urlopen",
+            self._fake_urlopen_factory([json.dumps(tabs).encode()] * 20),
+        )
+        assert cdp_open_review._select_cdp_target(tabs) is None
 
 
 class TestGitClean:

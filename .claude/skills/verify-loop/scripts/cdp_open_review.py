@@ -96,6 +96,20 @@ def http_smoke(app: str, series_id: str) -> tuple[bool, dict]:
     return all_ok, {"mode": "http_only", "degraded": True, "checks": checks}
 
 
+def _select_cdp_target(tabs: list) -> str | None:
+    """从 /json 目标列表选 type=="page" 的 webSocketDebuggerUrl。
+
+    /json 里 Edge 自带扩展的 background_page 排在 page 目标之前（注册竞态，
+    顺序不稳）——盲取 tabs[0] 会连到扩展页，导航落空（hdr 超时+canvas=0，
+    实测 2026-11-20）。page 缺失时返回 None（不回落 tabs[0]——那正是修掉的
+    竞态目标；调用方轮询重试）。
+    """
+    page_tabs = [t for t in tabs if t.get("type") == "page"]
+    if not page_tabs:
+        return None
+    return page_tabs[0]["webSocketDebuggerUrl"]
+
+
 def cdp_confirm(app: str, series_id: str, edge: str, timeout_s: float) -> tuple[bool, dict]:
     """Edge headless + CDP websocket 渲染确认（决定 2 四项标准）。"""
     import websocket  # 先例同依赖（venv websocket-client）
@@ -146,15 +160,18 @@ def cdp_confirm(app: str, series_id: str, edge: str, timeout_s: float) -> tuple[
             err = "CDP 端口未就绪（Edge 启动失败）"
             return False, {"mode": "cdp", "degraded": False, "error": err}
 
-        tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json", timeout=5))
-        if not tabs:
-            return False, {"mode": "cdp", "degraded": False, "error": "no CDP tabs"}
-        # /json 里 Edge 自带扩展的 background_page 排在 page 目标之前（注册竞态，
-        # 顺序不稳）——盲取 tabs[0] 会连到扩展页，导航落空（hdr 超时+canvas=0，
-        # 实测 2026-11-20）。须按 type=="page" 过滤。
-        page_tabs = [t for t in tabs if t.get("type") == "page"]
-        target = page_tabs[0] if page_tabs else tabs[0]
-        ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=int(timeout_s))
+        # /json 轮询到出现 page 目标（page 注册可晚于 background_page；
+        # 单次读取有竞态窗口，Phase D finding 1）。超时判失败，不回落 tabs[0]。
+        target = None
+        for _ in range(20):
+            tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json", timeout=5))
+            target = _select_cdp_target(tabs)
+            if target is not None:
+                break
+            time.sleep(0.5)
+        if target is None:
+            return False, {"mode": "cdp", "degraded": False, "error": "no CDP page target"}
+        ws = websocket.create_connection(target, timeout=int(timeout_s))
         _id = [0]
 
         def send(method: str, params: dict | None = None) -> dict:
