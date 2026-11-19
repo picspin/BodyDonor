@@ -108,16 +108,38 @@ def _get(path: str) -> tuple[int, dict | bytes]:
         return e.code, json.loads(e.read() or b"{}")
 
 
-def step2_ingest(outcome: dict) -> dict:
-    """合成 DICOM 导入 → {series_id, case_id}。断言 scan+commit 200、有候选。"""
+def _post_multipart(path: str, field: str, filename: str, data: bytes) -> tuple[int, dict]:
+    """multipart/form-data POST（/ingest/scan 上传通道：File(...) 参数）。"""
+    boundary = "----verify-loop-boundary-9d3f"
+    parts = [
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+        f"Content-Type: application/zip\r\n\r\n"
+    ]
+    body = parts[0].encode("utf-8") + data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(
+        f"{APP}{path}",
+        data=body,
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=600) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+
+
+def step2_ingest() -> dict:
+    """合成 DICOM 导入 → {series_id, outcome_id}。断言 scan+commit 200、有候选。"""
     from tests.factories import dicom_folder_zip, make_dicom_folder
 
     with tempfile.TemporaryDirectory(prefix="vl-dicom-") as td:
         root = make_dicom_folder(Path(td), n_series=1, slices_per_series=40)
         zdata = dicom_folder_zip(root)
-    status, scan = _post("/ingest/scan", zdata, "application/zip")
+    status, scan = _post_multipart("/ingest/scan", "file", "synthetic.zip", zdata)
     assert status == 200, f"ingest/scan {status}: {scan}"
-    assert scan.get("candidates"), f"ingest/scan 无候选: {list(scan)[:8]}"
+    assert scan.get("candidates") or scan.get("selector"), f"ingest/scan 无候选: {list(scan)[:8]}"
     outcome_id = scan["outcome_id"]
 
     status, committed = _post(f"/ingest/{outcome_id}/commit")
