@@ -1,12 +1,12 @@
 ---
 name: verify-loop
-description: Full on-prem verification chain for BodyDonor M7 changes — starts FastAPI on a spare port, imports synthetic DICOM, runs segmentation→QC→review tiering→browser draft→save→MaskVersion→SEG export→voxel-diff-0→DecisionTrace, asserts git status stays clean. Run before `git commit` after fast checks pass. Heavier than pytest; NOT for CI or ad-hoc runs.
+description: Full on-prem verification chain for BodyDonor M7 changes — starts FastAPI on a spare port, imports synthetic NIfTI (DICOM-zip commit stores no pixels — pre-existing, chain uses NIfTI-direct), runs segmentation→QC→review tiering→browser draft→save→MaskVersion→SEG export→voxel-diff-0→DecisionTrace, asserts git status stays clean. Run before `git commit` after fast checks pass. Heavier than pytest; NOT for CI or ad-hoc runs.
 ---
 
 # verify-loop — 提交前完整链路验证
 
 BodyDonor 院内 RESEARCH-ONLY。改动 M7 系列（verify-loop/审查/校准
-相关）后、`git commit` 前，跑一次完整链路：从合成 DICOM 导入一路
+相关）后、`git commit` 前，跑一次完整链路：从合成 NIfTI 导入一路
 到 SEG 导出体素差 = 0，确认端到端不回归。
 
 ## 触发条件

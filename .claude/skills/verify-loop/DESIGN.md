@@ -23,9 +23,10 @@ verify-loop 只在 `git commit` 之前由开发者/会话运行，且在快速�
 
 1. 启动 FastAPI（独立端口，非 8000——8000 属另一并行轮次的
    uvicorn，PID 237991 不可动）
-2. 合成 DICOM 导入（`/ingest/scan` → `/ingest/{id}/commit`，合成
-   数据用 `tests/factories.py make_dicom_folder` 造，绝不碰真实
-   `~/data/BodyDonor`）
+2. 合成 NIfTI 导入（`/ingest/scan` → `/ingest/{id}/commit`，zip 上传；
+   合成数据用 `tests/factories.py make_nifti` 造，绝不碰真实
+   `~/data/BodyDonor`）。**不走 DICOM zip**：Phase B 决定 5（DICOM
+   commit 不落像素，见下）
 3. TS 分段或 mock（`/segments`，device=cpu；真实分段太慢则用
    mock 路径——Phase B 拍板，探针未见现成 mock 端点）
 4. QC 评分（`/qc/series/{series_id}` → QCReport 落库）
@@ -158,4 +159,29 @@ MaskVersion、Step 11 trace 行）的稳定形态，先跑通再定性。
    一条，qc_pipeline.py:454-505）。断言按 stage 过滤、不计数整表
    （整表含其他 series/重放的行）。
 
-## 未验证 / 开放问题（Phase B 前须拍板）
+5. **链路导入走 NIfTI-direct，不走 DICOM zip——DICOM commit 不落像素
+   是既有行为（Phase C §3(a) 实测确认）**。机制：`_build_dicom_series`
+   的像素栈是**单层 2D** `sitk.GetImageFromArray(arr)`（ingest.py:410，
+   `arr` 为单个实例的 (rows, cols)）；commit 的像素落盘在
+   `pipeline._save_pixels`（pipeline.py:354），其内 `reorient_ras`
+   （nifti_geom.py:143）→ `nib.as_closest_canonical` 对 2D 图 raise
+   `OrientationError: Data array has fewer dimensions than orientation`
+   （nibabel orientations.py:159），被 `_save_pixels` 的
+   `except Exception`（pipeline.py:383，"像素落盘失败不中断导入"）静默
+   吞掉 → 返回 None → `storage_key` 永不回填（pipeline.py:136-137）→
+   下游分段/保存/SEG 全无像素可用。**实测（2026-11-20）**：worktree 与
+   main checkout（~/work/BodyDonor）各跑一次合成 DICOM zip
+   scan→commit，两边一致 `storage_key=None`、存储目录零文件；异常类型
+   单独复现为 OrientationError（捕获点 pipeline.py:383）。**为何不在
+   本链修**：这是导入管线既有的静默失败（两个 checkout 同行为），不
+   是本轮 verify-loop 改动引入的回归；修它属导入管线工作，另派。链路
+   选落盘可用的 NIfTI-direct 路径，保端到端可验证。
+
+## Step 12b 日志无 ERROR 的范围（Phase C §3(d) 拍板）
+
+grep 只覆盖 **uvicorn stderr**（run_chain.sh 的 `$LOG`）。应用自身
+**无日志文件**：`src/bodydonor/` 零处 `logging` 引用（grep 实测
+2026-11-20），uvicorn stderr 即全部日志面。应用日志 grep 项在本链
+无从接线——除非先给 app 加 logging 基建，那属链路外改动，本轮不做。
+此处记录以闭环 Phase B 遗留项，非静默缺口。
+
