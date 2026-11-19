@@ -2,7 +2,7 @@
  "meta": {
   "name": "consistency_baseline",
   "generated_at": "2026-11-11（运行日期；源产物未记录具体时刻）",
-  "run": "M4 阶段 5 学生 hold-out 一致性评估：evaluate_student_holdout.py，30 例教师 mask vs 学生 mask（CT-Lite 21 例 + AMOS 9 例），2026-11-11",
+  "run": "M4 阶段 5 学生 hold-out 一致性评估：evaluate_student_holdout.py，30 例教师 mask vs 学生 mask（CT-Lite 15 例 + AMOS 15 例），2026-11-11",
   "source_product": "eval/student_teacher_consistency.json（gitignored 运行产物，本仓不入）",
   "source_report": "M4-REPORT.md:169（§1.5 教师-学生一致性分布行）、M4-REPORT.md:249-257（§3.5 数字解读）",
   "raw_pairs_retained": false,
