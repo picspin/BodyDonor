@@ -149,7 +149,12 @@ def cdp_confirm(app: str, series_id: str, edge: str, timeout_s: float) -> tuple[
         tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json", timeout=5))
         if not tabs:
             return False, {"mode": "cdp", "degraded": False, "error": "no CDP tabs"}
-        ws = websocket.create_connection(tabs[0]["webSocketDebuggerUrl"], timeout=int(timeout_s))
+        # /json 里 Edge 自带扩展的 background_page 排在 page 目标之前（注册竞态，
+        # 顺序不稳）——盲取 tabs[0] 会连到扩展页，导航落空（hdr 超时+canvas=0，
+        # 实测 2026-11-20）。须按 type=="page" 过滤。
+        page_tabs = [t for t in tabs if t.get("type") == "page"]
+        target = page_tabs[0] if page_tabs else tabs[0]
+        ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=int(timeout_s))
         _id = [0]
 
         def send(method: str, params: dict | None = None) -> dict:
