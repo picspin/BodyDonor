@@ -31,8 +31,11 @@ def main() -> int:
     except FileNotFoundError:
         print(f"STALE: report not found: {sys.argv[1]}")
         return 1
-    except json.JSONDecodeError as e:
-        print(f"STALE: report not valid JSON: {sys.argv[1]} ({e})")
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+        print(f"STALE: report not readable JSON: {sys.argv[1]} ({e})")
+        return 1
+    if not isinstance(report, dict):
+        print(f"STALE: report not a JSON object: {sys.argv[1]}")
         return 1
     review_sha = report.get("review_sha", "")
     head = current_head()

@@ -115,7 +115,7 @@ for f in d["findings"]:
     if not isinstance(f, dict):
         raise SystemExit(1)
     for k in ("severity", "file", "line", "evidence", "suggestion", "reproduction"):
-        if k not in f:
+        if f.get(k) is None:
             raise SystemExit(1)
 
 # 补写 region / resolved_in_commit / stale（子代理只写最小格式，三键由包装脚本负责）。

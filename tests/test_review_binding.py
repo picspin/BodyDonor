@@ -90,6 +90,9 @@ def fake_claude(tmp_path: Path):
         ' git -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m "moved";;\n'
         '  missingfield) printf \'{"review_sha":"%s","findings":[{"severity":"warning",'
         '"file":"src/x.py","line":12}]}\' "$sha" > "reviews/review-$sha.json" ;;\n'
+        '  nullfield) printf \'{"review_sha":"%s","findings":[{"severity":"warning",'
+        '"file":"src/x.py","line":12,"evidence":null,"suggestion":"s",'
+        '"reproduction":"r"}]}\' "$sha" > "reviews/review-$sha.json" ;;\n'
         '  *) printf \'{"review_sha":"%s","findings":[{"severity":"warning",'
         '"file":"src/x.py","line":12,"evidence":"e","suggestion":"s",'
         '"reproduction":"r"}]}\' "$sha" > "reviews/review-$sha.json" ;;\n'
@@ -171,6 +174,40 @@ def test_fresh_check_stale_flag_exits_nonzero_even_if_sha_matches(tmp_path):
     assert "STALE" in r.stdout
 
 
+def test_fresh_check_missing_report_exits_nonzero(tmp_path):
+    repo = _make_scratch(tmp_path)
+
+    r = _run_fresh_check(repo, repo / "reviews" / "review-none.json")
+
+    assert r.returncode != 0
+    assert "STALE" in r.stdout
+
+
+def test_fresh_check_invalid_json_exits_nonzero(tmp_path):
+    repo = _make_scratch(tmp_path)
+    report = repo / "reviews" / "review-bad.json"
+    report.parent.mkdir()
+    report.write_text("not json")
+
+    r = _run_fresh_check(repo, report)
+
+    assert r.returncode != 0
+    assert "STALE" in r.stdout
+
+
+def test_fresh_check_non_object_json_exits_nonzero(tmp_path):
+    """JSON 顶层非 object（如 []、null）必须判 STALE，不裸 traceback。"""
+    repo = _make_scratch(tmp_path)
+    report = repo / "reviews" / "review-arr.json"
+    report.parent.mkdir()
+    report.write_text("[]")
+
+    r = _run_fresh_check(repo, report)
+
+    assert r.returncode != 0
+    assert "STALE" in r.stdout
+
+
 # --- 包装脚本产出 schema ------------------------------------------------------
 
 
@@ -235,6 +272,18 @@ def test_wrapper_rejects_finding_missing_field(tmp_path, fake_claude):
     bindir, stdin_path = fake_claude
 
     r = _run_wrapper(repo, bindir, stdin_path, "work", fake_mode="missingfield")
+
+    assert r.returncode != 0
+    assert "校验失败" in r.stderr
+
+
+def test_wrapper_rejects_finding_null_field(tmp_path, fake_claude):
+    """findings 字段存在但值为 null 必须报错（存在性检查不足，值也要非 None）。"""
+    repo = _make_scratch(tmp_path)
+    _add_work_branch(repo)
+    bindir, stdin_path = fake_claude
+
+    r = _run_wrapper(repo, bindir, stdin_path, "work", fake_mode="nullfield")
 
     assert r.returncode != 0
     assert "校验失败" in r.stderr
