@@ -209,10 +209,8 @@ def cdp_confirm(app: str, series_id: str, edge: str, timeout_s: float) -> tuple[
                 time.sleep(0.5)
             except Exception:  # noqa: BLE001 — 收尾失败不挡结果
                 pass
-            try:
+            with contextlib.suppress(Exception):
                 ws.close()
-            except Exception:  # noqa: BLE001 — 收尾失败不挡结果
-                pass
         proc.terminate()
         try:
             proc.wait(timeout=5)
