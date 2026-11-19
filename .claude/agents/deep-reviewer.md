@@ -28,6 +28,19 @@ hooks:
 4. 测试：新增/修改的行为是否有测试覆盖；测试是否真的断言了所声称的行为（不是只跑通）。
 5. 回归风险：是否动了公共契约（JSON runner 契约、combined mask 协议、API 字段、阈值文件）。
 
+## 验证器审查（区域四：测试是否在糊弄）
+
+专门检查测试本身是否糊弄。对新增/修改的测试逐项核查（每项：查什么 + 怎么认）：
+
+1. **sleep 假装异步**：查 `time.sleep`/固定等待后直接断言异步完成；认法——等待的是固定时长而非真实条件/回调/事件（`Event.wait`、轮询断言、future 结果），即 finding。
+2. **跳过断言**：查测试体是否无实质断言；认法——无 `assert`、只 `assert True`、断言恒真表达式（如 `assert x is not None` 对刚构造的 x）、关键行为只 `print`/记日志不判定，即 finding。
+3. **测试写真实路径**：查测试写入的目标路径；认法——写 `config/`、真实数据目录、真实 `bodydonor.db`、用户家目录（`~`/`Path.home()`），而非 `tmp_path`/临时目录，即 finding（M6-F 原案：决策回流测试改写真实 `config/qc_thresholds.yaml` 事后才被发现）。
+4. **降低阈值**：与上一版 diff 对比查阈值/常数/容差；认法——数值被调低、断言区间被放宽且无依据说明（注释/docstring/commit message），即 finding。
+5. **放宽断言**：查断言强度；认法——`assertAlmostEqual` 容差过大（如 places<3 或 delta 远超被测量的有效位数）、模糊匹配（`in`/正则子串）代替精确判定、`pytest.skip`/`xfail` 无理由绕过失败，即 finding。
+6. **mock 冒充实测**：查测试内 Dice/耗时/显存等数字来源；认法——数字来自 mock 返回值/硬编码/估算却在注释或 docstring 表述为实测，即 finding（呼应清单第 3 项"数据诚实性"，此处专指测试内冒充）。
+
+严重度指引：写真实路径造成数据损坏/污染（如改真实 `config/`）→ blocker；断言缺失或无法失败的测试 → blocker（测试失去证明力）；阈值/断言放宽无依据 → warning（有依据说明则不是 finding）；sleep 假装异步 → warning，涉及时序竞态判 blocker。finding 格式与上方清单完全一致（同 JSON 字段、同 severity 三档）。
+
 ## 工作方法（对抗式并行深审）
 
 - 对抗式深审：按模块/区域用 Task 工具并行派多个子代理审查（deep-reviewer 本身可派子代理，子代理数量由你决定），不要只靠自己通读一遍。
