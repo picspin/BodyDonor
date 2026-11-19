@@ -384,7 +384,9 @@ def main() -> int:
         if name == "ingest":
             state["series_id"] = out["series_id"]
             # Step 6（cdp_open_review.py，run_chain.sh 调）取 sid 的 state 文件
-            sid_file = Path(os.environ.get("VERIFY_LOOP_TMP", "/tmp")) / "series_id"
+            vlt = os.environ.get("VERIFY_LOOP_TMP", "")
+            assert vlt, "VERIFY_LOOP_TMP 未设（fail-closed，与 _settings 同口径）"
+            sid_file = Path(vlt) / "series_id"
             sid_file.write_text(out["series_id"], encoding="utf-8")
         results[name] = out
     done = {"all_pass": True, "series_id": state.get("series_id"), "results": results}
