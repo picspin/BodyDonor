@@ -151,6 +151,9 @@ def test_w4_low_freq_presence_prostate() -> None:
 
 def test_w4_low_freq_threshold_equals_min_per_class() -> None:
     """低频阈值边界守卫：9 判低频、10 不判（阈值锁定 MIN_PER_CLASS 当前值 10）。"""
+    from bodydonor.interaction_metrics import MIN_PER_CLASS
+
+    assert MIN_PER_CLASS == 10
     # 9 < MIN_PER_CLASS → 低频；10 不 < → 非低频（行为零变化：阈值仍为 10）
     w4 = component_low_freq_presence(
         {"a": 0.9, "b": 0.9}, None, {"a": 9, "b": 10}
