@@ -103,16 +103,24 @@ def cdp_confirm(app: str, series_id: str, edge: str, timeout_s: float) -> tuple[
     profile = tempfile.mkdtemp(
         prefix="vl-edge-", dir=_win_temp_dir()
     )
-    # Windows exe 的 user-data-dir 须是 Windows 可见路径（WSL /tmp 传进去
-    # 无效——Edge 忽略该 flag 落回默认 profile，附着既有会话的 tab，
-    # 渲染确认落空；实测 2026-11-20）。profile 直接建在 /mnt/c/.../Temp 下。
+    # Windows exe（/mnt/c/...）的 user-data-dir 须是 Windows 形路径：
+    # WSL /tmp 传进去被忽略（落回默认 profile，附着既有会话）；/mnt/c 原样
+    # 传进去 CDP 端口也起不来（CDP 等待超时，实测 2026-11-20）——wslpath -w
+    # 转 C:\... 才行。wslpath 缺席（非 WSL）时原样传。
+    profile_arg = profile
+    if edge.startswith("/mnt/") and shutil.which("wslpath"):
+        out = subprocess.run(  # noqa: S603 — wslpath，系统工具
+            ["wslpath", "-w", profile], capture_output=True, text=True, timeout=10
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            profile_arg = out.stdout.strip()
     cmd = [
         edge,
         # --headless=new：旧 --headless 会附着既有 Edge 会话（tabs[0] 是用户
         # 已开的 tab，渲染确认落空）；=new 才保证独立实例（实测 2026-11-20）
         "--headless=new",
         f"--remote-debugging-port={CDP_PORT}",
-        f"--user-data-dir={profile}",
+        f"--user-data-dir={profile_arg}",
         "--no-first-run",
         "--disable-gpu",
         "about:blank",
