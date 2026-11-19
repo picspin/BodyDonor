@@ -253,11 +253,12 @@ def step9_10_export_seg(series_id: str) -> dict:
     finally:
         engine.dispose()
 
-    # storage_key 读回 mask
+    # storage_key 读回 mask（segment_series 派生：storage_key.replace image→mask）
     from bodydonor.storage import LocalFsStorage
 
     st = LocalFsStorage(sset.resolved_data_dir / "storage")
-    mask_key = f"{series_id[:60]}/mask.nii.gz"
+    mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
+    assert mask_key, f"series {series_id} storage_key 空"
     mask_path = st.root / mask_key
     assert mask_path.exists(), f"mask 缺失: {mask_key}"
 
