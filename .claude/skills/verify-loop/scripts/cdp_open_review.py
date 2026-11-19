@@ -88,7 +88,9 @@ def cdp_confirm(app: str, series_id: str, edge: str, timeout_s: float) -> tuple[
     profile = tempfile.mkdtemp(prefix="vl-edge-")
     cmd = [
         edge,
-        "--headless",
+        # --headless=new：旧 --headless 会附着既有 Edge 会话（tabs[0] 是用户
+        # 已开的 tab，渲染确认落空）；=new 才保证独立实例（实测 2026-11-20）
+        "--headless=new",
         f"--remote-debugging-port={CDP_PORT}",
         f"--user-data-dir={profile}",
         "--no-first-run",
