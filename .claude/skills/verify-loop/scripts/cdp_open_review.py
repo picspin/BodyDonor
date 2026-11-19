@@ -122,10 +122,10 @@ def cdp_confirm(app: str, series_id: str, edge: str, timeout_s: float) -> tuple[
     console_errors: list[str] = []
     ws = None
     try:
-        # 等 CDP 端口就绪
+        # 等 CDP 端口就绪（Windows Edge 冷启动 + 9P profile 首建可到 60s+）
         ready = False
-        for _ in range(50):
-            time.sleep(0.2)
+        for _ in range(150):
+            time.sleep(0.5)
             try:
                 url = f"http://127.0.0.1:{CDP_PORT}/json/version"
                 with urllib.request.urlopen(url, timeout=2) as r:
