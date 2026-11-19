@@ -1,10 +1,10 @@
-# M7-VERIFY-LOOP-REPORT — verify-loop skill（Phase A/B/C）
+# M7-VERIFY-LOOP-REPORT — verify-loop skill（Phase A/B/C/D）
 
-日期：2026-11-20 · 分支：`feat/m7-verify-loop-skill`（base `origin/main 421ef0c`）· HEAD：`82f0722`
+日期：2026-11-20 · 分支：`feat/m7-verify-loop-skill`（base `origin/main 421ef0c`）· HEAD：`0915ae1`
 
 Muse VM 同步（`~/workspace/bodydonor/`）：**待协调者执行**——本报告只写 worktree 副本。
 
-## 提交清单（18 commits，base 421ef0c → 82f0722）
+## 提交清单（23 commits，base 421ef0c → 0915ae1）
 
 | commit | 内容 |
 |---|---|
@@ -26,10 +26,51 @@ Muse VM 同步（`~/workspace/bodydonor/`）：**待协调者执行**——本�
 | b147df8 | SKILL.md 脚本表 + 链路 12 步与实现同步 |
 | bcb1cf6 | Phase C §3 勘误（NIfTI-direct 决定 5 / 12b 范围 / 悬空节 / frontmatter） |
 | 82f0722 | Phase C：CDP 目标按 type=="page" 过滤（dogfood 实测修复） |
+| 560dc05 | Phase C：轮报告 + JUnit 产物（Phase D (a) 已 untrack） |
+| aee2d60 | Phase D (a)：JUnit 产物 untrack（副本移 plans 仓）+ gitignore *junit*.xml |
+| 124bbdb | Phase D finding 1：CDP page 目标缺失不回落 tabs[0]（轮询+失败） |
+| 449bbaf | Phase D finding 3：run_chain.sh trap 覆盖，TMPD 残留 /tmp 修复 |
+| 0915ae1 | Phase D finding 4：series_id state 落点 fail-closed（/tmp 回退删除） |
 
 ## Diffstat（全轮）
 
-7 files changed, 1352 insertions(+)：DESIGN.md 187 / SKILL.md 78 / cdp_open_review.py 279 / chain_app.py 34 / chain_steps.py 396 / run_chain.sh 116 / test_verify_loop_chain.py 262。
+9 files changed, 1560 insertions(+)：DESIGN.md 187 / SKILL.md 78 / cdp_open_review.py 296 / chain_app.py 34 / chain_steps.py 398 / run_chain.sh 116 / .gitignore 3 / test_verify_loop_chain.py 324 / （JUnit 产物已 untrack，Phase D (a)）。
+
+## Phase D：deep-reviewer 对抗审查 + 修复（2026-11-20）
+
+审查范围 `421ef0c..HEAD`（deep-reviewer agent，只读；调用方贴 diff+Read）。
+4 findings（2 warning / 2 nit），全部调用方实测二次核实：
+
+1. **finding 1（warning，已修 124bbdb）**：CDP /json 单次读取，page 目标
+   缺失时回落 tabs[0]（= 82f0722 修掉的竞态目标）。实测确认窗口真实
+   （cdp_open_review.py:155-156 原代码）；修复 = 抽 `_select_cdp_target`
+   （page 缺失返 None）+ 轮询 20×0.5s，超时判失败不回落。先红后绿。
+2. **finding 2（warning，NOT-A-BUG）**：审查员称"代码里不存在
+   OrientationError、reorient_ras 不会抛该异常"——**不属实**。实测复现：
+   sitk 2D 图 WriteImage→nib.load→reorient_ras→`as_closest_canonical`→
+   `apply_orientation` raise `nibabel.orientations.OrientationError`
+   （orientations.py:159）；端到端直跑真实 `_save_pixels` 返回 None、
+   storage.save 未被调（异常吞于 pipeline.py:383）。审查员只读了
+   reorient_ras 3 行 shim 未追 nibabel 内部；报告/DESIGN 的机制描述
+   **准确，不改**。
+3. **finding 3（nit，已修 449bbaf）**：run_chain.sh 两个 trap，第二个
+   覆盖第一个，TMPD（chain.db/uvicorn.log/series_id/settings.yaml）残留
+   /tmp——实测 15 个 `/tmp/verify-loop.*` 目录。rm 并入 cleanup。
+4. **finding 4（nit，已修 0915ae1）**：chain_steps.py:387 series_id state
+   落点 VERIFY_LOOP_TMP 未设回落 /tmp，与 _settings() fail-closed 口径
+   不一致。改为 assert fail-closed。
+
+六项专项核查（伪异步/skip 断言/真实路径/调低阈值/放松断言/mock 冒充）：
+审查员报无问题，调用方复核属实（测试全 tmp_path；断言 n_classes>0、
+canvas>=4、version>=2 为合理下限；链路不 mock 分段）。
+
+## Phase C 重复派发核查（任务 3(c)）
+
+Phase C 日志（verify-loop-c.log）尾部确有"重复派发"二次总结，但
+**dogfood 只跑一次**：vl-dogfood-c.log 单条 `=== verify-loop PASS
+2026-11-20T04:22:10 ===`、单次 step1 pid 725003、单次全量套件
+（JUnit 一份 760 tests）。重复的是**最终消息文本**，不是运行——无重做，
+如实记录，不影响证据。
 
 ## 设计决定（DESIGN.md 行号）
 
@@ -100,25 +141,32 @@ Phase C §3(a)（:162，决定 5）：链路导入走 NIfTI-direct——DICOM co
 ## 测试
 
 - 全量 pytest：**760 passed, 0 failed, 0 errors**（2679.50s = 44:39）
-  JUnit：worktree `m7-verify-loop-suzi-fulltest-junit.xml`
-  （failures="0" errors="0" tests="760"）
-- 先红后绿（Phase B，tests/test_verify_loop_chain.py 262 行）：
+  JUnit：证据副本 `/home/gogvf/work/bodydonor-plans/m7-verify-loop-suzi-fulltest-junit.xml`
+  （failures="0" errors="0" tests="760"；Phase D (a) untrack，仓内不再
+  tracked，gitignore `*junit*.xml`）
+- 先红后绿（Phase B，tests/test_verify_loop_chain.py，Phase D 后 324 行）：
   git-clean 真红（泄漏文件）/ traces 空库红+他 series 不冒充 /
   mask_version 空库红+v1 红+v2 绿 / export 接线红（mask 缺失，行为红由
-  test_export_seg.py 既有覆盖）
+  test_export_seg.py 既有覆盖）/ Phase D 增 CDP 目标选择 2 条
+  （TestCdpPageTarget：background_page 排前取 page、page 缺失不回落 tabs[0]）
 - ruff：`ruff check src tests .claude/skills/verify-loop/scripts` 全绿
+  （Phase D 修复后复跑）
+- 本阶段（Phase D）affected tests：test_verify_loop_chain.py
+  **14 passed**（12 既有 + 2 新增）；全量套件由协调者独立跑（Phase D 不跑）
 
 ## 开放项（非"全修"）
 
 1. **DICOM 2D 像素落盘静默失败**（本报告 §3(a)）：`_save_pixels` 吞
    OrientationError → storage_key=None。两 checkout 同行为，修属导入管线
    （2D 图跳过 reorient 或多维化），另派。链路已绕行（NIfTI-direct）。
-2. **Step 6 CDP 目标竞态**已修（type=="page" 过滤），但 /json 目标列表
-   含扩展 background_page/service_worker 的机器上仍有理论窗口（page 目标
-   缺失时回落 tabs[0]）——当前 Edge 实测 page 恒在，未观测到复发。
+2. **Step 6 CDP 目标竞态**已修两层（type=="page" 过滤 82f0722 + page 缺失
+   轮询不回落 tabs[0] 124bbdb）——/json 单次读取的竞态窗口已闭合。
 3. **Edge profile 目录清理**：Windows 侧 TEMP 的 vl-edge-* profile 因
    CrashpadMetrics-active.pma 权限拒绝无法 rm（9P）——累积 5 个，手工清理。
 4. **Step 12b 只覆盖 uvicorn stderr**：app 无 logging 基建，应用日志 grep
    无从接线（DESIGN.md:180 已记录）；若未来 app 加 logging，须补 12b。
 5. **Hypothesis 四条不变量**未写（DESIGN.md 决定 4 范围外，属后续）。
 6. Muse VM `~/workspace/bodydonor/` 副本同步：待协调者执行。
+7. **/tmp 残留清理**：Phase C 累积 15 个 `/tmp/verify-loop.*` 目录
+   （finding 3 修复前的 TMPD 残留）+ Phase D 修复后不再产生；存量手工
+   清理（`rm -rf /tmp/verify-loop.*`，仓外不影响任何 checkout）。
