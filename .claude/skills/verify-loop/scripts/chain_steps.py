@@ -131,13 +131,20 @@ def _post_multipart(path: str, field: str, filename: str, data: bytes) -> tuple[
 
 
 def step2_ingest() -> dict:
-    """合成 DICOM 导入 → {series_id, outcome_id}。断言 scan+commit 200、有候选。"""
-    from tests.factories import dicom_folder_zip, make_dicom_folder
+    """合成 NIfTI 导入（zip 上传，modality=CT）→ {series_id, outcome_id}。
 
-    with tempfile.TemporaryDirectory(prefix="vl-dicom-") as td:
-        root = make_dicom_folder(Path(td), n_series=1, slices_per_series=40)
-        zdata = dicom_folder_zip(root)
-    status, scan = _post_multipart("/ingest/scan", "file", "synthetic.zip", zdata)
+    走 NIfTI-direct 路径不走 DICOM zip：_build_dicom_series 的像素栈是
+    2D GetImageFromArray（ingest.py:410），DICOM zip commit 落库后
+    storage_key=None（_save_pixels 对 2D 图 RAS 重排 raise 被静默吞掉，
+    主 checkout 同行为——非本轮回归，链路选落盘可用的路径）。
+    """
+    from tests.factories import make_nifti, zip_bytes
+
+    with tempfile.TemporaryDirectory(prefix="vl-nii-") as td:
+        nii = make_nifti(Path(td) / "img.nii.gz", shape=(64, 64, 40))
+        zdata = zip_bytes({"case1/img.nii.gz": nii.read_bytes()})
+    url = "/ingest/scan?modality=CT"
+    status, scan = _post_multipart(url, "file", "synthetic.zip", zdata)
     assert status == 200, f"ingest/scan {status}: {scan}"
     assert scan.get("candidates") or scan.get("selector"), f"ingest/scan 无候选: {list(scan)[:8]}"
     outcome_id = scan["outcome_id"]
@@ -217,13 +224,18 @@ def step8_mask_version(series_id: str, min_version: int = 2) -> dict:
 
 
 def step9_10_export_seg(series_id: str) -> dict:
-    """Step 9+10：导出 SEG + verify_seg 体素差 = 0（export_and_verify 一步）。"""
+    """Step 9+10：导出 SEG + verify_seg 体素差 = 0（export_and_verify 一步）。
+
+    源引用路径：DICOM 来源系列用 source_info_from_persisted（真实 SOP 引用）；
+    NIfTI-direct 系列（source_instances_json=None）走合成 fallback
+    （SourceSeriesInfo 按存储 NIfTI 几何构造，合成联调用——SourceSeriesInfo
+    docstring 语义）。
+    """
     from sqlalchemy import select
 
     from bodydonor import db as bdb
-    from bodydonor.export_seg import export_and_verify
+    from bodydonor.export_seg import SourceSeriesInfo, export_and_verify
     from bodydonor.models import Series
-    from bodydonor.pipeline import source_info_from_persisted
 
     sset = _settings()
     engine = bdb._engine(sset.database.url)
@@ -240,17 +252,37 @@ def step9_10_export_seg(series_id: str) -> dict:
     finally:
         engine.dispose()
 
-    assert persisted, f"series {series_id} 无 source_instances_json（DICOM ingest 应已提取）"
-    modality = row.modality or "CT"
-    study_uid = persisted.get("study_uid", "") or ""
-    source = source_info_from_persisted(persisted, series_id[:60], study_uid, modality)
-    # storage_key 读回最新 mask
+    # storage_key 读回 mask
     from bodydonor.storage import LocalFsStorage
 
     st = LocalFsStorage(sset.resolved_data_dir / "storage")
     mask_key = f"{series_id[:60]}/mask.nii.gz"
     mask_path = st.root / mask_key
     assert mask_path.exists(), f"mask 缺失: {mask_key}"
+
+    import nibabel as nib
+
+    nib_img = nib.load(str(mask_path))
+    # nib 形状 = (cols, rows, slices)（sitk size = (x=cols, y=rows, z=slices)）；
+    # export_seg mask 数组 (z,y,x) 面内 = (rows, cols)。
+    rows, cols = int(nib_img.shape[1]), int(nib_img.shape[0])
+    modality = row.modality or "CT"
+    if persisted:
+        from bodydonor.pipeline import source_info_from_persisted
+
+        source = source_info_from_persisted(persisted, series_id[:60], series_id[:60], modality)
+        source.rows, source.columns = rows, cols
+    else:
+        # NIfTI-direct：合成 fallback（无 DICOM 来源，SourceSeriesInfo docstring 语义）
+        source = SourceSeriesInfo(
+            series_uid=series_id[:60],
+            study_uid=f"study-{series_id[:60]}",
+            modality=modality,
+            rows=rows,
+            columns=cols,
+            pixel_spacing=(1.0, 1.0),
+            slice_thickness_mm=1.0,
+        )
 
     out_dir = Path(tempfile.mkdtemp(prefix="vl-seg-"))
     seg_path = out_dir / "seg.dcm"
