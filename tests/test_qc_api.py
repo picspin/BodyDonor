@@ -102,8 +102,10 @@ def test_record_review_decision_old_config_without_development_provenance(tmp_pa
     """旧配置（97a3fe8，无 development_provenance）回流兼容读取：不虚构
     development_provenance，反馈计数正确累计为 1。
 
-    非 fail-first：旧代码本就不认识该字段，本测试在修复前后都会过；
-    作用是固化旧配置兼容语义，防未来回归（如回流时强插默认 provenance）。
+    不虚构一半是守卫（旧配置没有就没有），sp/overall 累计一半是
+    fail-first（旧回流不更新 sampling_priority，旧代码上失败，
+    assert 30 == 1）；作用是固化旧配置兼容语义，防未来回归（如回流
+    时强插默认 provenance）。
     """
     import subprocess
 
