@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# config/ 硬隔离守卫：暂存含 config/ 改动时，commit message 必须含 [config-change]。
+# 落在 commit-msg 而非 pre-commit：pre-commit 阶段消息文件尚不存在（$1 只有 commit-msg 提供）。
+set -euo pipefail
+
+# merge 提交放行（决定见 README.md）：拒绝会卡住 merge 状态
+if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
+  exit 0
+fi
+
+msg_file="$1"
+# --no-renames：默认 renames 只列新路径，rename 移出 config/ 会逃检；
+# -z 按 NUL 分隔：core.quotePath=true 会给非 ASCII 路径加引号转义逃检。
+# 写临时文件而非命令替换：$(...) 吃掉 NUL 字节，-z 列表须按 NUL 读。
+# grep -a -z 按 NUL 分隔整块匹配 ^config/，不经管道避免大列表 SIGPIPE 误放行。
+staged_file="$(mktemp "${TMPDIR:-/tmp}/commit-msg-staged.XXXXXX")"
+trap 'rm -f "$staged_file"' EXIT
+git diff --cached --name-only --no-renames -z > "$staged_file"
+
+# 删除也算 config 改动，故不加 --diff-filter（决定见 README.md）
+if grep -aq '^config/' -z "$staged_file"; then
+  # 排除 # 注释行：git 会剥离注释，落在注释里的标记不会进入最终 message
+  if printf '%s\n' "$(grep -v '^#' "$msg_file" || true)" | grep -qF '[config-change]'; then
+    exit 0
+  fi
+  cat >&2 <<'EOF'
+ERROR: 暂存里有 config/ 改动，但 commit message 缺少 [config-change] 标记，提交被拒绝。
+放行方式：在 commit message 中加入 [config-change] 后重新提交。
+说明：该标记只是显式声明，不是免审——改 config 的提交照常进 review。
+EOF
+  exit 1
+fi
