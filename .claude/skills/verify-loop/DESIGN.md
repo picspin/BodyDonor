@@ -1,7 +1,10 @@
 # verify-loop skill — DESIGN
 
-Phase A 探针结论 + 四项设计决定。探针基线 `origin/main 421ef0c`，
-链路触点均已核到 file:line（见文末探针表）。
+Phase A 探针结论 + 四项设计决定。探针时基线 `origin/main 421ef0c`
+（2026-11-20 探针当时），链路触点均已核到 file:line（见文末探针表）。
+2026-11-26 rebase 到 `origin/main 66a660e` 后探针表已逐锚点重核，全部
+未漂移。当前合规/审查口径以 docs/M7-RESEARCH-BASELINE-REVIEW-20261125.md
+与 deep-reviewer.md 第 2 条为准（research-only，商业白名单已退役）。
 
 ## 决定 1：触发时机 — 仅 pre-commit
 
