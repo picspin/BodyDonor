@@ -170,37 +170,52 @@ class TestMetadataHonesty:
         return yaml.safe_load(QC_THRESHOLDS.read_text(encoding="utf-8"))
 
     def test_multi_teacher_consistency_not_cold_start(self, thresholds: dict) -> None:
-        """聚合方式已在 30 例上选定 → source=holdout_30_dev、calibrated_on=30。"""
+        """聚合方式已在 30 例上选定 → source=holdout_30_dev，开发依据读
+        development_provenance（P2：calibrated_on 是反馈计数，从 0 起累计）。"""
         cfg = thresholds["rules"]["multi_teacher_consistency"]
         assert cfg["source"] == "holdout_30_dev"
-        assert cfg["calibrated_on"] == 30
+        dev = cfg["development_provenance"]
+        assert dev["source"] == "holdout_30_dev"
+        assert dev["n_cases"] == 30
+        assert dev["case_ids_hash"] == "218a663e218d4ce7"
+        assert dev["selected_at"] == "2026-11-11"
+        assert "聚合方式" in dev["procedure"]
         assert "cold_start" not in str(cfg.get("note", "")) or "保持 cold_start" not in str(
             cfg.get("note", "")
         )
         # 数值未动（M7-S2 只改元数据，不改阈值）
         assert cfg["threshold"] == 0.80
         assert cfg["enabled"] is True
+        assert cfg["calibrated_on"] == 0  # 反馈计数从 0 起（未回流）
 
     def test_derived_hash_written_verbatim(self, thresholds: dict) -> None:
         """note 引用的 derived_from_case_ids_hash 必须写出真实哈希值（不只是公式），
         且与 eval/holdout.txt 实算一致——引用无值无法核对（deep-reviewer finding）。"""
-        for note in (
-            thresholds["rules"]["multi_teacher_consistency"]["note"],
-            thresholds["sampling_priority"]["note"],
+        for node in (
+            thresholds["rules"]["multi_teacher_consistency"],
+            thresholds["sampling_priority"],
         ):
-            assert case_ids_hash(
-                [e.case_id for e in load_holdout()]
-            ) in note
+            real_hash = case_ids_hash([e.case_id for e in load_holdout()])
+            assert real_hash in node["note"]
+            # P2：结构化开发 provenance 同记真实哈希（不只 note 引用）
+            assert node["development_provenance"]["case_ids_hash"] == real_hash
+            assert node["development_provenance"]["source"] == "holdout_30_dev"
+            assert node["development_provenance"]["n_cases"] == 30
 
     def test_sampling_priority_w3_w4_marked(self, thresholds: dict) -> None:
         """w3/w4 定义依据 30 例实测 → 节 source=holdout_30_dev；w1/w2 未调。"""
         cfg = thresholds["sampling_priority"]
         assert cfg["source"] == "holdout_30_dev"
-        assert cfg["calibrated_on"] == 30
+        dev = cfg["development_provenance"]
+        assert dev["n_cases"] == 30
+        assert dev["selected_at"] == "2026-11-12"
+        assert "w3" in dev["procedure"]
+        assert "w1/w2" in dev["procedure"]  # 四个权重不冒充都已校准
         assert cfg["weights"]["w3"] == 1.0
         assert cfg["weights"]["w4"] == 1.0
         # w1/w2 未在 30 例上调整——note 如实记录（量级假设初值保持 cold_start）
         assert "w1/w2 未在 30 例上调整" in cfg["note"]
+        assert cfg["calibrated_on"] == 0  # 反馈计数从 0 起（未回流）
 
     def test_uncalibrated_rules_stay_cold_start(self, thresholds: dict) -> None:
         """未在 30 例上调过的规则保持 cold_start 不动（逐项核对，不批量改）。"""

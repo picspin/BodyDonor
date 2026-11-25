@@ -45,14 +45,21 @@ def test_thresholds_all_have_source(th):
 def test_multi_teacher_enabled_in_m4(th):
     """多教师一致性 M4 启用（proposal §7：学生模型出现后开，不造假数据）。
     M7-S2 元数据诚实：聚合方式在 30 例 gate 上选定，source 写实
-    holdout_30_dev、calibrated_on=30（样本内开发指标，不再标 cold_start）。"""
+    holdout_30_dev；开发依据读 development_provenance（P2：calibrated_on
+    是反馈计数，与开发 case 数解耦，从 0 起累计）。"""
     cfg = th["rules"][RULE_MULTI_TEACHER]
     assert cfg["enabled"] is True
     assert cfg["threshold"] == 0.80
     assert cfg["source"] == "holdout_30_dev"  # 阈值数值未变，校准的是聚合方式
-    assert cfg["calibrated_on"] == 30
+    dev = cfg["development_provenance"]
+    assert dev["source"] == "holdout_30_dev"
+    assert dev["n_cases"] == 30
+    assert dev["case_ids_hash"] == "218a663e218d4ce7"
+    assert dev["selected_at"] == "2026-11-11"
     assert "mean Dice" in cfg["note"]
     assert "5/30" in cfg["note"]  # 校准数字在注记里可见
+    assert "mean Dice" in dev["procedure"]  # 过程如实记录
+    assert cfg["calibrated_on"] == 0  # 反馈计数从 0 起（未回流）
 
 
 def test_multi_teacher_identical_masks_not_flagged():
@@ -444,6 +451,38 @@ def test_calibrate_thresholds_updates_overall():
     out = calibrate_thresholds(labels, th)
     assert out["overall"]["calibrated_on"] == 2
     assert out["overall"]["calibrated_at"]
+
+
+def test_calibrate_thresholds_preserves_development_provenance():
+    """校准改写 source 时开发 provenance 不丢（P2：曾把 holdout_30_dev
+    覆盖成 calibrated_on_N，开发依据 source 标记被抹掉）。"""
+    import yaml as _yaml
+
+    from bodydonor.qc import calibrate_thresholds, save_calibrated_thresholds
+
+    th = load_qc_thresholds()
+    mt_before = dict(th["rules"]["multi_teacher_consistency"]["development_provenance"])
+    labels = [
+        {"decision": "rejected", "flags": ["multi_teacher_consistency"]},
+        {"decision": "rejected", "flags": []},
+        {"decision": "accepted", "flags": []},
+    ]
+    out = calibrate_thresholds(labels, th)
+    assert out["rules"]["multi_teacher_consistency"]["development_provenance"] == mt_before
+    assert mt_before["n_cases"] == 30
+    assert mt_before["source"] == "holdout_30_dev"
+    assert mt_before["case_ids_hash"] == "218a663e218d4ce7"
+    # 保存读回后两类事实均可读取
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "qc_thresholds.yaml"
+        save_calibrated_thresholds(out, p)
+        saved = _yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert saved["rules"]["multi_teacher_consistency"]["development_provenance"] == mt_before
+    assert saved["rules"]["multi_teacher_consistency"]["source"] == "calibrated_on_3"
+    assert saved["rules"]["multi_teacher_consistency"]["calibrated_on"] == 3
 
 
 # ---------------------------------------------------------------------------

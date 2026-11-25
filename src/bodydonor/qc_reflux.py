@@ -4,7 +4,9 @@
   calibrated_on 计数 + calibrated_at 日期 + decisions 计数器（按决策类型）。
 - **阈值本体**（min_frac/max_frac 等数值）由 `bodydonor qc-calibrate` 重算——
   决策回流只是累计标签，等标签足够（默认 ≥ 20 例）重算才有意义。
-- 每个阈值的 source 注记随之变 calibrated_on_N（报告可见，proposal §7）。
+- rules.*.calibrated_on/at 是**反馈计数**（回流累计数/最近反馈日期），与本条
+  决策数同步更新；开发 provenance（development_provenance 节）**绝不碰**——
+  source 注记也不改写（P2：正常回流曾把 holdout_30_dev/30 覆盖成 1）。
 
 M3 单教师：多教师一致性规则的回流标签 M4 起才记录（学生 mask 出现后）。
 """
@@ -30,7 +32,8 @@ def record_review_decision(
     - decisions.{decision} 计数 +1
     - calibrated_on = 总决策数（N cases）
     - calibrated_at = 今天（ISO 日期）
-    - rules.*.calibrated_on/at 同步更新（source 注记变 calibrated_on_N）
+    - rules.*.calibrated_on/at 同步更新（反馈计数语义）
+    - development_provenance 节不碰（开发依据与反馈计数解耦，P2）
     """
     if decision not in VALID_DECISIONS:
         raise ValueError(f"decision 必须是 {VALID_DECISIONS}，收到 {decision!r}")
@@ -49,6 +52,13 @@ def record_review_decision(
         if isinstance(rule_cfg, dict):
             rule_cfg["calibrated_on"] = total
             rule_cfg["calibrated_at"] = today
+
+    # sampling_priority 同为反馈统计（note：M6-f 决策回流后重算权重，
+    # calibrated_on 更新）；gating 分档比例未经决策回流校准，不碰
+    sp = th.get("sampling_priority")
+    if isinstance(sp, dict):
+        sp["calibrated_on"] = total
+        sp["calibrated_at"] = today
 
     with open(p, "w", encoding="utf-8") as f:
         yaml.safe_dump(th, f, allow_unicode=True, sort_keys=False)

@@ -69,3 +69,30 @@ def test_record_review_decision_updates_thresholds(tmp_path):
 def test_record_review_decision_invalid():
     with pytest.raises(ValueError, match="decision"):
         record_review_decision(None, "maybe")
+
+
+def test_record_review_decision_preserves_development_provenance(tmp_path):
+    """回流只动反馈计数，不碰开发 provenance（P2：正常回流曾把
+    holdout_30_dev/30 覆盖成 holdout_30_dev/1，开发依据被抹掉）。"""
+    import shutil
+
+    p = tmp_path / "qc_thresholds.yaml"
+    shutil.copy(QC_THRESHOLDS_PATH, p)
+    before = yaml.safe_load(p.read_text(encoding="utf-8"))
+    mt_before = before["rules"]["multi_teacher_consistency"]["development_provenance"]
+    sp_before = before["sampling_priority"]["development_provenance"]
+    record_review_decision(None, "accepted", path=p)
+    record_review_decision(None, "corrected", path=p)
+    doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+    mt = doc["rules"]["multi_teacher_consistency"]
+    sp = doc["sampling_priority"]
+    # 开发 provenance 逐字段不变
+    assert mt["development_provenance"] == mt_before
+    assert sp["development_provenance"] == sp_before
+    assert mt["development_provenance"]["n_cases"] == 30
+    assert mt["development_provenance"]["source"] == "holdout_30_dev"
+    assert mt["development_provenance"]["case_ids_hash"] == "218a663e218d4ce7"
+    # 反馈计数从 0 起正确累计（calibrated_on = 反馈数，不再冒充开发 case 数）
+    assert mt["calibrated_on"] == 2
+    assert sp["calibrated_on"] == 2
+    assert doc["overall"]["calibrated_on"] == 2
