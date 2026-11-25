@@ -485,6 +485,51 @@ def test_calibrate_thresholds_preserves_development_provenance():
     assert saved["rules"]["multi_teacher_consistency"]["calibrated_on"] == 3
 
 
+def test_calibrate_thresholds_old_config_migrates_only_source():
+    """旧配置（97a3fe8，无 development_provenance）+ 有判别力校准：只把
+    source 迁入 development_provenance，不虚构 n_cases / case_ids_hash。
+
+    fail-first：在 P2 修复前的代码上会失败（旧代码直接把 source 改写成
+    calibrated_on_N，开发依据标记丢失，无迁移）。
+    """
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    import yaml as _yaml
+
+    from bodydonor.qc import calibrate_thresholds, save_calibrated_thresholds
+
+    old = subprocess.run(
+        ["git", "show", "97a3fe8:config/qc_thresholds.yaml"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "qc_thresholds.yaml"
+        p.write_text(old, encoding="utf-8")
+        th = load_qc_thresholds(p)
+        # 旧配置起点：source=holdout_30_dev，无 development_provenance 节
+        mt0 = th["rules"]["multi_teacher_consistency"]
+        assert mt0["source"] == "holdout_30_dev"
+        assert "development_provenance" not in mt0
+        # 有判别力标签：flag 组全 rejected、clean 组全 accepted
+        labels = [
+            {"decision": "rejected", "flags": ["multi_teacher_consistency"]},
+            {"decision": "rejected", "flags": ["multi_teacher_consistency"]},
+            {"decision": "accepted", "flags": []},
+            {"decision": "accepted", "flags": []},
+        ]
+        out = calibrate_thresholds(labels, thresholds=th)
+        save_calibrated_thresholds(out, path=p)
+        saved = _yaml.safe_load(p.read_text(encoding="utf-8"))
+    prov = saved["rules"]["multi_teacher_consistency"]["development_provenance"]
+    # 只迁入 source，不虚构 30 例来源字段（n_cases / case_ids_hash）
+    assert prov == {"source": "holdout_30_dev"}
+    # 规则 source 已改写为校准注记，开发依据仍可从 provenance 读回
+    assert saved["rules"]["multi_teacher_consistency"]["source"] == "calibrated_on_4"
+    assert saved["rules"]["multi_teacher_consistency"]["calibrated_on"] == 4
+
+
 # ---------------------------------------------------------------------------
 # M4 阶段 4：数值重算门槛（抽检决策 ≥ 20 例才做，不够记 pending）
 # ---------------------------------------------------------------------------

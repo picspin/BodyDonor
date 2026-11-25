@@ -96,3 +96,31 @@ def test_record_review_decision_preserves_development_provenance(tmp_path):
     assert mt["calibrated_on"] == 2
     assert sp["calibrated_on"] == 2
     assert doc["overall"]["calibrated_on"] == 2
+
+
+def test_record_review_decision_old_config_without_development_provenance(tmp_path):
+    """旧配置（97a3fe8，无 development_provenance）回流兼容读取：不虚构
+    development_provenance，反馈计数正确累计为 1。
+
+    非 fail-first：旧代码本就不认识该字段，本测试在修复前后都会过；
+    作用是固化旧配置兼容语义，防未来回归（如回流时强插默认 provenance）。
+    """
+    import subprocess
+
+    old = subprocess.run(
+        ["git", "show", "97a3fe8:config/qc_thresholds.yaml"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    p = tmp_path / "qc_thresholds.yaml"
+    p.write_text(old, encoding="utf-8")
+    record_review_decision(None, "accepted", path=p)
+    doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+    mt = doc["rules"]["multi_teacher_consistency"]
+    sp = doc["sampling_priority"]
+    # 不虚构开发 provenance（旧配置没有就没有）
+    assert "development_provenance" not in mt
+    assert "development_provenance" not in sp
+    # 反馈计数正确累计（旧值 30 是开发 case 数，回流后归位为反馈计数 1）
+    assert mt["calibrated_on"] == 1
+    assert sp["calibrated_on"] == 1
+    assert doc["overall"]["calibrated_on"] == 1
