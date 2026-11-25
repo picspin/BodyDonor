@@ -3,16 +3,21 @@
 
 用法：check_review_fresh.py reviews/review-<sha>.json
 
-读报告内的 review_sha 与当前 HEAD 比对：
-- 一致且 stale 为 false → 打印 FRESH，exit 0；
-- 不一致或 stale 为 true → 打印 STALE（含报告 sha 与当前 HEAD），exit 1。
+读报告内的 review_sha 与当前 HEAD 比对，并共用 review_report_validate 校验结构：
+- 一致、stale 显式为 false、结构合法 → 打印 FRESH，exit 0；
+- 不一致、stale 非 False（缺失/null/0/"false" 等）、结构损坏 → 打印 STALE，exit 1。
 
+FRESH 只表示报告完成且绑定当前提交，不代表所有问题已解决或允许合并。
 引用审查结论前必须跑本脚本核验；HEAD 一变旧报告即失效。
 """
 
 import json
 import subprocess
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_report_validate import validate_report
 
 
 def current_head() -> str:
@@ -39,8 +44,12 @@ def main() -> int:
         return 1
     review_sha = report.get("review_sha", "")
     head = current_head()
-    if report.get("stale") is True:
-        print(f"STALE: report stale flag set (review_sha={review_sha}, HEAD={head})")
+    err = validate_report(report)
+    if err:
+        print(f"STALE: invalid report structure ({err}): {sys.argv[1]}")
+        return 1
+    if report.get("stale") is not False:
+        print(f"STALE: stale flag not explicitly false (review_sha={review_sha}, HEAD={head})")
         return 1
     if review_sha != head:
         print(f"STALE: review_sha={review_sha}, HEAD={head}")

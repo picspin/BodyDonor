@@ -208,7 +208,44 @@ def test_fresh_check_non_object_json_exits_nonzero(tmp_path):
     assert "STALE" in r.stdout
 
 
-# --- 包装脚本产出 schema ------------------------------------------------------
+def _fresh_check_cases():
+    """stale 非显式 False 的各形态（缺失/null/0/"false"）与结构损坏样例。"""
+    head = "HEADSHA"  # 占位，测试里替换为真实 HEAD
+    full = {"severity": "warning", "file": "src/x.py", "line": 12,
+            "evidence": "e", "suggestion": "s", "reproduction": "r"}
+    return [
+        ("stale missing", {"review_sha": head, "findings": []}),
+        ("stale null", {"review_sha": head, "findings": [], "stale": None}),
+        ("stale 0", {"review_sha": head, "findings": [], "stale": 0}),
+        ("stale str false", {"review_sha": head, "findings": [], "stale": "false"}),
+        ("findings not list", {"review_sha": head, "findings": 1, "stale": False}),
+        ("finding not dict", {"review_sha": head, "findings": ["x"], "stale": False}),
+        ("finding missing field", {"review_sha": head, "findings": [
+            {"severity": "w", "file": "f", "line": 1}], "stale": False}),
+        ("finding field null", {"review_sha": head, "findings": [
+            {**full, "evidence": None}], "stale": False}),
+        ("finding field type wrong", {"review_sha": head, "findings": [
+            {**full, "line": "12"}], "stale": False}),
+    ]
+
+
+@pytest.mark.parametrize(
+    "label,report", _fresh_check_cases(), ids=[c[0] for c in _fresh_check_cases()]
+)
+def test_fresh_check_rejects_non_explicit_false_and_broken_structure(tmp_path, label, report):
+    """stale 非 False / findings 结构损坏一律 STALE，不裸 traceback。"""
+    repo = _make_scratch(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    report = {**report, "review_sha": head}
+    path = repo / "reviews" / f"review-{head}.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(report))
+
+    r = _run_fresh_check(repo, path)
+
+    assert r.returncode != 0
+    assert "STALE" in r.stdout
+    assert "Traceback" not in r.stderr
 
 
 def test_wrapper_output_full_schema(tmp_path, fake_claude):
@@ -287,3 +324,43 @@ def test_wrapper_rejects_finding_null_field(tmp_path, fake_claude):
 
     assert r.returncode != 0
     assert "校验失败" in r.stderr
+
+
+def test_wrapper_failure_leaves_no_publishable_report(tmp_path, fake_claude):
+    """wrapper 校验失败 exit 1 后，正式报告文件必须不存在，checker 判 STALE。"""
+    repo = _make_scratch(tmp_path)
+    _add_work_branch(repo)
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    bindir, stdin_path = fake_claude
+
+    r = _run_wrapper(repo, bindir, stdin_path, "work", fake_mode="missingfield")
+
+    assert r.returncode != 0
+    out = repo / "reviews" / f"review-{head}.json"
+    assert not out.exists(), "失败退出后正式报告必须不存在"
+    assert not list((repo / "reviews").glob(".*")), "不得残留临时文件"
+
+    r2 = _run_fresh_check(repo, out)
+    assert r2.returncode != 0
+    assert "STALE" in r2.stdout
+
+
+def test_same_sha_success_then_failure_rejects_old_result(tmp_path, fake_claude):
+    """同 SHA 成功后再失败重跑，checker 必须判 STALE，不能引用上次成功结果。"""
+    repo = _make_scratch(tmp_path)
+    _add_work_branch(repo)
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    bindir, stdin_path = fake_claude
+    out = repo / "reviews" / f"review-{head}.json"
+
+    r1 = _run_wrapper(repo, bindir, stdin_path, "work")
+    assert r1.returncode == 0, r1.stdout + r1.stderr
+    r_check = _run_fresh_check(repo, out)
+    assert r_check.returncode == 0, r_check.stdout + r_check.stderr
+
+    r2 = _run_wrapper(repo, bindir, stdin_path, "work", fake_mode="missingfield")
+    assert r2.returncode != 0
+
+    r_check2 = _run_fresh_check(repo, out)
+    assert r_check2.returncode != 0
+    assert "STALE" in r_check2.stdout, "失败重跑后不得引用旧成功结果"

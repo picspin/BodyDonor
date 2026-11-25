@@ -21,6 +21,8 @@ case "${1:-}" in
 esac
 
 cd "$(git rev-parse --show-toplevel)"
+# 共用校验模块与本脚本同目录（wrapper 在目标仓根目录运行，须用绝对路径引用）。
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 review_sha="$(git rev-parse HEAD)"
 echo "review_sha=${review_sha}"
 
@@ -93,33 +95,34 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 
 # 调一次 claude -p 派发审查（findings 落盘由被调会话完成）。
-# 先删残留：同 HEAD 重跑时旧 findings 文件不得被当作新结果。
+# 先删残留：同 HEAD 重跑时旧正式报告不得被当作新结果（失败退出时正式报告必须不存在，
+# 不能留下上次成功的结果供失败后引用）。
 out_file="reviews/review-${review_sha}.json"
 rm -f "$out_file"
+# 结果先收进临时文件（与正式报告同文件系统，便于原子 mv 发布），校验通过后才发布。
+mkdir -p reviews
+tmp_out="reviews/.review-${review_sha}.json.tmp.$$"
+trap 'rm -rf "$tmpdir" "$tmp_out"' EXIT
 claude -p --dangerously-skip-permissions < "$prompt_file"
 
-# 校验 findings 文件存在且合法（结构：review_sha 匹配 + findings 是数组）。
+# 被调会话按 prompt 契约写 out_file；先收进临时文件再校验，失败时不留残缺正式报告。
 if [ ! -s "$out_file" ]; then
   echo "ERROR: ${out_file} 未生成或为空" >&2
   exit 1
 fi
-if ! python3 - "$out_file" "$review_sha" "$scope" <<'PYEOF' >/dev/null 2>&1
+mv "$out_file" "$tmp_out"
+
+# 结构校验与 checker 共用同一模块（scripts/review_report_validate.py）。
+if ! python3 "${script_dir}/review_report_validate.py" "$tmp_out" "$review_sha" >/dev/null 2>&1; then
+  echo "ERROR: ${out_file} 校验失败（非 JSON / review_sha 不匹配 / findings 字段缺失）" >&2
+  exit 1
+fi
+# 校验通过后补写 region / resolved_in_commit / stale（三键由包装脚本负责）。
+if ! python3 - "$tmp_out" "$scope" <<'PYEOF' >/dev/null 2>&1
 import json, sys
 with open(sys.argv[1]) as f:
     d = json.load(f)
-if not isinstance(d, dict) or d.get("review_sha") != sys.argv[2]:
-    raise SystemExit(1)
-if not isinstance(d.get("findings"), list):
-    raise SystemExit(1)
-for f in d["findings"]:
-    if not isinstance(f, dict):
-        raise SystemExit(1)
-    for k in ("severity", "file", "line", "evidence", "suggestion", "reproduction"):
-        if f.get(k) is None:
-            raise SystemExit(1)
-
-# 补写 region / resolved_in_commit / stale（子代理只写最小格式，三键由包装脚本负责）。
-d["region"] = sys.argv[3]
+d["region"] = sys.argv[2]
 d.setdefault("stale", False)
 for f in d["findings"]:
     f.setdefault("resolved_in_commit", None)
@@ -127,9 +130,10 @@ with open(sys.argv[1], "w") as f:
     json.dump(d, f, ensure_ascii=False, indent=2)
 PYEOF
 then
-  echo "ERROR: ${out_file} 校验失败（非 JSON / review_sha 不匹配 / findings 字段缺失）" >&2
+  echo "ERROR: ${out_file} 补写元数据失败" >&2
   exit 1
 fi
+mv "$tmp_out" "$out_file"
 
 # HEAD 移动检测：审查期间 HEAD 一变，报告即 stale（fresh 报告才可被引用）。
 now_sha="$(git rev-parse HEAD)"
