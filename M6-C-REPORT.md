@@ -80,6 +80,8 @@ M4 离线评估（eval/holdout_results.json `summary.prostate.zero_dice_cases`�
 
 硬性验收：s0209 与 prostate 漏检 case 进前 20%（30 例中前 6）——测试断言 `test_ranking_consistency_30_holdout_top20` **通过**。
 
+**M7-S2 改标（2026-11-14）**：本节排名与验收基于 30 例 hold-out（gate 集）现算，该批 case 同时承担 w3/w4 定义校准——**以上比例为「样本内开发指标」（in-sample dev），不得冒充独立验收**；派生统计来源哈希 `derived_from_case_ids_hash` = gate 30 例（见 config/qc_thresholds.yaml note 与 M7-S2-REPORT），独立 calib 集建好后须复核。原数字与原结论不动。
+
 ## 7. 提交 hashes
 
 - `3849d51` feat(m6c): 过程风险驱动采样 sample_review_tasks_by_priority + config sampling_priority + generate_review_tasks 接线

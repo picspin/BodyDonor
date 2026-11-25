@@ -35,21 +35,31 @@ def test_thresholds_file_exists():
 
 
 def test_thresholds_all_have_source(th):
-    """每个阈值带 source 注记（proposal §7：报告里可见）。"""
+    """每个阈值带 source 注记（proposal §7：报告里可见）。M7-S2：已调过的
+    派生统计不再标 cold_start，写实来源 holdout_30_dev。"""
     for rule, cfg in th["rules"].items():
         assert "source" in cfg, f"rule {rule} 缺 source"
-        assert cfg["source"] in ("cold_start", "calibrated_on_N")
+        assert cfg["source"] in ("cold_start", "calibrated_on_N", "holdout_30_dev")
 
 
 def test_multi_teacher_enabled_in_m4(th):
-    """多教师一致性 M4 启用（proposal §7：学生模型出现后开，不造假数据）。"""
+    """多教师一致性 M4 启用（proposal §7：学生模型出现后开，不造假数据）。
+    M7-S2 元数据诚实：聚合方式在 30 例 gate 上选定，source 写实
+    holdout_30_dev；开发依据读 development_provenance（P2：calibrated_on
+    是反馈计数，与开发 case 数解耦，从 0 起累计）。"""
     cfg = th["rules"][RULE_MULTI_TEACHER]
     assert cfg["enabled"] is True
     assert cfg["threshold"] == 0.80
-    assert cfg["source"] == "cold_start"  # 阈值数值未变，校准的是聚合方式
-    assert cfg["calibrated_on"] == 0
+    assert cfg["source"] == "holdout_30_dev"  # 阈值数值未变，校准的是聚合方式
+    dev = cfg["development_provenance"]
+    assert dev["source"] == "holdout_30_dev"
+    assert dev["n_cases"] == 30
+    assert dev["case_ids_hash"] == "218a663e218d4ce7"
+    assert dev["selected_at"] == "2026-11-11"
     assert "mean Dice" in cfg["note"]
     assert "5/30" in cfg["note"]  # 校准数字在注记里可见
+    assert "mean Dice" in dev["procedure"]  # 过程如实记录
+    assert cfg["calibrated_on"] == 0  # 反馈计数从 0 起（未回流）
 
 
 def test_multi_teacher_identical_masks_not_flagged():
@@ -441,6 +451,89 @@ def test_calibrate_thresholds_updates_overall():
     out = calibrate_thresholds(labels, th)
     assert out["overall"]["calibrated_on"] == 2
     assert out["overall"]["calibrated_at"]
+
+
+def test_calibrate_thresholds_preserves_development_provenance():
+    """校准改写 source 时开发 provenance 不丢（P2：曾把 holdout_30_dev
+    覆盖成 calibrated_on_N，开发依据 source 标记被抹掉）。"""
+    import yaml as _yaml
+
+    from bodydonor.qc import calibrate_thresholds, save_calibrated_thresholds
+
+    th = load_qc_thresholds()
+    mt_before = dict(th["rules"]["multi_teacher_consistency"]["development_provenance"])
+    labels = [
+        {"decision": "rejected", "flags": ["multi_teacher_consistency"]},
+        {"decision": "rejected", "flags": []},
+        {"decision": "accepted", "flags": []},
+    ]
+    out = calibrate_thresholds(labels, th)
+    assert out["rules"]["multi_teacher_consistency"]["development_provenance"] == mt_before
+    assert mt_before["n_cases"] == 30
+    assert mt_before["source"] == "holdout_30_dev"
+    assert mt_before["case_ids_hash"] == "218a663e218d4ce7"
+    # 保存读回后两类事实均可读取
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "qc_thresholds.yaml"
+        save_calibrated_thresholds(out, p)
+        saved = _yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert saved["rules"]["multi_teacher_consistency"]["development_provenance"] == mt_before
+    assert saved["rules"]["multi_teacher_consistency"]["source"] == "calibrated_on_3"
+    assert saved["rules"]["multi_teacher_consistency"]["calibrated_on"] == 3
+
+
+def test_calibrate_thresholds_old_config_migrates_only_source():
+    """旧配置（97a3fe8，无 development_provenance）+ 有判别力校准：只把
+    source 迁入 development_provenance，不虚构 n_cases / case_ids_hash。
+
+    fail-first：在 P2 修复前的代码上会失败（旧代码直接把 source 改写成
+    calibrated_on_N，开发依据标记丢失，无迁移）。
+    """
+    import tempfile
+    from pathlib import Path
+
+    import yaml as _yaml
+
+    from bodydonor.qc import calibrate_thresholds, save_calibrated_thresholds
+
+    # 从当前配置派生旧配置（97a3fe8 语义）：删 development_provenance 节、
+    # calibrated_on/at 置回开发校准值（不依赖 git 历史，CI 浅克隆无 97a3fe8）
+    old = load_qc_thresholds()
+    mt_old = old["rules"]["multi_teacher_consistency"]
+    sp_old = old["sampling_priority"]
+    del mt_old["development_provenance"]
+    del sp_old["development_provenance"]
+    mt_old["calibrated_on"] = 30
+    mt_old["calibrated_at"] = "2026-11-11"
+    sp_old["calibrated_on"] = 30
+    sp_old["calibrated_at"] = "2026-11-12"
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "qc_thresholds.yaml"
+        p.write_text(_yaml.safe_dump(old, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        th = load_qc_thresholds(p)
+        # 旧配置起点：source=holdout_30_dev，无 development_provenance 节
+        mt0 = th["rules"]["multi_teacher_consistency"]
+        assert mt0["source"] == "holdout_30_dev"
+        assert "development_provenance" not in mt0
+        # 有判别力标签：flag 组全 rejected、clean 组全 accepted
+        labels = [
+            {"decision": "rejected", "flags": ["multi_teacher_consistency"]},
+            {"decision": "rejected", "flags": ["multi_teacher_consistency"]},
+            {"decision": "accepted", "flags": []},
+            {"decision": "accepted", "flags": []},
+        ]
+        out = calibrate_thresholds(labels, thresholds=th)
+        save_calibrated_thresholds(out, path=p)
+        saved = _yaml.safe_load(p.read_text(encoding="utf-8"))
+    prov = saved["rules"]["multi_teacher_consistency"]["development_provenance"]
+    # 只迁入 source，不虚构 30 例来源字段（n_cases / case_ids_hash）
+    assert prov == {"source": "holdout_30_dev"}
+    # 规则 source 已改写为校准注记，开发依据仍可从 provenance 读回
+    assert saved["rules"]["multi_teacher_consistency"]["source"] == "calibrated_on_4"
+    assert saved["rules"]["multi_teacher_consistency"]["calibrated_on"] == 4
 
 
 # ---------------------------------------------------------------------------

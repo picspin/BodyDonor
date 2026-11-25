@@ -2,6 +2,12 @@
 # 改阈值 = config diff，不是代码 diff。每个阈值带 source 注记：
 #   source: cold_start          —— TS 公开集冷启动定初值（与教师同源，偏乐观，只当起点）
 #   source: calibrated_on_N     —— 人工抽检结果回流后重算（N = 参与校准的 case 数）
+#   source: holdout_30_dev      —— 依据 30 例 hold-out（gate 集）选定的派生统计：
+#                                  **样本内开发指标**（in-sample dev，同一批 case
+#                                  既调参又验收 = 泄漏），不得冒充独立校准；
+#                                  derived_from_case_ids_hash 见各 note
+#                                  （M7-S2 元数据诚实：凡在 gate 上调过的不再标
+#                                  cold_start；独立 calib 集建好后须复核）
 #   calibrated_on: 0            —— 已回流 case 数（qc-calibrate 重算时更新）
 #   calibrated_at: <date>       —— 最近一次在线校准日期（无则空）
 #
@@ -72,10 +78,16 @@ rules:
   # ---- 多教师一致性（M3 不启用：单教师；M4 学生模型出现后启用，2026-11-11）----
   multi_teacher_consistency:
     enabled: true
-    source: cold_start
-    calibrated_on: 0
+    source: holdout_30_dev   # M7-S2：聚合方式在 30 例 gate 上选定（样本内开发指标），不再标 cold_start
+    calibrated_on: 0         # 反馈累计数（回流更新，与开发 case 数解耦）
     calibrated_at: ""
-    note: "M4 启用（学生模型 student-nnunet-v2-distill-20261109T062920Z 已出现）。聚合方式 = 参与比较类的 mean Dice（不是最差类）——校准依据（2026-11-11 实测，教师 vs 学生逐类 Dice，30 例）：419 对 mean 0.8560、p10 0.6986；case 级最差类聚合在 0.80 下 flag 24/30 例（无判别力，基本等于全审），均值聚合 flag 5/30 例（有判别力，flag 的正是分歧最大的 5 例）。阈值数值保持 0.80 初值不改——本次校准的是聚合方式，不是数值重算（source 保持 cold_start、calibrated_on 保持 0）。单图 QC 无学生 mask 时显式 skipped，不进 flags、不计入 enabled 分母。"
+    development_provenance:  # 开发/拟合 provenance（回流与校准不碰本节）
+      source: holdout_30_dev
+      n_cases: 30
+      case_ids_hash: "218a663e218d4ce7"   # eval/holdout.txt 30 例
+      selected_at: "2026-11-11"
+      procedure: "聚合方式选定（mean Dice vs 最差类对比实测）：419 对 mean 0.8560、p10 0.6986；最差类聚合 flag 24/30 无判别力、均值聚合 flag 5/30 有判别力。阈值数值 0.80 未动（校准的是聚合方式，非数值重算）。样本内开发指标，独立 calib 集建好后须复核。"
+    note: "M4 启用（学生模型 student-nnunet-v2-distill-20261109T062920Z 已出现）。聚合方式 = 参与比较类的 mean Dice（不是最差类）——校准依据（2026-11-11 实测，教师 vs 学生逐类 Dice，30 例）：419 对 mean 0.8560、p10 0.6986；case 级最差类聚合在 0.80 下 flag 24/30 例（无判别力，基本等于全审），均值聚合 flag 5/30 例（有判别力，flag 的正是分歧最大的 5 例）。阈值数值保持 0.80 初值不改——本次校准的是聚合方式，不是数值重算。M7-S2 元数据诚实：校准来源 = eval/holdout.txt 30 例 gate 集（derived_from_case_ids_hash = 218a663e218d4ce7，case_ids_hash 同格式），属样本内开发指标；独立 calib 集建好后须复核。单图 QC 无学生 mask 时显式 skipped，不进 flags、不计入 enabled 分母。开发 provenance 见 development_provenance 节（回流/校准不改写）。"
     threshold: 0.80   # 均值 Dice 判据（校准的是聚合方式：均值而非最差类；数值未变）
 
   # ---- 交互收敛（M6-b：过程级，消费 proven.interactionMetrics）----
@@ -167,15 +179,21 @@ review_sampling:
 # 三档分档（gating 节），不改 QC pass/fail（不碰 hard_flag_rules）。
 sampling_priority:
   enabled: true
-  source: cold_start
-  calibrated_on: 0
+  source: holdout_30_dev   # M7-S2：w3/w4 分量定义依据 30 例 gate 实测选定（样本内开发指标），不再标 cold_start
+  calibrated_on: 0         # 反馈累计数（回流更新，与开发 case 数解耦）
   calibrated_at: ""
-  note: "权重是冷启动起点，未经校准：等权 w1=w2=w3=w4=1（2026-11-12）。M4 已证明冷启动 QC flag 区分度低（419 对均值聚合 flag 5/30），flagged/clean 二分在 flag 少时退化成随机抽检；过程风险连续分数按 priority 降序取前 batch_size 名建 ReviewTask。w3 聚合方式 = 最差类（1 - min 逐类 Dice，非 mean）：mean 会稀释单类整类漏检（实测 s0495 prostate 整类漏检 min 0.0 而 mean 0.8771，mean 聚合排不进前 20%）；冷启动抽检目的是找出最坏的 case 交人审，宁过审不漏审。M6-f 决策回流后重算权重（calibrated_on 更新）。"
+  development_provenance:  # 开发/拟合 provenance（回流与校准不碰本节）；只覆盖 w3/w4，w1/w2 未在 30 例上调整
+    source: holdout_30_dev
+    n_cases: 30
+    case_ids_hash: "218a663e218d4ce7"   # eval/holdout.txt 30 例
+    selected_at: "2026-11-12"
+    procedure: "w3 最差类聚合（1 - min 逐类 Dice，mean 会稀释单类整类漏检）与 w4 低频占比的定义依据 = 30 例 gate 实测选定。w1/w2 未在 30 例上调整（量级假设初值），不属本 provenance。样本内开发指标，独立 calib 集建好后须复核。"
+  note: "权重是冷启动起点，未经校准：等权 w1=w2=w3=w4=1（2026-11-12）。M4 已证明冷启动 QC flag 区分度低（419 对均值聚合 flag 5/30），flagged/clean 二分在 flag 少时退化成随机抽检；过程风险连续分数按 priority 降序取前 batch_size 名建 ReviewTask。w3 聚合方式 = 最差类（1 - min 逐类 Dice，非 mean）：mean 会稀释单类整类漏检（实测 s0495 prostate 整类漏检 min 0.0 而 mean 0.8771，mean 聚合排不进前 20%）；冷启动抽检目的是找出最坏的 case 交人审，宁过审不漏审。M7-S2 元数据诚实：w3 最差类聚合与 w4 低频占比的定义依据 = eval/holdout.txt 30 例 gate 实测（derived_from_case_ids_hash = 218a663e218d4ce7，case_ids_hash 同格式），属样本内开发指标；w1/w2 未在 30 例上调整（量级假设初值），保持 cold_start。与 rules.multi_teacher_consistency 的 mean 聚合不一致为**有意保留**：两边目的不同（本规则找最坏 case 交人审、一致性规则估整体一致率），实证依据各自记录（见 M7-S2-REPORT 聚合决策节），M6-f 决策回流后重算权重（calibrated_on 更新）。"
   weights:
-    w1: 1.0   # convergence：interactionMetrics 收敛信号（普通类 max(numPrompts/N_max, convergenceSteps/K_max)，高风险类只 numPrompts）
-    w2: 1.0   # abandonment：任一类 abandonedAttempts>=1 则 1（M6-b interaction_abandonment 同判据）
-    w3: 1.0   # teacher_student_disagreement：最差类 1 - min(per_class_dice)（multi_teacher_consistency detail）
-    w4: 1.0   # low_frequency_class_presence：参评类中 39/117 低频类（+prostate）占比
+    w1: 1.0   # convergence：interactionMetrics 收敛信号（普通类 max(numPrompts/N_max, convergenceSteps/K_max)，高风险类只 numPrompts）——未调，cold_start
+    w2: 1.0   # abandonment：任一类 abandonedAttempts>=1 则 1（M6-b interaction_abandonment 同判据）——未调，cold_start
+    w3: 1.0   # teacher_student_disagreement：最差类 1 - min(per_class_dice)（multi_teacher_consistency detail）——聚合方式在 30 例上选定（holdout_30_dev）
+    w4: 1.0   # low_frequency_class_presence：参评类中 39/117 低频类（+prostate）占比——定义在 30 例上验证（holdout_30_dev）
 
 # ---- M6-d 轻量门控器（规则形式，正式交付物）----
 # priority 全量排名分三档：top forced_ratio → forced（强制人工：生成

@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .holdout import check_leak, load_holdout
+from .holdout import case_ids_hash, check_leak, load_holdout
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = Path.home() / "data" / "BodyDonor" / "downloads"
@@ -603,6 +603,12 @@ def prepare_dataset(
             "rechecked_with_real_train_list": True,
             "train_pool_amos": sum(1 for c in pool if c.source == "amos"),
             "train_pool_ct_lite": sum(1 for c in pool if c.source == "ct_lite"),
+            # M7-S2 三集分离：train 冻结名单哈希（case_ids_hash 同格式）+
+            # gate 哈希（eval/holdout.txt 30 例）；两集不相交（check_leak 兜底）
+            "train_case_ids_hash": case_ids_hash([c.case_id for c in pool]),
+            "gate_case_ids_hash": case_ids_hash(
+                [e.case_id for e in load_holdout(holdout_path)]
+            ),
         },
         "gpu_lock": {
             "task": "nnunet",

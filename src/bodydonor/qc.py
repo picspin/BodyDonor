@@ -822,6 +822,11 @@ def calibrate_thresholds(
         if sep > MIN_SEPARATION and flagged_y:
             # 有判别力：source 注记变 calibrated_on_N（阈值数值不动——M3 标签量
             # 不足以重算数值阈值；重算是 M4+ 标签 ≥ 20 例后的事，§7 明示）
+            if "development_provenance" not in cfg:
+                # 开发依据的 source 标记迁入 development_provenance，改写不丢（P2）
+                cfg["development_provenance"] = {"source": cfg.get("source", "")}
+            elif "source" not in cfg["development_provenance"]:
+                cfg["development_provenance"]["source"] = cfg.get("source", "")
             cfg["source"] = f"calibrated_on_{n}"
         cfg["discrimination"] = round(sep, 4)
 

@@ -7,7 +7,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from bodydonor.app import app
-from bodydonor.qc import QC_THRESHOLDS_PATH
+from bodydonor.qc import QC_THRESHOLDS_PATH, load_qc_thresholds
 from bodydonor.qc_reflux import record_review_decision
 
 
@@ -69,3 +69,65 @@ def test_record_review_decision_updates_thresholds(tmp_path):
 def test_record_review_decision_invalid():
     with pytest.raises(ValueError, match="decision"):
         record_review_decision(None, "maybe")
+
+
+def test_record_review_decision_preserves_development_provenance(tmp_path):
+    """回流只动反馈计数，不碰开发 provenance（P2：正常回流曾把
+    holdout_30_dev/30 覆盖成 holdout_30_dev/1，开发依据被抹掉）。"""
+    import shutil
+
+    p = tmp_path / "qc_thresholds.yaml"
+    shutil.copy(QC_THRESHOLDS_PATH, p)
+    before = yaml.safe_load(p.read_text(encoding="utf-8"))
+    mt_before = before["rules"]["multi_teacher_consistency"]["development_provenance"]
+    sp_before = before["sampling_priority"]["development_provenance"]
+    record_review_decision(None, "accepted", path=p)
+    record_review_decision(None, "corrected", path=p)
+    doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+    mt = doc["rules"]["multi_teacher_consistency"]
+    sp = doc["sampling_priority"]
+    # 开发 provenance 逐字段不变
+    assert mt["development_provenance"] == mt_before
+    assert sp["development_provenance"] == sp_before
+    assert mt["development_provenance"]["n_cases"] == 30
+    assert mt["development_provenance"]["source"] == "holdout_30_dev"
+    assert mt["development_provenance"]["case_ids_hash"] == "218a663e218d4ce7"
+    # 反馈计数从 0 起正确累计（calibrated_on = 反馈数，不再冒充开发 case 数）
+    assert mt["calibrated_on"] == 2
+    assert sp["calibrated_on"] == 2
+    assert doc["overall"]["calibrated_on"] == 2
+
+
+def test_record_review_decision_old_config_without_development_provenance(tmp_path):
+    """旧配置（97a3fe8，无 development_provenance）回流兼容读取：不虚构
+    development_provenance，反馈计数正确累计为 1。
+
+    不虚构一半是守卫（旧配置没有就没有），sp/overall 累计一半是
+    fail-first（旧回流不更新 sampling_priority，旧代码上失败，
+    assert 30 == 1）；作用是固化旧配置兼容语义，防未来回归（如回流
+    时强插默认 provenance）。
+    """
+    # 从当前配置派生旧配置（97a3fe8 语义）：删 development_provenance 节、
+    # calibrated_on/at 置回开发校准值（不依赖 git 历史，CI 浅克隆无 97a3fe8）
+    old = load_qc_thresholds()
+    mt_old = old["rules"]["multi_teacher_consistency"]
+    sp_old = old["sampling_priority"]
+    del mt_old["development_provenance"]
+    del sp_old["development_provenance"]
+    mt_old["calibrated_on"] = 30
+    mt_old["calibrated_at"] = "2026-11-11"
+    sp_old["calibrated_on"] = 30
+    sp_old["calibrated_at"] = "2026-11-12"
+    p = tmp_path / "qc_thresholds.yaml"
+    p.write_text(yaml.safe_dump(old, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    record_review_decision(None, "accepted", path=p)
+    doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+    mt = doc["rules"]["multi_teacher_consistency"]
+    sp = doc["sampling_priority"]
+    # 不虚构开发 provenance（旧配置没有就没有）
+    assert "development_provenance" not in mt
+    assert "development_provenance" not in sp
+    # 反馈计数正确累计（旧值 30 是开发 case 数，回流后归位为反馈计数 1）
+    assert mt["calibrated_on"] == 1
+    assert sp["calibrated_on"] == 1
+    assert doc["overall"]["calibrated_on"] == 1
