@@ -71,7 +71,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .interaction_metrics import load_teacher_eval
+from .interaction_metrics import MIN_PER_CLASS, load_teacher_eval
 from .qc import SamplingPlan
 
 # QCReport.rule_scores 里的规则名（qc.py 同名常量；字符串复制避免循环导入）
@@ -236,7 +236,9 @@ def component_low_freq_presence(
     if per_class_case_count is None:
         return None  # 名单缺（eval 产物缺失）→ 分量不可用，不猜
     low_freq = {
-        c for c in classes if c in _HIGH_RISK_TEACHER_CLASSES or per_class_case_count.get(c, 0) < 10
+        c
+        for c in classes
+        if c in _HIGH_RISK_TEACHER_CLASSES or per_class_case_count.get(c, 0) < MIN_PER_CLASS
     }
     return len(low_freq) / len(classes)
 
