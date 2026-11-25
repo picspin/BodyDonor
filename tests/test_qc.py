@@ -492,7 +492,6 @@ def test_calibrate_thresholds_old_config_migrates_only_source():
     fail-first：在 P2 修复前的代码上会失败（旧代码直接把 source 改写成
     calibrated_on_N，开发依据标记丢失，无迁移）。
     """
-    import subprocess
     import tempfile
     from pathlib import Path
 
@@ -500,13 +499,20 @@ def test_calibrate_thresholds_old_config_migrates_only_source():
 
     from bodydonor.qc import calibrate_thresholds, save_calibrated_thresholds
 
-    old = subprocess.run(
-        ["git", "show", "97a3fe8:config/qc_thresholds.yaml"],
-        capture_output=True, text=True, check=True,
-    ).stdout
+    # 从当前配置派生旧配置（97a3fe8 语义）：删 development_provenance 节、
+    # calibrated_on/at 置回开发校准值（不依赖 git 历史，CI 浅克隆无 97a3fe8）
+    old = load_qc_thresholds()
+    mt_old = old["rules"]["multi_teacher_consistency"]
+    sp_old = old["sampling_priority"]
+    del mt_old["development_provenance"]
+    del sp_old["development_provenance"]
+    mt_old["calibrated_on"] = 30
+    mt_old["calibrated_at"] = "2026-11-11"
+    sp_old["calibrated_on"] = 30
+    sp_old["calibrated_at"] = "2026-11-12"
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "qc_thresholds.yaml"
-        p.write_text(old, encoding="utf-8")
+        p.write_text(_yaml.safe_dump(old, allow_unicode=True, sort_keys=False), encoding="utf-8")
         th = load_qc_thresholds(p)
         # 旧配置起点：source=holdout_30_dev，无 development_provenance 节
         mt0 = th["rules"]["multi_teacher_consistency"]

@@ -7,7 +7,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from bodydonor.app import app
-from bodydonor.qc import QC_THRESHOLDS_PATH
+from bodydonor.qc import QC_THRESHOLDS_PATH, load_qc_thresholds
 from bodydonor.qc_reflux import record_review_decision
 
 
@@ -107,14 +107,19 @@ def test_record_review_decision_old_config_without_development_provenance(tmp_pa
     assert 30 == 1）；作用是固化旧配置兼容语义，防未来回归（如回流
     时强插默认 provenance）。
     """
-    import subprocess
-
-    old = subprocess.run(
-        ["git", "show", "97a3fe8:config/qc_thresholds.yaml"],
-        capture_output=True, text=True, check=True,
-    ).stdout
+    # 从当前配置派生旧配置（97a3fe8 语义）：删 development_provenance 节、
+    # calibrated_on/at 置回开发校准值（不依赖 git 历史，CI 浅克隆无 97a3fe8）
+    old = load_qc_thresholds()
+    mt_old = old["rules"]["multi_teacher_consistency"]
+    sp_old = old["sampling_priority"]
+    del mt_old["development_provenance"]
+    del sp_old["development_provenance"]
+    mt_old["calibrated_on"] = 30
+    mt_old["calibrated_at"] = "2026-11-11"
+    sp_old["calibrated_on"] = 30
+    sp_old["calibrated_at"] = "2026-11-12"
     p = tmp_path / "qc_thresholds.yaml"
-    p.write_text(old, encoding="utf-8")
+    p.write_text(yaml.safe_dump(old, allow_unicode=True, sort_keys=False), encoding="utf-8")
     record_review_decision(None, "accepted", path=p)
     doc = yaml.safe_load(p.read_text(encoding="utf-8"))
     mt = doc["rules"]["multi_teacher_consistency"]
