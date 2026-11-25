@@ -2,6 +2,7 @@
 # holdout.txt 是固化的门禁构成（case_id 列表），必须入仓（proposal §8）。
 *
 !holdout.txt
+!consistency_baseline.json
 !.gitignore
 !build_holdout.py
 !evaluate_holdout.py

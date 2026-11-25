@@ -1,0 +1,66 @@
+{
+ "meta": {
+  "name": "consistency_baseline",
+  "generated_at": "2026-11-11（运行日期；源产物未记录具体时刻）",
+  "run": "M4 阶段 5 学生 hold-out 一致性评估：evaluate_student_holdout.py，30 例教师 mask vs 学生 mask（CT-Lite 15 例 + AMOS 15 例），2026-11-11",
+  "source_product": "eval/student_teacher_consistency.json（gitignored 运行产物，本仓不入）",
+  "source_report": "M4-REPORT.md:169（§1.5 教师-学生一致性分布行）、M4-REPORT.md:249-257（§3.5 数字解读）",
+  "raw_pairs_retained": false,
+  "raw_pairs_note": "原始 419 对逐对数值未保留在源产物中（生成脚本 evaluate_student_holdout.py 仅 scores.append 后即聚合，逐对分数落盘前丢弃），本文件固化的是其充分统计量（overall + per_class + below_080_classes + n_pairs）——绝不编造原始数值。"
+ },
+ "metric": {
+  "measure": "Dice 系数：教师 mask vs 学生 mask 逐类 3D 体素 Dice，每对 = 某 case 某类一个 Dice 值",
+  "teacher_mask": "教师 = TotalSegmentator total 输出（AMOS 逐 case 目录 / CT-Lite downloads/ct_lite/ts_out 逐类拼接，ts_class_map.json 按名对齐）",
+  "student_mask": "学生 = 学生预测 mask（student_holdout/pred/<case_id>.nii.gz）",
+  "symmetric": true,
+  "pair_rule": "对称 Dice = 2|T∩S|/(|T|+|S|)；只算两边任一非空的类（空对空不计入 n_pairs）；分母为 0 跳过",
+  "aggregation": "overall mean/median/p10/p25/min 为 419 对逐对分布统计量；per_class.mean 为该类内 case 均值"
+ },
+ "baseline": {
+  "mean": 0.856,
+  "p10": 0.6986,
+  "median": 0.922,
+  "p25": 0.8521,
+  "min": 0.0,
+  "n_pairs": 419
+ },
+ "per_class": {
+  "adrenal_gland_left": {"mean": 0.7552, "cases": 30},
+  "adrenal_gland_right": {"mean": 0.7847, "cases": 30},
+  "aorta": {"mean": 0.9327, "cases": 30},
+  "duodenum": {"mean": 0.713, "cases": 29},
+  "esophagus": {"mean": 0.8619, "cases": 30},
+  "gallbladder": {"mean": 0.7684, "cases": 25},
+  "inferior_vena_cava": {"mean": 0.8706, "cases": 30},
+  "kidney_left": {"mean": 0.9285, "cases": 28},
+  "kidney_right": {"mean": 0.938, "cases": 29},
+  "liver": {"mean": 0.9525, "cases": 30},
+  "pancreas": {"mean": 0.8215, "cases": 29},
+  "prostate": {"mean": 0.743, "cases": 16},
+  "spleen": {"mean": 0.9433, "cases": 29},
+  "stomach": {"mean": 0.889, "cases": 30},
+  "urinary_bladder": {"mean": 0.8791, "cases": 24}
+ },
+ "below_080_classes": [
+  "adrenal_gland_left",
+  "adrenal_gland_right",
+  "duodenum",
+  "gallbladder",
+  "prostate"
+ ],
+ "regression_flag": {
+  "aggregation": "mean",
+  "threshold": 0.8,
+  "n_cases": 30,
+  "flagged_cases": {
+   "s0209": 0.1181,
+   "amos_0005": 0.6592,
+   "s0338": 0.7081,
+   "amos_0006": 0.7567,
+   "amos_0016": 0.7862
+  },
+  "source": "M4-REPORT.md:142-143（§1.5 阈值决策实测）+ §3.4（:241-247）；tests/test_m6e_wiring.py 离线评估实测 2026-11-11——均值聚合 flag 5/30 例（正是分歧最大的 5 例），校准的是聚合方式不是数值（阈值 0.80 保持初值）",
+  "case_mean_note": "各值为该 case 的 mean Dice（run_qc multi_teacher_consistency 规则 case 级聚合，全部可比类均值）",
+  "tolerance": "实际 flag 集与期望 flag 集对称差 ≤1 例"
+ }
+}
