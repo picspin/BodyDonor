@@ -141,6 +141,64 @@ class TestGitClean:
         out = chain_steps.step12_git_clean()
         assert out["exempt_ok"] is True
 
+    @staticmethod
+    def _precommit_repo(repo: Path) -> None:
+        """pre-commit 场景 scratch 仓：tracked 文件 + 已暂存/未暂存的源码改动。"""
+        import subprocess
+
+        (repo / "readme.md").write_text("seed\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "init",
+            ],
+            check=True,
+        )
+        (repo / "app.py").write_text("def app(): pass\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "app.py"], check=True)
+        (repo / "config.py").write_text("X = 1\n", encoding="utf-8")
+
+    def test_step12_baseline_allows_precommit_changes(self, tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+        """先红（PR #9 P1）：链路按决定 1 在 pre-commit 跑——被验证的 M7 改动
+        （暂存/未暂存）在起链前已在工作树/索引里，起链前快照的 baseline 里
+        的条目不得判红；只拒绝 baseline 之外链路新引入的条目。"""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._precommit_repo(repo)
+        # baseline 文件放仓外（run_chain.sh 落 VERIFY_LOOP_TMP，仓外 tmp）
+        baseline = tmp_path / "git_baseline.bin"
+        baseline.write_bytes(b"A  app.py\0?? config.py\0")
+
+        monkeypatch.setattr(chain_steps, "REPO", repo)
+        monkeypatch.setenv("VERIFY_LOOP_GIT_BASELINE", str(baseline))
+        out = chain_steps.step12_git_clean()
+        assert out["exempt_ok"] is True
+        assert out["baseline_entries"] == 2
+
+    def test_step12_baseline_still_rejects_new_leak(self, tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+        """守卫：baseline 之外的仓内新文件仍判红（决定 3 泄漏检测不放松）。"""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._precommit_repo(repo)
+        baseline = tmp_path / "git_baseline.bin"
+        baseline.write_bytes(b"A  app.py\0?? config.py\0")
+        (repo / "leaked_by_chain.txt").write_text("chain leak", encoding="utf-8")
+
+        monkeypatch.setattr(chain_steps, "REPO", repo)
+        monkeypatch.setenv("VERIFY_LOOP_GIT_BASELINE", str(baseline))
+        with pytest.raises(AssertionError, match="白名单外脏"):
+            chain_steps.step12_git_clean()
+
 
 class TestMaskVersionAssertion:
     """Step 8 MaskVersion 落库断言（version 递增）。"""
@@ -322,3 +380,100 @@ class TestExportSegAssertion:
         monkeypatch.setattr(cs, "_settings", lambda: s)
         with pytest.raises(AssertionError, match="无 source_instances_json|mask 缺失"):
             chain_steps.step9_10_export_seg("series-vl")
+
+    def test_export_consumes_latest_saved_mask_version(self, tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+        """先红（PR #9 P2）：step 7 保存后 review_save 落 mask_v{N}.nii.gz（不动
+        mask.nii.gz，app.py:1078 预期行为）——export 步必须消费最新 MaskVersion
+        的 storage_key（已保存修正），否则体素差=0 验的是原始 teacher mask，
+        保存修正从未回环验证。"""
+        import nibabel as nib
+        import numpy as np
+        from sqlalchemy.orm import Session
+
+        from bodydonor import db as bdb
+        from bodydonor.config import Settings
+        from bodydonor.models import Case, MaskVersion, Series
+
+        url = f"sqlite:///{tmp_path / 'seg2.db'}"
+        bdb.init_db(url)
+        s = Settings()
+        s.database.url = url
+        s.data_dir = tmp_path / "data"
+
+        # Series 行 + 两个 mask 落盘：teacher mask.nii.gz（全 0）+ saved
+        # mask_v2.nii.gz（全 1）——两者几何一致（export 步不做 affine 断言，
+        # 用同 affine 构造，diff 可观测）
+        affine = np.eye(4)
+        affine[0, 0] = -1  # RAS 重排 nib.as_closest_canonical 同口径
+        shape = (4, 4, 4)
+        teacher = nib.Nifti1Image(np.zeros(shape, np.int32), affine)
+        saved = nib.Nifti1Image(np.ones(shape, np.int32), affine)
+
+        data = tmp_path / "data" / "storage" / "case-vl" / "series-vl"
+        data.mkdir(parents=True)
+        teacher_path = data / "mask.nii.gz"
+        saved_path = data / "mask_v2.nii.gz"
+        nib.save(teacher, str(teacher_path))
+        nib.save(saved, str(saved_path))
+
+        engine = bdb._engine(url)
+        try:
+            with engine.connect() as conn:
+                sess = Session(conn)
+                sess.add(Case(case_id="case-vl"))
+                sess.add(
+                    Series(
+                        series_id="series-vl",
+                        case_id="case-vl",
+                        modality="CT",
+                        storage_key="case-vl/series-vl/image.nii.gz",
+                        source_instances_json=None,
+                    )
+                )
+                sess.add(
+                    MaskVersion(
+                        mask_version_id="mv-vl-1",
+                        series_id="series-vl",
+                        version=1,
+                        source="teacher",
+                        storage_key="case-vl/series-vl/mask.nii.gz",
+                    )
+                )
+                sess.add(
+                    MaskVersion(
+                        mask_version_id="mv-vl-2",
+                        series_id="series-vl",
+                        version=2,
+                        source="manual",
+                        storage_key="case-vl/series-vl/mask_v2.nii.gz",
+                    )
+                )
+                sess.commit()
+                sess.close()
+        finally:
+            engine.dispose()
+
+        import chain_steps as cs
+
+        monkeypatch.setattr(cs, "_settings", lambda: s)
+        # export_and_verify 打桩：只抓 mask_path 消费哪个文件
+        captured: dict = {}
+
+        class _Rep:
+            ok = True
+            errors: list = []
+
+        def fake_export_and_verify(mask_path, source, seg_path):  # noqa: ANN001
+            captured["mask_path"] = Path(mask_path)
+            seg_path.write_bytes(b"SEG")  # 桩产物：让红落在本测试的目标断言上
+            return _Rep()
+
+        import bodydonor.export_seg
+
+        monkeypatch.setattr(bodydonor.export_seg, "export_and_verify", fake_export_and_verify)
+        out = chain_steps.step9_10_export_seg("series-vl")
+        assert out["n_errors"] == 0
+        # P2 核心：消费的是最新 MaskVersion 的 mask_v2.nii.gz，不是 teacher mask
+        assert captured["mask_path"] == saved_path, (
+            f"export 消费了 {captured['mask_path']}，应为已保存 MV v2 {saved_path}"
+        )

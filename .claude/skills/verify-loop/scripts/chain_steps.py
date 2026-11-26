@@ -65,6 +65,7 @@ def _settings():
     cfg.DEFAULT_CONFIG_PATH = yaml_path
     return cfg.load_settings()
 
+
 # git-status-clean 白名单（DESIGN.md 决定 3）：bodydonor.db+-wal/-shm、
 # eval/*.json、tests/data/、logs/、__pycache__/、*.py[cod]。链路临时产物在
 # 仓外 tmp，天然不进 status。
@@ -83,6 +84,36 @@ def _git_exempt(path: str) -> bool:
     if any(path.startswith(p) for p in GIT_EXEMPT_PREFIXES):
         return True
     return any(frag in path for frag in GIT_EXEMPT_FRAGMENTS)
+
+
+def _git_status_entries() -> list[str]:
+    """git status --porcelain -z 原始条目（XY+路径文本，NUL 分隔）。"""
+    proc = subprocess.run(  # noqa: S603 — git status，repo 自身
+        ["git", "-C", str(REPO), "status", "--porcelain", "-z", "--no-renames"],
+        capture_output=True,
+        text=False,
+        timeout=30,
+    )
+    assert proc.returncode == 0, f"git status 失败: {proc.stderr[:200]}"
+    return [e.decode("utf-8", errors="replace") for e in proc.stdout.split(b"\0") if e]
+
+
+def _load_git_baseline() -> set[str]:
+    """起链前快照的 worktree/index baseline（main() 起链时写文件、env 传入）。
+
+    baseline 内条目 = 被验证的 M7 改动（决定 1：链路 pre-commit 跑，改动在
+    起链前已在工作树/索引里），不得判红；step12 只拒绝 baseline 之外链路
+    新引入的条目（决定 3 泄漏检测不放松）。未设/缺失 → 空 baseline（独立
+    单步跑，退回纯白名单口径）。
+    """
+    path = os.environ.get("VERIFY_LOOP_GIT_BASELINE", "")
+    if not path:
+        return set()
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return set()
+    return {e.decode("utf-8", errors="replace") for e in raw.split(b"\0") if e}
 
 
 def _post(
@@ -244,20 +275,37 @@ def step9_10_export_seg(series_id: str) -> dict:
         with engine.connect() as conn:
             from sqlalchemy.orm import Session
 
+            from bodydonor.models import MaskVersion
+
             s = Session(conn)
-            row = s.execute(
-                select(Series).where(Series.series_id == series_id[:60])
-            ).scalar_one()
+            row = s.execute(select(Series).where(Series.series_id == series_id[:60])).scalar_one()
             persisted = row.source_instances_json
+            # 最新 MaskVersion 的 storage_key 优先（step 7 保存落
+            # mask_v{N}.nii.gz 不动 mask.nii.gz——体素差=0 须验证已保存
+            # 修正回环，非原始 teacher mask；与 app._base_mask_key 同语义）
+            mv = (
+                s.execute(
+                    select(MaskVersion)
+                    .where(MaskVersion.series_id == series_id[:60])
+                    .order_by(MaskVersion.version.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
             s.close()
     finally:
         engine.dispose()
 
-    # storage_key 读回 mask（segment_series 派生：storage_key.replace image→mask）
+    # mask 读回：最新 MV storage_key，无 MV 记录回退派生 mask.nii.gz
+    # （与 review_mask 回退语义一致）
     from bodydonor.storage import LocalFsStorage
 
     st = LocalFsStorage(sset.resolved_data_dir / "storage")
-    mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
+    if mv is not None and mv.storage_key:
+        mask_key = mv.storage_key
+    else:
+        mask_key = (row.storage_key or "").replace("image.nii.gz", "mask.nii.gz")
     assert mask_key, f"series {series_id} storage_key 空"
     mask_path = st.root / mask_key
     assert mask_path.exists(), f"mask 缺失: {mask_key}"
@@ -322,26 +370,21 @@ def step11_traces(series_id: str) -> dict:
 
 
 def step12_git_clean() -> dict:
-    """断言 git status --porcelain 白名单外无条目（链路泄漏即红，决定 3）。"""
-    proc = subprocess.run(  # noqa: S603 — git status，repo 自身
-        ["git", "-C", str(REPO), "status", "--porcelain", "-z", "--no-renames"],
-        capture_output=True,
-        text=False,
-        timeout=30,
-    )
-    assert proc.returncode == 0, f"git status 失败: {proc.stderr[:200]}"
-    raw = proc.stdout
+    """断言 git status 白名单外、且 baseline（起链前快照）之外无条目。
+
+    baseline 条目 = 起链前已在工作树/索引里的被验证改动（pre-commit 场景，
+    决定 1）——不计脏；baseline 之外的仓内新条目 = 链路泄漏（决定 3），红。
+    """
+    baseline = _load_git_baseline()
     dirty: list[str] = []
-    # -z NUL 分隔（M7-GATE-R1 教训：$(...) 吃 NUL）——XY 后空格起为路径
-    for entry in raw.split(b"\0"):
-        if not entry:
-            continue
-        text = entry.decode("utf-8", errors="replace")
+    for text in _git_status_entries():
         path = text[3:] if len(text) > 3 else text
+        if text in baseline:
+            continue
         if not _git_exempt(path):
             dirty.append(text)
     assert not dirty, f"git status 白名单外脏: {dirty}"
-    return {"dirty": [], "exempt_ok": True}
+    return {"dirty": [], "exempt_ok": True, "baseline_entries": len(baseline)}
 
 
 STEPS = {
@@ -368,6 +411,14 @@ def main() -> int:
     state: dict = {}
     if args.series_id:
         state["series_id"] = args.series_id
+    # 起链前快照 worktree/index baseline（被验证 M7 改动在 pre-commit 场景
+    # 已在树/索引里，step12 只拒绝 baseline 之外的新条目）。写入
+    # VERIFY_LOOP_TMP/git_baseline.bin，step12 经同 env 读回。
+    vlt = os.environ.get("VERIFY_LOOP_TMP", "")
+    if vlt and args.steps == "all":
+        baseline_file = Path(vlt) / "git_baseline.bin"
+        baseline_file.write_bytes("\0".join(_git_status_entries()).encode("utf-8"))
+        os.environ["VERIFY_LOOP_GIT_BASELINE"] = str(baseline_file)
     results: dict = {}
     for name in names:
         fn = STEPS[name]
